@@ -2,11 +2,14 @@
 
 #include <QApplication>
 #include <QFile>
+#include <QGuiApplication>
 #include <QStringList>
 #include <QTimer>
 
 int main(int argc, char *argv[])
 {
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QApplication application(argc, argv);
 

@@ -8,8 +8,12 @@ QMainWindow, QWidget#appRoot {
     background: #f5f8fb;
 }
 
+QMainWindow {
+    background: #737d87;
+}
+
 QWidget#appRoot {
-    border: 1px solid #cbd9e7;
+    border: none;
 }
 
 QFrame#topBar {
@@ -272,6 +276,11 @@ QPlainTextEdit {
 QScrollArea {
     border: none;
     background: transparent;
+}
+
+QGraphicsView#pageView {
+    border: none;
+    background: #f5f8fb;
 }
 
 QSlider::groove:horizontal {

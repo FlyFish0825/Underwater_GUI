@@ -10,16 +10,26 @@
 
 #include <QButtonGroup>
 #include <QFrame>
+#include <QGraphicsProxyWidget>
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
-#include <QScrollArea>
+#include <QScreen>
+#include <QShowEvent>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWindow>
 
 #include <functional>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace
 {
@@ -128,6 +138,17 @@ QToolButton *navigationButton(const QString &text, const rov::IconKind icon, QWi
     return button;
 }
 
+QSize initialWindowSize(QScreen *screen)
+{
+    if (screen == nullptr)
+    {
+        return QSize(1440, 900);
+    }
+    const QRect available = screen->availableGeometry();
+    return QSize(qMax(980, qMin(1440, available.width() - 32)),
+                 qMax(640, qMin(900, available.height() - 32)));
+}
+
 QLabel *statusDotLabel(const QString &text, const QString &color)
 {
     auto *label = new QLabel(QStringLiteral("●  %1").arg(text));
@@ -144,10 +165,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setWindowTitle(QStringLiteral("水下机器人上位机"));
-    resize(1440, 900);
-    setMinimumSize(1180, 720);
+    setContentsMargins(1, 1, 1, 1);
+    setMinimumSize(980, 640);
+    resize(initialWindowSize(QGuiApplication::primaryScreen()));
 
-    auto *root = new QWidget(this);
+    auto *root = new QFrame(this);
     root->setObjectName(QStringLiteral("appRoot"));
     setCentralWidget(root);
     auto *rootLayout = new QVBoxLayout(root);
@@ -248,9 +270,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         makeLabel(QStringLiteral("ROV-UI-2.1-integrated"), QStringLiteral("mutedLabel")));
     bodyLayout->addWidget(sidebar);
 
-    m_pages = new QStackedWidget(body);
+    m_pages = new QStackedWidget;
     m_pages->setObjectName(QStringLiteral("pageStack"));
-    m_pages->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    m_pages->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     auto *dashboard = new DashboardPage(m_pages);
     auto *motorDebug = new MotorDebugPage(m_pages);
     auto *firmware = new FirmwarePage(m_pages);
@@ -263,15 +285,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_pages->addWidget(manipulator);
     m_pages->addWidget(vision);
     m_pages->addWidget(settings);
-    m_pages->setMinimumSize(QSize());
-    m_pageScroll = new QScrollArea(body);
-    m_pageScroll->setObjectName(QStringLiteral("pageScroll"));
-    m_pageScroll->setFrameShape(QFrame::NoFrame);
-    m_pageScroll->setWidgetResizable(false);
-    m_pageScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_pageScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_pageScroll->setWidget(m_pages);
-    bodyLayout->addWidget(m_pageScroll, 1);
+    m_pageView = new QGraphicsView(body);
+    m_pageView->setObjectName(QStringLiteral("pageView"));
+    m_pageView->setFrameShape(QFrame::NoFrame);
+    m_pageView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_pageView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_pageView->setAlignment(Qt::AlignCenter);
+    m_pageView->setInteractive(true);
+    m_pageScene = new QGraphicsScene(m_pageView);
+    m_pageScene->setBackgroundBrush(Qt::NoBrush);
+    m_pageProxy = m_pageScene->addWidget(m_pages);
+    m_pageView->setScene(m_pageScene);
+    bodyLayout->addWidget(m_pageView, 1);
     rootLayout->addWidget(body, 1);
 
     auto *footer = new QFrame(root);
@@ -321,8 +346,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             [this](const VisionModeRequest &)
             { handleRequest(QStringLiteral("视觉：已记录显示模式请求")); });
 
-    const bool compactWindow = width() < 1360 || height() < 820;
-    m_pages->setMinimumSize(compactWindow ? QSize(920, 820) : QSize());
     updatePageViewport();
     QTimer::singleShot(0, this, [this]() { updatePageViewport(); });
 }
@@ -333,31 +356,150 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     updatePageViewport();
 }
 
-void MainWindow::updatePageViewport()
+void MainWindow::showEvent(QShowEvent *event)
 {
-    if (m_pages == nullptr || m_pageScroll == nullptr)
+    QMainWindow::showEvent(event);
+    if (!m_screenSignalConnected && windowHandle() != nullptr)
+    {
+        m_screenSignalConnected = true;
+        connect(windowHandle(), &QWindow::screenChanged, this,
+                [this](QScreen *)
+                {
+                    QTimer::singleShot(0, this,
+                                       [this]()
+                                       {
+                                           fitNormalGeometryToScreen();
+                                           updatePageViewport();
+                                       });
+                });
+    }
+    fitNormalGeometryToScreen();
+    updatePageViewport();
+}
+
+void MainWindow::fitNormalGeometryToScreen()
+{
+    if (isMaximized() || isFullScreen() || windowHandle() == nullptr)
     {
         return;
     }
-    const bool compactWindow = width() < 1360 || height() < 820;
-    m_pages->setMinimumSize(compactWindow ? QSize(920, 820) : QSize());
-    m_pageScroll->setHorizontalScrollBarPolicy(compactWindow ? Qt::ScrollBarAsNeeded
-                                                             : Qt::ScrollBarAlwaysOff);
-    m_pageScroll->setVerticalScrollBarPolicy(compactWindow ? Qt::ScrollBarAsNeeded
-                                                           : Qt::ScrollBarAlwaysOff);
-    const QSize viewportSize = m_pageScroll->viewport()->size();
+    QScreen *screen = windowHandle()->screen();
+    if (screen == nullptr)
+    {
+        return;
+    }
+
+    QRect available = screen->availableGeometry().adjusted(16, 16, -16, -16);
+    QSize fitted = frameGeometry().size();
+    fitted.setWidth(qMin(fitted.width(), available.width()));
+    fitted.setHeight(qMin(fitted.height(), available.height()));
+    fitted.setWidth(qMax(980, fitted.width()));
+    fitted.setHeight(qMax(640, fitted.height()));
+    if (fitted != frameGeometry().size())
+    {
+        resize(fitted);
+    }
+
+    QRect target(frameGeometry().topLeft(), fitted);
+    if (!available.contains(target.topLeft()) || !available.contains(target.bottomRight()))
+    {
+        target.moveLeft(
+            qBound(available.left(), target.left(), available.right() - fitted.width() + 1));
+        target.moveTop(
+            qBound(available.top(), target.top(), available.bottom() - fitted.height() + 1));
+        move(target.topLeft());
+    }
+}
+
+bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, long *result)
+{
+#ifdef Q_OS_WIN
+    if (eventType == "windows_generic_MSG" && message != nullptr && result != nullptr &&
+        !isMaximized() && !isFullScreen())
+    {
+        auto *msg = static_cast<MSG *>(message);
+        if (msg->message == WM_NCHITTEST)
+        {
+            const QPoint local = mapFromGlobal(QCursor::pos());
+            constexpr int border = 6;
+            const bool left = local.x() >= 0 && local.x() < border;
+            const bool right = local.x() >= width() - border && local.x() < width();
+            const bool top = local.y() >= 0 && local.y() < border;
+            const bool bottom = local.y() >= height() - border && local.y() < height();
+            if (left && top)
+            {
+                *result = HTTOPLEFT;
+                return true;
+            }
+            if (right && top)
+            {
+                *result = HTTOPRIGHT;
+                return true;
+            }
+            if (left && bottom)
+            {
+                *result = HTBOTTOMLEFT;
+                return true;
+            }
+            if (right && bottom)
+            {
+                *result = HTBOTTOMRIGHT;
+                return true;
+            }
+            if (left)
+            {
+                *result = HTLEFT;
+                return true;
+            }
+            if (right)
+            {
+                *result = HTRIGHT;
+                return true;
+            }
+            if (top)
+            {
+                *result = HTTOP;
+                return true;
+            }
+            if (bottom)
+            {
+                *result = HTBOTTOM;
+                return true;
+            }
+        }
+    }
+#else
+    Q_UNUSED(eventType)
+    Q_UNUSED(message)
+    Q_UNUSED(result)
+#endif
+    return QMainWindow::nativeEvent(eventType, message, result);
+}
+
+void MainWindow::updatePageViewport()
+{
+    if (m_pages == nullptr || m_pageView == nullptr || m_pageScene == nullptr ||
+        m_pageProxy == nullptr)
+    {
+        return;
+    }
+    const QSize viewportSize = m_pageView->viewport()->size();
     if (viewportSize.isEmpty())
     {
         return;
     }
-    if (compactWindow)
-    {
-        m_pages->resize(qMax(920, viewportSize.width()), qMax(820, viewportSize.height()));
-    }
-    else
-    {
-        m_pages->resize(viewportSize);
-    }
+
+    const QSize designSize(1500, 1000);
+    const QSize pageSize = viewportSize.expandedTo(designSize);
+    m_pages->resize(pageSize);
+    m_pageScene->setSceneRect(QRectF(QPointF(0, 0), QSizeF(viewportSize)));
+
+    const qreal scale =
+        qMin(1.0, qMin(static_cast<qreal>(viewportSize.width()) / pageSize.width(),
+                       static_cast<qreal>(viewportSize.height()) / pageSize.height()));
+    m_pageProxy->setTransform(QTransform::fromScale(scale, scale));
+    m_pageProxy->setPos((viewportSize.width() - pageSize.width() * scale) / 2.0,
+                        (viewportSize.height() - pageSize.height() * scale) / 2.0);
 }
 
 void MainWindow::handleRequest(const QString &message)
@@ -376,6 +518,7 @@ void MainWindow::setPageIndex(const int index)
     if (m_pages != nullptr && index >= 0 && index < m_pages->count())
     {
         m_pages->setCurrentIndex(index);
+        updatePageViewport();
         if (m_navGroup != nullptr && m_navGroup->button(index) != nullptr)
         {
             m_navGroup->button(index)->setChecked(true);

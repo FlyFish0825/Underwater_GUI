@@ -100,7 +100,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     info->addWidget(m_description, 4, 1);
     fileCard->contentLayout()->addLayout(info);
     fileCard->contentLayout()->addStretch();
-    mainRow->addWidget(fileCard, 3);
+    fileCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    mainRow->addWidget(fileCard, 3, Qt::AlignTop);
 
     auto *right = new QVBoxLayout;
     right->setSpacing(12);
@@ -180,7 +181,9 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
         makeLabel(QStringLiteral("演示日志将显示在此处。"), QStringLiteral("mutedLabel"));
     m_requestLog->setWordWrap(true);
     logCard->contentLayout()->addWidget(m_requestLog);
-    right->addWidget(logCard, 1);
+    logCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    right->addWidget(logCard);
+    right->addStretch(1);
     mainRow->addLayout(right, 7);
     root->addLayout(mainRow, 1);
 
