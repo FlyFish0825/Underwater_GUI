@@ -139,10 +139,12 @@ FirmwareSnapshot firmwarePreview()
     snapshot.fileDescription = QStringLiteral("演示固件元数据。不执行刷写操作。");
     const QStringList ids = {QStringLiteral("0x01"), QStringLiteral("0x02"),
                              QStringLiteral("0x03"), QStringLiteral("0x04"),
-                             QStringLiteral("0x05"), QStringLiteral("0x06")};
-    const QStringList names = {QStringLiteral("推进器 1（FL）"), QStringLiteral("推进器 2（FR）"),
-                               QStringLiteral("推进器 3（ML）"), QStringLiteral("推进器 4（MR）"),
-                               QStringLiteral("推进器 5（RL）"), QStringLiteral("推进器 6（RR）")};
+                             QStringLiteral("0x05"), QStringLiteral("0x06"),
+                             QStringLiteral("0x07"), QStringLiteral("0x08")};
+    const QStringList names = {QStringLiteral("推进器 1（左前）"), QStringLiteral("推进器 2（右前）"),
+                               QStringLiteral("推进器 3（左后）"), QStringLiteral("推进器 4（右后）"),
+                               QStringLiteral("推进器 5（内左前）"), QStringLiteral("推进器 6（内右前）"),
+                               QStringLiteral("推进器 7（内左后）"), QStringLiteral("推进器 8（内右后）")};
     for (int i = 0; i < ids.size(); ++i)
     {
         FirmwareNode node;

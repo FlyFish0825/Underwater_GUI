@@ -7,6 +7,7 @@ class QButtonGroup;
 class QGraphicsProxyWidget;
 class QGraphicsScene;
 class QGraphicsView;
+class QCloseEvent;
 class QResizeEvent;
 class QShowEvent;
 class QStackedWidget;
@@ -31,6 +32,7 @@ class MainWindow final : public QMainWindow
 
   private:
     void resizeEvent(QResizeEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
     void showEvent(QShowEvent *event) override;
     bool nativeEvent(const QByteArray &eventType, void *message, long *result) override;
     void updatePageViewport();

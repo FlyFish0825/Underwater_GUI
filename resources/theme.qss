@@ -16,6 +16,13 @@ QWidget#appRoot {
     border: none;
 }
 
+QFrame#connectionBar {
+    background: #ffffff;
+    border: 1px solid #dce7f1;
+    border-left: none;
+    border-right: none;
+}
+
 QFrame#topBar {
     background: #ffffff;
     border-bottom: 1px solid #dfe8f1;
@@ -95,6 +102,23 @@ QToolButton#navButton:checked {
     border-left: 3px solid #1687ee;
     padding-left: 9px;
     font-weight: 600;
+}
+
+QFrame#navTooltip {
+    background: #ffffff;
+    border: 1px solid #dfe8f1;
+    border-radius: 6px;
+}
+
+QLabel#navTooltipTitle {
+    color: #172947;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QLabel#navTooltipDescription {
+    color: #66809e;
+    font-size: 11px;
 }
 
 QFrame#card {
@@ -271,6 +295,60 @@ QPlainTextEdit {
     border-radius: 4px;
     font-family: "Consolas", "Microsoft YaHei UI", monospace;
     font-size: 11px;
+}
+
+QTextBrowser {
+    color: #5b7390;
+    background: #fbfdff;
+    border: 1px solid #e2eaf2;
+    border-radius: 4px;
+    font-family: "Consolas", "Microsoft YaHei UI", monospace;
+    font-size: 12px;
+}
+
+/* 固件页在缩放显示时提高字号，保证设备信息和命令文字可读。 */
+QWidget#firmwarePage {
+    font-size: 15px;
+}
+
+QWidget#firmwarePage QTableWidget,
+QWidget#firmwarePage QComboBox,
+QWidget#firmwarePage QPushButton,
+QWidget#firmwarePage QHeaderView::section {
+    font-size: 14px;
+}
+
+QWidget#firmwarePage QTextBrowser {
+    font-size: 12px;
+}
+
+/* 历史记录独立窗口使用更易阅读的字号。 */
+QDialog#historyDialog QLabel {
+    font-size: 15px;
+}
+
+QDialog#historyDialog QTextBrowser {
+    font-size: 14px;
+}
+
+QDialog#historyDialog QPushButton {
+    min-height: 30px;
+    padding: 4px 14px;
+    font-size: 14px;
+}
+
+/* 高级命令窗口：命令列表、说明和实时监视区使用统一的中文可读字号。 */
+QDialog#commandCenter QLabel,
+QDialog#commandCenter QListWidget,
+QDialog#commandCenter QComboBox,
+QDialog#commandCenter QLineEdit,
+QDialog#commandCenter QCheckBox,
+QDialog#commandCenter QPushButton {
+    font-size: 14px;
+}
+
+QDialog#commandCenter QTextBrowser {
+    font-size: 13px;
 }
 
 QScrollArea {

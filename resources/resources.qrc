@@ -2,4 +2,12 @@
     <qresource prefix="/theme">
         <file>theme.qss</file>
     </qresource>
+    <qresource prefix="/icons/nav">
+        <file alias="dashboard.png">nav_animation/dashboard.png</file>
+        <file alias="motor.png">nav_animation/motor.png</file>
+        <file alias="firmware.png">nav_animation/firmware.png</file>
+        <file alias="manipulator.png">nav_animation/manipulator.png</file>
+        <file alias="vision.png">nav_animation/vision.png</file>
+        <file alias="settings.png">nav_animation/settings.png</file>
+    </qresource>
 </RCC>
