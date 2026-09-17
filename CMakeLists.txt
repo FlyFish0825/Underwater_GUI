@@ -22,6 +22,15 @@ add_library(rov_preview STATIC
     src/preview/PreviewData.h
 )
 
+add_library(rov_communication STATIC
+    src/communication/protocol/CanGatewayProtocol.cpp
+    src/communication/protocol/CanGatewayProtocol.h
+    src/communication/service/BootloaderCommunicationService.cpp
+    src/communication/service/BootloaderCommunicationService.h
+    src/communication/transport/SerialTransport.cpp
+    src/communication/transport/SerialTransport.h
+)
+
 add_library(rov_page_dashboard STATIC
     src/pages/dashboard/DashboardPage.cpp
     src/pages/dashboard/DashboardPage.h
@@ -54,6 +63,7 @@ add_library(rov_page_settings STATIC
 
 add_executable(rov_ui
     resources/resources.qrc
+    resources/rov_ui.rc
     src/app/main.cpp
     src/app/MainWindow.cpp
     src/app/MainWindow.h
@@ -70,6 +80,7 @@ add_executable(rov_ui
 set(ROV_UI_TARGETS
     rov_ui_common
     rov_preview
+    rov_communication
     rov_page_dashboard
     rov_page_motor_debug
     rov_page_firmware
@@ -82,6 +93,8 @@ foreach(target IN LISTS ROV_UI_TARGETS)
     target_include_directories(${target} PUBLIC src)
     target_link_libraries(${target} PUBLIC Qt5::Core Qt5::Gui Qt5::Widgets)
 endforeach()
+
+target_link_libraries(rov_page_firmware PUBLIC rov_communication)
 
 target_include_directories(rov_ui PRIVATE src)
 
@@ -97,7 +110,12 @@ target_link_libraries(rov_ui PRIVATE
     rov_page_settings
     rov_preview
     rov_ui_common
+    rov_communication
 )
+
+if (WIN32)
+    target_link_libraries(rov_communication PRIVATE setupapi)
+endif()
 
 if (WIN32)
     set_target_properties(rov_ui PROPERTIES WIN32_EXECUTABLE TRUE)

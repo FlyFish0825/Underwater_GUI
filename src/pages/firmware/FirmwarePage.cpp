@@ -4,6 +4,7 @@
 #include "ui/common/UiPrimitives.h"
 
 #include <QFileDialog>
+#include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -103,6 +104,24 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
 
     auto *right = new QVBoxLayout;
     right->setSpacing(12);
+    auto *connectionCard = new CardWidget(QStringLiteral("USB CDC 通信"), IconKind::Action);
+    auto *connectionRow = new QHBoxLayout;
+    m_serialDeviceCombo = new QComboBox;
+    m_serialDeviceCombo->setMinimumWidth(250);
+    connectionRow->addWidget(m_serialDeviceCombo, 1);
+    auto *refreshSerial = makeButton(QStringLiteral("刷新设备"), QStringLiteral("softButton"));
+    connectionRow->addWidget(refreshSerial);
+    m_serialConnectButton = makeButton(QStringLiteral("接管串口"), QStringLiteral("primaryButton"));
+    connectionRow->addWidget(m_serialConnectButton);
+    connectionCard->contentLayout()->addLayout(connectionRow);
+    m_serialStatus = makeLabel(QStringLiteral("未连接 · VID_0483 PID_5740"), QStringLiteral("mutedLabel"));
+    m_serialStatus->setWordWrap(true);
+    connectionCard->contentLayout()->addWidget(m_serialStatus);
+    connectionCard->contentLayout()->addWidget(
+        makeLabel(QStringLiteral("USB CDC 不使用波特率；接收采用 AA55 帧的增量拆包。"),
+                  QStringLiteral("mutedLabel")));
+    right->addWidget(connectionCard, 0);
+
     auto *targetCard = new CardWidget(QStringLiteral("目标节点（6）"), IconKind::Firmware);
     m_nodeTable = new QTableWidget(0, 6);
     m_nodeTable->setHorizontalHeaderLabels(
@@ -188,6 +207,42 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                     QStringLiteral("请求升级 %1 个在线演示节点").arg(request.nodeIds.size()));
             });
 
+    m_communication = new BootloaderCommunicationService(this);
+    connect(refreshSerial, &QPushButton::clicked, this, &FirmwarePage::refreshSerialDevices);
+    connect(m_serialConnectButton, &QPushButton::clicked, this,
+            &FirmwarePage::toggleSerialConnection);
+    connect(m_communication, &BootloaderCommunicationService::opened, this,
+            [this](const QString &port)
+            {
+                m_serialConnectButton->setText(QStringLiteral("断开串口"));
+                m_serialStatus->setText(QStringLiteral("已接管 %1 · 等待下位机数据").arg(port));
+                logRequest(QStringLiteral("已打开 %1").arg(port));
+            });
+    connect(m_communication, &BootloaderCommunicationService::closed, this,
+            [this]()
+            {
+                m_serialConnectButton->setText(QStringLiteral("接管串口"));
+                m_serialStatus->setText(QStringLiteral("未连接 · VID_0483 PID_5740"));
+                logRequest(QStringLiteral("串口已断开"));
+            });
+    connect(m_communication, &BootloaderCommunicationService::errorOccurred, this,
+            [this](const QString &message)
+            {
+                m_serialStatus->setText(QStringLiteral("通信错误：%1").arg(message));
+                logRequest(QStringLiteral("错误：%1").arg(message));
+            });
+    connect(m_communication, &BootloaderCommunicationService::rawBytesReceived, this,
+            [this](const QByteArray &bytes)
+            {
+                logRequest(QStringLiteral("RX %1 字节：%2")
+                               .arg(bytes.size())
+                               .arg(QString(bytes.toHex(' ').toUpper())));
+            });
+    connect(m_communication, &BootloaderCommunicationService::frameReceived, this,
+            [this](const CanGatewayFrame &frame)
+            { logRequest(QStringLiteral("解析到 %1").arg(describeCanGatewayFrame(frame))); });
+
+    refreshSerialDevices();
     setSnapshot(firmwarePreview());
 }
 
@@ -227,11 +282,56 @@ void FirmwarePage::refreshView()
     }
 }
 
+void FirmwarePage::refreshSerialDevices()
+{
+    if (m_serialDeviceCombo == nullptr)
+        return;
+    m_serialDevices = m_communication->enumerateDevices();
+    m_serialDeviceCombo->clear();
+    for (const auto &device : m_serialDevices)
+    {
+        const QString name = device.displayName.isEmpty() ? device.portName : device.displayName;
+        m_serialDeviceCombo->addItem(QStringLiteral("%1 · %2").arg(device.portName, name));
+    }
+    if (m_serialDevices.isEmpty())
+    {
+        m_serialDeviceCombo->addItem(QStringLiteral("未发现 VID_0483 PID_5740 设备"));
+        m_serialStatus->setText(QStringLiteral("未发现 Lamost USB CDC 虚拟串口"));
+        logRequest(QStringLiteral("刷新设备：未发现 VID_0483 PID_5740"));
+    }
+    else
+    {
+        m_serialStatus->setText(QStringLiteral("发现 %1 个匹配设备").arg(m_serialDevices.size()));
+        logRequest(QStringLiteral("刷新设备：发现 %1 个匹配设备").arg(m_serialDevices.size()));
+    }
+}
+
+void FirmwarePage::toggleSerialConnection()
+{
+    if (m_communication == nullptr)
+        return;
+    if (m_communication->isOpen())
+    {
+        m_communication->close();
+        return;
+    }
+    const int index = m_serialDeviceCombo == nullptr ? -1 : m_serialDeviceCombo->currentIndex();
+    if (index < 0 || index >= m_serialDevices.size())
+    {
+        logRequest(QStringLiteral("请先刷新并选择 VID_0483 PID_5740 设备"));
+        return;
+    }
+    m_communication->open(m_serialDevices.at(index));
+}
+
 void FirmwarePage::logRequest(const QString &message)
 {
     if (m_requestLog != nullptr)
     {
-        m_requestLog->setText(QStringLiteral("%1 · 不执行 Bootloader 或 CAN 操作").arg(message));
+        m_runtimeLog.append(message);
+        while (m_runtimeLog.size() > 12)
+            m_runtimeLog.removeFirst();
+        m_requestLog->setText(m_runtimeLog.join(QStringLiteral("\n")));
     }
 }
 

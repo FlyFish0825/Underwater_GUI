@@ -1,6 +1,6 @@
 # ROV Qt 上位机
 
-这是水下机器人 ROV 的 Qt Widgets 上位机工程。当前阶段以 **UI、页面契约、可重复 Preview 和请求日志** 为主，暂不实现 MCU/Nano 驱动、串口、CAN、TCP/UDP、真实 Bootloader、真实电机控制、摄像头和视觉算法。
+这是水下机器人 ROV 的 Qt Widgets 上位机工程。当前已在固件升级页接入 **Windows USB CDC 虚拟串口发现、VID/PID 筛选、串口接管、原始字节接收和 CAN 网关 AA55 增量拆包**；Bootloader 命令、真实升级流程及其他设备驱动仍按任务卡逐步实现。
 
 ## 开始开发前必须阅读
 
@@ -19,7 +19,7 @@
 src/app/             主窗口和应用入口
 src/pages/           Dashboard、Motor Debug、Firmware、Manipulator、Vision、Settings
 src/contracts/       页面快照和请求契约
-src/communication/   通信分层占位及协议边界
+src/communication/   USB CDC 传输与 CAN 网关协议解析
 src/data/            Service/Data 层占位
 src/ui/              公共控件和主题
 resources/           Qt 资源和统一 QSS
@@ -33,7 +33,7 @@ agent/               Agent 提示词、通信规范和参考图
 UI → Service/Data → Protocol → Transport
 ```
 
-页面不得直接访问串口、协议解析器或原始字节流；页面只接收 Snapshot，并输出类型明确的 Request。
+页面不得自行实现串口或协议细节；固件页仅通过通信层提供的设备枚举、连接状态和解析结果接收数据。
 
 ## 编译与运行
 
@@ -58,6 +58,10 @@ UI → Service/Data → Protocol → Transport
 ## Git 约定
 
 `build/`、`toolchain/`、日志、缓存和编译产物只保留在本机，不提交到 Git。源码、文档、协议规范、资源和参考图可以提交。完整规则见根目录 `.gitignore`。
+
+## USB CDC 通信
+
+固件页按底层 `CAN_To_Uart` 工程筛选 `VID_0483`、`PID_5740`（十六进制），点击“刷新设备”后选择串口，再点击“接管串口”。USB CDC 不使用波特率；界面收到字节后会显示原始 HEX，并按 `AA 55 ... CRC8 55 AA` 规则拆出 CAN 帧。当前不会自动发送 Bootloader 命令，便于先验证下位机每秒上报的数据。
 
 多人协作请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。所有开发者和 Agent 都必须先阅读 `agent/` 目录中的统一提示词及通信分层规范，从 `main` 创建功能分支，通过 Pull Request 合并；不要直接向 `main` 推送。
 

@@ -1,5 +1,6 @@
-# Communication boundary
+# 通信层边界
 
-The current phase deliberately does not implement serial, USB, CAN, TCP/UDP,
-reconnect, Nano forwarding, or device drivers. Future transport and protocol
-code belongs below this directory and must not be included by a page.
+当前已实现 Windows USB CDC 虚拟串口传输和 CAN 网关协议解析。传输层负责
+VID/PID 枚举、打开/关闭、收发字节和错误通知；协议层负责 AA55 帧的增量
+拆包、CRC8 校验以及 CAN 帧编解码。Bootloader 命令、重连策略和业务服务仍
+应在后续任务中增加，页面不得复制这些底层细节。
