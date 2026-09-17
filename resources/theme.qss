@@ -127,6 +127,18 @@ QFrame#card {
     border-radius: 7px;
 }
 
+/* 固件文件拖放卡片：拖入可接受文件时用蓝色边框和浅色背景提示。 */
+QFrame#firmwareDropZone {
+    background: #fbfdff;
+    border: 1px dashed #cbdceb;
+    border-radius: 5px;
+}
+
+QFrame#firmwareDropZone[dropActive="true"] {
+    background: #eaf4ff;
+    border: 2px dashed #1685df;
+}
+
 QFrame#cardHeader {
     background: transparent;
     border-bottom: 1px solid #edf2f7;

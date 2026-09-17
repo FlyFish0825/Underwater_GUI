@@ -49,6 +49,8 @@ class FirmwarePage final : public QWidget
     void refreshView();
     void refreshSerialDevices();
     void toggleSerialConnection();
+    void browseFirmwareFile();
+    bool loadFirmwareFile(const QString &path);
     void selectNode(int index);
     void selectTableRow(int row, int column);
     void sendCommonCommand(BootCommand command, const QString &label, quint8 byte2 = 0,
@@ -66,7 +68,10 @@ class FirmwarePage final : public QWidget
     QLabel *m_fileSize = nullptr;
     QLabel *m_checksum = nullptr;
     QLabel *m_description = nullptr;
+    QLabel *m_dropTitle = nullptr;
+    QLabel *m_dropHint = nullptr;
     QTextBrowser *m_requestLog = nullptr;
+    QFrame *m_dropZone = nullptr;
     QFrame *m_connectionBar = nullptr;
     QTableWidget *m_nodeTable = nullptr;
     QComboBox *m_serialDeviceCombo = nullptr;
@@ -78,6 +83,7 @@ class FirmwarePage final : public QWidget
     // 高级命令窗口关闭后自动清空，支持重复打开。
     QPointer<BootloaderCommandDialog> m_commandDialog;
     QStringList m_runtimeLog;
+    QString m_firmwarePath;
     QTimer *m_heartbeatWatchdog = nullptr;
     QTimer *m_deviceScanTimer = nullptr;
     quint64 m_heartbeatCount = 0;

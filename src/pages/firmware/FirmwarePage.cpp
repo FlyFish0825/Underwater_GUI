@@ -8,12 +8,19 @@
 #include "ui/common/UiPrimitives.h"
 
 #include <QDateTime>
+#include <QCryptographicHash>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QComboBox>
 #include <QHash>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QLocale>
+#include <QMimeData>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -24,10 +31,136 @@
 #include <QTextEdit>
 #include <QRegularExpression>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
+#include <functional>
 
 namespace
 {
+
+bool isSupportedFirmwarePath(const QString &path)
+{
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    return suffix == QStringLiteral("bin") || suffix == QStringLiteral("hex")
+           || suffix == QStringLiteral("uf2");
+}
+
+QString firstFirmwareUrl(const QMimeData *mimeData)
+{
+    if (mimeData == nullptr || !mimeData->hasUrls())
+        return {};
+
+    for (const QUrl &url : mimeData->urls())
+    {
+        if (!url.isLocalFile())
+            continue;
+        const QString path = url.toLocalFile();
+        if (isSupportedFirmwarePath(path))
+            return path;
+    }
+    return {};
+}
+
+class FirmwareDropZone final : public QFrame
+{
+  public:
+    using FileHandler = std::function<void(const QString &)>;
+
+    explicit FirmwareDropZone(QWidget *parent = nullptr) : QFrame(parent)
+    {
+        setAcceptDrops(true);
+        setObjectName(QStringLiteral("firmwareDropZone"));
+    }
+
+    void setFileHandler(FileHandler handler) { m_fileHandler = std::move(handler); }
+
+  protected:
+    void dragEnterEvent(QDragEnterEvent *event) override
+    {
+        if (!firstFirmwareUrl(event->mimeData()).isEmpty())
+        {
+            setDropActive(true);
+            event->acceptProposedAction();
+            return;
+        }
+        event->ignore();
+    }
+
+    void dragMoveEvent(QDragMoveEvent *event) override
+    {
+        if (!firstFirmwareUrl(event->mimeData()).isEmpty())
+        {
+            event->acceptProposedAction();
+            return;
+        }
+        event->ignore();
+    }
+
+    void dragLeaveEvent(QDragLeaveEvent *event) override
+    {
+        setDropActive(false);
+        event->accept();
+    }
+
+    void dropEvent(QDropEvent *event) override
+    {
+        const QString path = firstFirmwareUrl(event->mimeData());
+        setDropActive(false);
+        if (path.isEmpty())
+        {
+            event->ignore();
+            return;
+        }
+        event->acceptProposedAction();
+        if (m_fileHandler)
+            m_fileHandler(path);
+    }
+
+  private:
+    void setDropActive(const bool active)
+    {
+        if (property("dropActive").toBool() == active)
+            return;
+        setProperty("dropActive", active);
+        if (style() != nullptr)
+        {
+            style()->unpolish(this);
+            style()->polish(this);
+        }
+        update();
+    }
+
+    FileHandler m_fileHandler;
+};
+
+QString humanFileSize(const qint64 bytes)
+{
+    const QString exact = QLocale().toString(bytes);
+    if (bytes < 1024)
+        return QStringLiteral("%1 B (%2 字节)").arg(bytes).arg(exact);
+    if (bytes < 1024 * 1024)
+        return QStringLiteral("%1 KB (%2 字节)").arg(bytes / 1024.0, 0, 'f', 1).arg(exact);
+    return QStringLiteral("%1 MB (%2 字节)").arg(bytes / (1024.0 * 1024.0), 0, 'f', 2).arg(exact);
+}
+
+QString firmwareVersionFromName(const QString &baseName)
+{
+    static const QRegularExpression versionPattern(
+        QStringLiteral("(?:^|[^0-9])v?(\\d+)\\.(\\d+)\\.(\\d+)(?:[^0-9]|$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = versionPattern.match(baseName);
+    if (!match.hasMatch())
+        return QStringLiteral("未识别");
+    return QStringLiteral("v%1.%2.%3").arg(match.captured(1), match.captured(2), match.captured(3));
+}
+
+QString shortSha256(const QByteArray &digest)
+{
+    const QString hex = QString::fromLatin1(digest.toHex()).toLower();
+    if (hex.size() <= 24)
+        return hex;
+    return QStringLiteral("%1…%2").arg(hex.left(12), hex.right(12));
+}
 
 QString firmwareStateText(const rov::FirmwareState state)
 {
@@ -222,8 +355,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     auto *mainRow = new QHBoxLayout;
     mainRow->setSpacing(12);
     auto *fileCard = new CardWidget(QStringLiteral("固件文件"), IconKind::File);
-    auto *dropZone = new QFrame;
-    dropZone->setObjectName(QStringLiteral("card"));
+    auto *dropZone = new FirmwareDropZone;
+    m_dropZone = dropZone;
     dropZone->setMinimumHeight(78);
     auto *dropLayout = new QHBoxLayout(dropZone);
     dropLayout->setContentsMargins(10, 6, 10, 6);
@@ -233,11 +366,14 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     dropLayout->addWidget(fileIcon, 0, Qt::AlignVCenter);
     auto *dropText = new QVBoxLayout;
     dropText->setSpacing(1);
-    dropText->addWidget(
-        makeLabel(QStringLiteral("将固件文件拖放到此处 · 或点击浏览"), QStringLiteral("bodyValue")));
-    dropText->addWidget(
-        makeLabel(QStringLiteral("支持格式：.bin、.hex、.uf2"), QStringLiteral("mutedLabel")));
+    m_dropTitle = makeLabel(QStringLiteral("将固件文件拖放到此处"), QStringLiteral("bodyValue"));
+    m_dropHint = makeLabel(QStringLiteral("支持格式：.bin、.hex、.uf2"), QStringLiteral("mutedLabel"));
+    dropText->addWidget(m_dropTitle);
+    dropText->addWidget(m_dropHint);
     dropLayout->addLayout(dropText, 1);
+    auto *browse = makeButton(QStringLiteral("浏览…"), QStringLiteral("softButton"));
+    browse->setToolTip(QStringLiteral("选择本地 .bin、.hex 或 .uf2 固件文件"));
+    dropLayout->addWidget(browse, 0, Qt::AlignVCenter);
     fileCard->contentLayout()->addWidget(dropZone);
     auto *info = new QGridLayout;
     info->setVerticalSpacing(8);
@@ -421,6 +557,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                 emit verifyRequested();
                 logRequest(QStringLiteral("请求校验；不执行设备操作"));
             });
+    dropZone->setFileHandler([this](const QString &path) { loadFirmwareFile(path); });
+    connect(browse, &QPushButton::clicked, this, &FirmwarePage::browseFirmwareFile);
     connect(update, &QPushButton::clicked, this,
             [this]()
             {
@@ -432,7 +570,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                         request.nodeIds.append(node.nodeId);
                     }
                 }
-                request.firmwarePath = m_snapshot.fileName;
+                request.firmwarePath = m_firmwarePath.isEmpty() ? m_snapshot.fileName : m_firmwarePath;
                 emit upgradeRequested(request);
                 logRequest(
                     QStringLiteral("请求升级 %1 个在线演示节点").arg(request.nodeIds.size()));
@@ -550,7 +688,72 @@ QWidget *FirmwarePage::connectionBar() const
 void FirmwarePage::setSnapshot(const FirmwareSnapshot &snapshot)
 {
     m_snapshot = snapshot;
+    // 演示快照没有真实文件路径；真正拖入/选择文件后由 m_firmwarePath 覆盖。
+    if (m_snapshot.fileName.isEmpty())
+        m_firmwarePath.clear();
     refreshView();
+}
+
+void FirmwarePage::browseFirmwareFile()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("选择固件文件"), QString(),
+        QStringLiteral("固件文件 (*.bin *.hex *.uf2);;BIN 文件 (*.bin);;HEX 文件 (*.hex);;UF2 文件 (*.uf2)"));
+    if (!path.isEmpty())
+        loadFirmwareFile(path);
+}
+
+bool FirmwarePage::loadFirmwareFile(const QString &path)
+{
+    const QFileInfo fileInfo(path);
+    if (!fileInfo.exists() || !fileInfo.isFile() || !fileInfo.isReadable())
+    {
+        logRequest(QStringLiteral("错误：无法读取固件文件：%1").arg(path));
+        return false;
+    }
+    if (!isSupportedFirmwarePath(path))
+    {
+        logRequest(QStringLiteral("错误：不支持的固件格式：%1（仅支持 .bin、.hex、.uf2）")
+                       .arg(fileInfo.fileName()));
+        return false;
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        logRequest(QStringLiteral("错误：打开固件失败：%1").arg(file.errorString()));
+        return false;
+    }
+
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    while (!file.atEnd())
+    {
+        const QByteArray chunk = file.read(1024 * 1024);
+        if (chunk.isEmpty() && !file.atEnd())
+        {
+            logRequest(QStringLiteral("错误：读取固件失败：%1").arg(file.errorString()));
+            return false;
+        }
+        hash.addData(chunk);
+    }
+    file.close();
+
+    m_firmwarePath = fileInfo.absoluteFilePath();
+    m_snapshot.fileName = fileInfo.fileName();
+    m_snapshot.fileVersion = firmwareVersionFromName(fileInfo.completeBaseName());
+    m_snapshot.fileSize = humanFileSize(fileInfo.size());
+    m_snapshot.checksum = shortSha256(hash.result());
+    m_snapshot.fileDescription = QStringLiteral("已载入本地固件，可用于升级请求；当前不会自动刷写设备。\n路径：%1")
+                                     .arg(m_firmwarePath);
+    refreshView();
+    if (m_dropTitle != nullptr)
+        m_dropTitle->setText(QStringLiteral("已加载：%1").arg(m_snapshot.fileName));
+    if (m_dropHint != nullptr)
+        m_dropHint->setText(QStringLiteral("拖入其他文件可替换 · %1").arg(m_snapshot.fileVersion));
+    logRequest(QStringLiteral("已载入固件：%1 · %2 · SHA-256 %3")
+                   .arg(m_snapshot.fileName, m_snapshot.fileSize, m_snapshot.checksum));
+    emit firmwareFileSelected(FirmwareFileRequest{m_firmwarePath});
+    return true;
 }
 
 void FirmwarePage::refreshView()
