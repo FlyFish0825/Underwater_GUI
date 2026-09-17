@@ -13,6 +13,8 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt5 5.9 REQUIRED COMPONENTS Core Gui Widgets)
 
 add_library(rov_ui_common STATIC
+    src/ui/common/AnimatedNavButton.cpp
+    src/ui/common/AnimatedNavButton.h
     src/ui/common/UiPrimitives.cpp
     src/ui/common/UiPrimitives.h
 )
@@ -23,12 +25,24 @@ add_library(rov_preview STATIC
 )
 
 add_library(rov_communication STATIC
+    src/communication/bootloader/BootloaderProtocol.cpp
+    src/communication/bootloader/BootloaderProtocol.h
+    src/communication/bootloader/BootloaderService.cpp
+    src/communication/bootloader/BootloaderService.h
+    src/communication/bootloader/BootloaderTypes.h
     src/communication/protocol/CanGatewayProtocol.cpp
     src/communication/protocol/CanGatewayProtocol.h
+    src/communication/protocol/SystemHeartbeatProtocol.cpp
+    src/communication/protocol/SystemHeartbeatProtocol.h
     src/communication/service/BootloaderCommunicationService.cpp
     src/communication/service/BootloaderCommunicationService.h
     src/communication/transport/SerialTransport.cpp
     src/communication/transport/SerialTransport.h
+)
+
+add_library(rov_firmware_history STATIC
+    src/data/store/FirmwareHistoryStore.cpp
+    src/data/store/FirmwareHistoryStore.h
 )
 
 add_library(rov_page_dashboard STATIC
@@ -42,6 +56,12 @@ add_library(rov_page_motor_debug STATIC
 )
 
 add_library(rov_page_firmware STATIC
+    src/pages/firmware/BootloaderCommandDialog.cpp
+    src/pages/firmware/BootloaderCommandDialog.h
+    src/pages/firmware/FirmwareHistoryDialog.cpp
+    src/pages/firmware/FirmwareHistoryDialog.h
+    src/pages/firmware/FirmwareLogFormatter.cpp
+    src/pages/firmware/FirmwareLogFormatter.h
     src/pages/firmware/FirmwarePage.cpp
     src/pages/firmware/FirmwarePage.h
 )
@@ -81,6 +101,7 @@ set(ROV_UI_TARGETS
     rov_ui_common
     rov_preview
     rov_communication
+    rov_firmware_history
     rov_page_dashboard
     rov_page_motor_debug
     rov_page_firmware
@@ -95,6 +116,7 @@ foreach(target IN LISTS ROV_UI_TARGETS)
 endforeach()
 
 target_link_libraries(rov_page_firmware PUBLIC rov_communication)
+target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history)
 
 target_include_directories(rov_ui PRIVATE src)
 

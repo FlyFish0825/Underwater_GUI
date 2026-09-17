@@ -12,6 +12,8 @@ BootloaderCommunicationService::BootloaderCommunicationService(QObject *parent)
                 emit rawBytesReceived(bytes);
                 for (const auto &frame : m_decoder.feed(bytes))
                     emit frameReceived(frame);
+                for (const auto &heartbeat : m_heartbeatDecoder.feed(bytes))
+                    emit heartbeatReceived(heartbeat);
                 if (!m_decoder.lastError().isEmpty())
                     emit errorOccurred(m_decoder.lastError());
             });
@@ -29,6 +31,7 @@ QVector<SerialDeviceInfo> BootloaderCommunicationService::enumerateDevices() con
 bool BootloaderCommunicationService::open(const SerialDeviceInfo &device)
 {
     m_decoder.reset();
+    m_heartbeatDecoder.reset();
     return m_transport->open(device);
 }
 
@@ -40,6 +43,17 @@ void BootloaderCommunicationService::close()
 bool BootloaderCommunicationService::isOpen() const
 {
     return m_transport->isOpen();
+}
+
+bool BootloaderCommunicationService::sendCanFrame(const CanGatewayFrame &frame)
+{
+    const QByteArray packet = encodeCanGatewayFrame(frame);
+    if (packet.isEmpty())
+    {
+        emit errorOccurred(QStringLiteral("CAN 帧参数非法，无法封装"));
+        return false;
+    }
+    return m_transport->writeBytes(packet);
 }
 
 } // namespace rov
