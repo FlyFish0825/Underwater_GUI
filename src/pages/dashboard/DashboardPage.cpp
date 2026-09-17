@@ -4,25 +4,137 @@
 #include "ui/common/UiPrimitives.h"
 
 #include <QCheckBox>
+#include <QDateTime>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
-#include <QPainterPath>
+#include <QPen>
+#include <QPixmap>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QStyle>
 #include <QVBoxLayout>
+#include <QVariant>
+
+#include <algorithm>
 
 namespace
 {
+
+enum class ControlAxis
+{
+    Surge,
+    Sway,
+    Heave,
+    Roll,
+    Pitch,
+    Yaw
+};
+
+bool hasSystemData(const rov::DashboardSnapshot &snapshot)
+{
+    return snapshot.systemStamp.validity == rov::DataValidity::Valid &&
+           snapshot.systemStamp.freshness != rov::DataFreshness::Offline;
+}
+
+void setTone(QLabel *label, const QString &tone)
+{
+    if (label == nullptr)
+    {
+        return;
+    }
+    label->setProperty("dashboardTone", QVariant(tone));
+    label->style()->unpolish(label);
+    label->style()->polish(label);
+}
+
+QString formatNumber(const bool available, const double value, const int precision,
+                     const QString &suffix = QString())
+{
+    if (!available)
+    {
+        return QStringLiteral("--");
+    }
+    return QStringLiteral("%1%2").arg(value, 0, 'f', precision).arg(suffix);
+}
+
+QPushButton *axisButton(const QString &text, QWidget *parent)
+{
+    auto *button = rov::makeButton(text, QStringLiteral("softButton"), parent);
+    button->setProperty("dashboardAxis", true);
+    button->setFixedSize(30, 25);
+    button->setFocusPolicy(Qt::NoFocus);
+    return button;
+}
+
+class MiniBarChart final : public QWidget
+{
+  public:
+    explicit MiniBarChart(const QColor &color, QWidget *parent = nullptr)
+        : QWidget(parent), m_color(color)
+    {
+        setMinimumSize(72, 34);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    }
+
+    QSize sizeHint() const override
+    {
+        return QSize(104, 38);
+    }
+
+    void setValues(const QVector<double> &values)
+    {
+        m_values = values;
+        update();
+    }
+
+  protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event)
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(QStringLiteral("#dce6ef")), 1));
+        painter.drawLine(0, height() - 2, width(), height() - 2);
+
+        if (m_values.isEmpty())
+        {
+            painter.setPen(QColor(QStringLiteral("#9cafc1")));
+            painter.drawText(rect(), Qt::AlignCenter, QStringLiteral("--"));
+            return;
+        }
+
+        const double maximum = *std::max_element(m_values.constBegin(), m_values.constEnd());
+        const double safeMaximum = maximum > 0.0 ? maximum : 1.0;
+        const qreal gap = 3.0;
+        const qreal barWidth = qMax(3.0, (width() - gap * (m_values.size() + 1)) /
+                                             static_cast<qreal>(m_values.size()));
+        const qreal baseline = height() - 3.0;
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(m_color);
+        for (int i = 0; i < m_values.size(); ++i)
+        {
+            const qreal x = gap + i * (barWidth + gap);
+            const qreal barHeight = qBound(3.0, (m_values.at(i) / safeMaximum) * (height() - 8),
+                                           static_cast<qreal>(height() - 8));
+            painter.drawRoundedRect(QRectF(x, baseline - barHeight, barWidth, barHeight), 2, 2);
+        }
+    }
+
+  private:
+    QColor m_color;
+    QVector<double> m_values;
+};
 
 class RovTopView final : public QWidget
 {
   public:
     explicit RovTopView(QWidget *parent = nullptr) : QWidget(parent)
     {
-        setMinimumSize(280, 280);
+        m_image.load(QStringLiteral(":/dashboard/rov_top_view.png"));
+        setMinimumSize(250, 350);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
 
@@ -33,108 +145,164 @@ class RovTopView final : public QWidget
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         painter.fillRect(rect(), Qt::white);
-        const QColor blue(QStringLiteral("#1687ee"));
-        const QColor dark(QStringLiteral("#203b60"));
-        const QColor light(QStringLiteral("#eaf2f9"));
-        const QPointF center(width() * 0.50, height() * 0.52);
-        const qreal bodyW = qMin(width() * 0.27, 132.0);
-        const qreal bodyH = qMin(height() * 0.64, 270.0);
-        const QRectF body(center.x() - bodyW / 2.0, center.y() - bodyH / 2.0, bodyW, bodyH);
 
-        painter.setPen(QPen(dark, 2));
-        painter.setBrush(QColor(QStringLiteral("#f4f7fa")));
-        painter.drawRoundedRect(body, bodyW / 2.0, bodyW / 2.0);
-        painter.setBrush(Qt::NoBrush);
-        painter.setPen(QPen(QColor(QStringLiteral("#8ba0b8")), 1.4));
-        painter.drawEllipse(QPointF(center.x(), body.top() + 28), 7, 7);
-        painter.drawEllipse(QPointF(center.x(), body.bottom() - 30), 5, 5);
-        painter.drawLine(center.x(), body.top() + 50, center.x(), body.bottom() - 52);
-        painter.drawLine(body.left() + 18, center.y(), body.right() - 18, center.y());
-
-        const QPointF positions[] = {QPointF(body.left() - 48, body.top() + 30),
-                                     QPointF(body.right() + 48, body.top() + 30),
-                                     QPointF(body.left() - 55, center.y()),
-                                     QPointF(body.right() + 55, center.y()),
-                                     QPointF(body.left() - 48, body.bottom() - 30),
-                                     QPointF(body.right() + 48, body.bottom() - 30)};
-        const QStringList labels = {QStringLiteral("FL"), QStringLiteral("FR"),
-                                    QStringLiteral("ML"), QStringLiteral("MR"),
-                                    QStringLiteral("RL"), QStringLiteral("RR")};
-        painter.setFont(QFont(QStringLiteral("Segoe UI"), 9, QFont::DemiBold));
-        for (int i = 0; i < 6; ++i)
+        if (!m_image.isNull())
         {
-            const QPointF p = positions[i];
-            painter.setPen(QPen(QColor(QStringLiteral("#a5b7c9")), 1));
-            painter.drawLine(QPointF(p.x() < center.x() ? body.left() : body.right(), p.y()), p);
-            painter.setPen(QPen(QColor(QStringLiteral("#223c5f")), 1.3));
-            painter.setBrush(QColor(QStringLiteral("#313d4b")));
-            painter.drawEllipse(p, 21, 21);
-            painter.setBrush(QColor(QStringLiteral("#1f97ea")));
-            painter.drawEllipse(p, 10, 10);
-            painter.setPen(QPen(QColor(QStringLiteral("#85c9f5")), 1.1));
-            painter.drawLine(p + QPointF(-7, -7), p + QPointF(7, 7));
-            painter.drawLine(p + QPointF(-7, 7), p + QPointF(7, -7));
-            painter.setPen(dark);
-            const QRectF labelRect(p.x() < center.x() ? p.x() - 41 : p.x() + 25, p.y() - 10, 28,
-                                   20);
-            painter.drawText(labelRect, Qt::AlignCenter, labels.at(i));
-            painter.setBrush(QColor(QStringLiteral("#10a85e")));
-            painter.drawEllipse(p + QPointF(p.x() < center.x() ? -29 : 29, -17), 4, 4);
+            const QRectF target = QRectF(rect()).adjusted(8, 8, -8, -8);
+            const QSize scaledSize =
+                m_image.size().scaled(target.size().toSize(), Qt::KeepAspectRatio);
+            const QRectF imageRect(QPointF(target.center().x() - scaledSize.width() / 2.0,
+                                           target.center().y() - scaledSize.height() / 2.0),
+                                   scaledSize);
+            painter.drawPixmap(imageRect, m_image, m_image.rect());
+            return;
         }
-        painter.setPen(QPen(QColor(QStringLiteral("#728aa5")), 1.2));
-        painter.drawLine(center.x(), body.top() - 28, center.x(), body.top() - 7);
-        painter.drawLine(center.x(), body.top() - 28, center.x() - 5, body.top() - 20);
-        painter.drawLine(center.x(), body.top() - 28, center.x() + 5, body.top() - 20);
-        painter.drawText(QRectF(center.x() - 25, body.top() - 52, 50, 18), Qt::AlignCenter,
+
+        const QColor dark(QStringLiteral("#203b60"));
+        const QColor outline(QStringLiteral("#a9bacb"));
+        const QColor blue(QStringLiteral("#1687ee"));
+        const QPointF center(width() * 0.50, height() * 0.53);
+        const qreal bodyWidth = qMin(width() * 0.25, 126.0);
+        const qreal bodyHeight = qMin(height() * 0.66, 278.0);
+        const QRectF body(center.x() - bodyWidth / 2.0, center.y() - bodyHeight / 2.0, bodyWidth,
+                          bodyHeight);
+
+        painter.setPen(QPen(QColor(QStringLiteral("#d8e3ec")), 3));
+        painter.setBrush(QColor(QStringLiteral("#f1f5f8")));
+        painter.drawRoundedRect(body.adjusted(4, 4, 4, 4), bodyWidth / 2.0, bodyWidth / 2.0);
+        painter.setPen(QPen(dark, 2));
+        painter.setBrush(QColor(QStringLiteral("#f8fafc")));
+        painter.drawRoundedRect(body, bodyWidth / 2.0, bodyWidth / 2.0);
+
+        painter.setPen(QPen(outline, 1.2));
+        painter.drawLine(center.x(), body.top() + 48, center.x(), body.bottom() - 48);
+        painter.drawLine(body.left() + 18, center.y(), body.right() - 18, center.y());
+        painter.drawEllipse(QPointF(center.x(), body.top() + 28), 7, 7);
+        painter.drawEllipse(QPointF(center.x(), body.bottom() - 29), 5, 5);
+        painter.drawRoundedRect(QRectF(center.x() - 9, body.top() + 61, 18, 22), 4, 4);
+        painter.drawRoundedRect(QRectF(center.x() - 8, body.bottom() - 82, 16, 22), 4, 4);
+
+        // URDF mapping: X is front/rear and Y is left/right in the top view.
+        // T1..T4 are outer horizontal units; T5..T8 are inner vertical units.
+        const QPointF thrusters[] = {QPointF(body.left() - 48, body.top() + 38),
+                                     QPointF(body.right() + 48, body.top() + 38),
+                                     QPointF(body.left() - 48, body.bottom() - 38),
+                                     QPointF(body.right() + 48, body.bottom() - 38),
+                                     QPointF(body.left() - 37, body.top() + 92),
+                                     QPointF(body.right() + 37, body.top() + 92),
+                                     QPointF(body.left() - 37, body.bottom() - 92),
+                                     QPointF(body.right() + 37, body.bottom() - 92)};
+        const QStringList labels = {
+            QStringLiteral("T1"), QStringLiteral("T2"), QStringLiteral("T3"), QStringLiteral("T4"),
+            QStringLiteral("T5"), QStringLiteral("T6"), QStringLiteral("T7"), QStringLiteral("T8")};
+        painter.setFont(QFont(QStringLiteral("Segoe UI"), 9, QFont::DemiBold));
+        for (int i = 0; i < rov::kDashboardThrusterCount; ++i)
+        {
+            const QPointF position = thrusters[i];
+            const bool leftSide = position.x() < center.x();
+            painter.setPen(QPen(outline, 1));
+            painter.drawLine(QPointF(leftSide ? body.left() : body.right(), position.y()),
+                             position);
+            const bool horizontal = i < 4;
+            painter.setPen(QPen(dark, 1.3));
+            painter.setBrush(QColor(QStringLiteral("#34485e")));
+            if (horizontal)
+            {
+                painter.drawEllipse(position, 21, 21);
+            }
+            else
+            {
+                painter.drawRoundedRect(QRectF(position.x() - 15, position.y() - 19, 30, 38), 7, 7);
+            }
+            painter.setBrush(blue);
+            if (horizontal)
+            {
+                painter.drawEllipse(position, 10, 10);
+            }
+            else
+            {
+                painter.drawEllipse(position, 7, 11);
+            }
+            painter.setPen(QPen(QColor(QStringLiteral("#9dd5f8")), 1.1));
+            painter.drawLine(position + QPointF(-7, -7), position + QPointF(7, 7));
+            painter.drawLine(position + QPointF(-7, 7), position + QPointF(7, -7));
+            painter.setPen(dark);
+            painter.drawText(
+                QRectF(leftSide ? position.x() - 42 : position.x() + 24, position.y() - 10, 28, 20),
+                Qt::AlignCenter, labels.at(i));
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(QStringLiteral("#10a85e")));
+            painter.drawEllipse(position + QPointF(leftSide ? -29 : 29, -17), 4, 4);
+        }
+
+        painter.setPen(QPen(QColor(QStringLiteral("#7189a3")), 1.2));
+        painter.drawLine(center.x(), body.top() - 29, center.x(), body.top() - 7);
+        painter.drawLine(center.x(), body.top() - 29, center.x() - 5, body.top() - 21);
+        painter.drawLine(center.x(), body.top() - 29, center.x() + 5, body.top() - 21);
+        painter.drawText(QRectF(center.x() - 26, body.top() - 52, 52, 18), Qt::AlignCenter,
                          QStringLiteral("前方"));
-        painter.drawLine(center.x(), body.bottom() + 7, center.x(), body.bottom() + 28);
-        painter.drawLine(center.x(), body.bottom() + 28, center.x() - 5, body.bottom() + 20);
-        painter.drawLine(center.x(), body.bottom() + 28, center.x() + 5, body.bottom() + 20);
-        painter.drawText(QRectF(center.x() - 25, body.bottom() + 34, 50, 18), Qt::AlignCenter,
+        painter.drawLine(center.x(), body.bottom() + 7, center.x(), body.bottom() + 29);
+        painter.drawLine(center.x(), body.bottom() + 29, center.x() - 5, body.bottom() + 21);
+        painter.drawLine(center.x(), body.bottom() + 29, center.x() + 5, body.bottom() + 21);
+        painter.drawText(QRectF(center.x() - 26, body.bottom() + 34, 52, 18), Qt::AlignCenter,
                          QStringLiteral("后方"));
     }
+
+  private:
+    QPixmap m_image;
 };
 
 QWidget *metricTile(const QString &label, QLabel *&value, const QString &initial)
 {
     auto *tile = new QFrame;
     tile->setObjectName(QStringLiteral("card"));
+    tile->setMinimumHeight(52);
     auto *layout = new QVBoxLayout(tile);
-    layout->setContentsMargins(12, 9, 12, 9);
-    layout->setSpacing(3);
+    layout->setContentsMargins(12, 8, 12, 8);
+    layout->setSpacing(2);
     layout->addWidget(rov::makeMetricLabel(label));
     value = rov::makeMetricValue(initial);
     layout->addWidget(value);
     return tile;
 }
 
-QWidget *thrusterTile(const rov::ThrusterTelemetry &item)
+QWidget *thrusterTile(const rov::ThrusterTelemetry &item, QLabel *&rpmValue, QLabel *&currentValue,
+                      QLabel *&temperatureValue, QLabel *&statusValue)
 {
     auto *tile = new QFrame;
     tile->setObjectName(QStringLiteral("card"));
+    tile->setMinimumSize(148, 96);
     auto *layout = new QVBoxLayout(tile);
     layout->setContentsMargins(10, 8, 10, 8);
-    layout->setSpacing(2);
-    auto *title = new QLabel(QStringLiteral("推进器 %1").arg(item.label));
-    title->setStyleSheet(QStringLiteral("font-weight: 650; color: #18365b;"));
-    layout->addWidget(title);
-    auto *line = new QHBoxLayout;
-    line->addWidget(rov::makeMetricLabel(QStringLiteral("转速")));
-    line->addStretch();
-    line->addWidget(rov::makeLabel(QString::number(item.rpm, 'f', 0), QStringLiteral("bodyValue")));
-    layout->addLayout(line);
-    line = new QHBoxLayout;
-    line->addWidget(rov::makeMetricLabel(QStringLiteral("电流")));
-    line->addStretch();
-    line->addWidget(rov::makeLabel(QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 1),
-                                   QStringLiteral("bodyValue")));
-    layout->addLayout(line);
-    line = new QHBoxLayout;
-    line->addWidget(rov::makeMetricLabel(QStringLiteral("温度")));
-    line->addStretch();
-    line->addWidget(rov::makeLabel(QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 0),
-                                   QStringLiteral("bodyValue")));
-    layout->addLayout(line);
+    layout->setSpacing(3);
+
+    auto *titleRow = new QHBoxLayout;
+    const QString shortLabel = item.label.section(QStringLiteral(" · "), 0, 0);
+    tile->setToolTip(item.label);
+    auto *title = rov::makeLabel(QStringLiteral("推进器 %1").arg(shortLabel),
+                                 QStringLiteral("thrusterTitle"));
+    titleRow->addWidget(title);
+    titleRow->addStretch();
+    statusValue = rov::makeLabel(QStringLiteral("●"), QStringLiteral("statusGood"));
+    statusValue->setToolTip(item.status);
+    titleRow->addWidget(statusValue);
+    layout->addLayout(titleRow);
+
+    auto addValueRow = [layout](const QString &label, QLabel *&value, const QString &text)
+    {
+        auto *row = new QHBoxLayout;
+        row->setSpacing(4);
+        row->addWidget(rov::makeMetricLabel(label));
+        row->addStretch();
+        value = rov::makeLabel(text, QStringLiteral("bodyValue"));
+        row->addWidget(value);
+        layout->addLayout(row);
+    };
+    addValueRow(QStringLiteral("转速"), rpmValue, QString::number(item.rpm, 'f', 0));
+    addValueRow(QStringLiteral("电流"), currentValue,
+                QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 1));
+    addValueRow(QStringLiteral("温度"), temperatureValue,
+                QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 0));
     return tile;
 }
 
@@ -145,6 +313,26 @@ namespace rov
 
 DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
 {
+    setObjectName(QStringLiteral("dashboardPage"));
+    setStyleSheet(QStringLiteral(
+        "QLabel#thrusterTitle { color: #18365b; font-weight: 650; }"
+        "QLabel#bodyValue { color: #203b60; font-weight: 600; }"
+        "QLabel[dashboardTone=good] { color: #078d4a; }"
+        "QLabel[dashboardTone=warn] { color: #d98512; }"
+        "QLabel[dashboardTone=bad] { color: #c54854; }"
+        "QLabel#summaryGood { color: #078d4a; }"
+        "QLabel#summaryWarn { color: #d98512; }"
+        "QLabel#summaryBad { color: #c54854; }"
+        "QLabel#axisName { color: #203b60; font-weight: 650; }"
+        "QLabel#axisHint { color: #7a8fa6; font-size: 11px; }"
+        "QLabel#axisValue { color: #203b60; font-weight: 650; min-width: 22px; }"
+        "QPushButton#softButton[dashboardAxis=\"true\"] { padding: 0; font-size: 15px; }"
+        "QCheckBox#dashboardEnable::indicator { width: 36px; height: 20px; border-radius: 10px; }"
+        "QCheckBox#dashboardEnable::indicator:unchecked { background: #c8d5e2; border: 1px solid "
+        "#b5c6d6; }"
+        "QCheckBox#dashboardEnable::indicator:checked { background: #218fe6; border: 1px solid "
+        "#218fe6; }"));
+
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(14, 12, 14, 10);
     root->setSpacing(10);
@@ -152,27 +340,48 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
                                    QStringLiteral("水下机器人状态、推进器与控制概览。"),
                                    QStringLiteral("演示 · 未连接设备")));
 
+    const DashboardSnapshot preview = dashboardPreview();
     auto *topRow = new QHBoxLayout;
     topRow->setSpacing(12);
+
     auto *overview = new CardWidget(QStringLiteral("机器人总览（俯视图）"), IconKind::Dashboard);
     auto *overviewGrid = new QGridLayout;
     overviewGrid->setContentsMargins(0, 0, 0, 0);
-    overviewGrid->setSpacing(8);
-    const DashboardSnapshot preview = dashboardPreview();
-    overviewGrid->addWidget(thrusterTile(preview.thrusters.at(0)), 0, 0);
-    overviewGrid->addWidget(thrusterTile(preview.thrusters.at(1)), 0, 2);
-    overviewGrid->addWidget(thrusterTile(preview.thrusters.at(2)), 1, 0);
-    overviewGrid->addWidget(new RovTopView, 0, 1, 3, 1);
-    overviewGrid->addWidget(thrusterTile(preview.thrusters.at(3)), 1, 2);
-    overviewGrid->addWidget(thrusterTile(preview.thrusters.at(4)), 2, 0);
-    overviewGrid->addWidget(thrusterTile(preview.thrusters.at(5)), 2, 2);
+    overviewGrid->setHorizontalSpacing(8);
+    overviewGrid->setVerticalSpacing(8);
+    for (int i = 0; i < kDashboardThrusterCount; ++i)
+    {
+        QLabel *rpm = nullptr;
+        QLabel *current = nullptr;
+        QLabel *temperature = nullptr;
+        QLabel *status = nullptr;
+        const ThrusterTelemetry item = preview.thrusters.value(i);
+        auto *tile = thrusterTile(item, rpm, current, temperature, status);
+        m_thrusterRpmValues.append(rpm);
+        m_thrusterCurrentValues.append(current);
+        m_thrusterTemperatureValues.append(temperature);
+        m_thrusterStatusValues.append(status);
+        const int row = i / 2;
+        const int column = i % 2 == 0 ? 0 : 2;
+        overviewGrid->addWidget(tile, row, column);
+        if (i == 0)
+        {
+            overviewGrid->addWidget(new RovTopView, 0, 1, 4, 1);
+        }
+    }
     overviewGrid->setColumnStretch(1, 2);
     overview->contentLayout()->addLayout(overviewGrid);
-    topRow->addWidget(overview, 6);
+    topRow->addWidget(overview, 5);
 
     auto *stateColumn = new QVBoxLayout;
     stateColumn->setSpacing(12);
+
     auto *stateCard = new CardWidget(QStringLiteral("机器人状态"), IconKind::Status);
+    auto *stateUpdateRow = new QHBoxLayout;
+    stateUpdateRow->addStretch();
+    m_stateUpdate = makeLabel(QStringLiteral("更新时间：--"), QStringLiteral("mutedLabel"));
+    stateUpdateRow->addWidget(m_stateUpdate);
+    stateCard->contentLayout()->addLayout(stateUpdateRow);
     auto *stateGrid = new QGridLayout;
     stateGrid->setSpacing(8);
     stateGrid->addWidget(metricTile(QStringLiteral("深度"), m_depthValue, QStringLiteral("--")), 0,
@@ -192,79 +401,129 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     stateGrid->addWidget(metricTile(QStringLiteral("漏水状态"), m_leakValue, QStringLiteral("--")),
                          1, 3);
     stateGrid->addWidget(
-        metricTile(QStringLiteral("内部温度"), m_temperatureValue, QStringLiteral("--")), 2, 0);
-    stateGrid->setColumnStretch(0, 1);
-    stateGrid->setColumnStretch(1, 1);
-    stateGrid->setColumnStretch(2, 1);
-    stateGrid->setColumnStretch(3, 1);
+        metricTile(QStringLiteral("内部温度"), m_temperatureValue, QStringLiteral("--")), 1, 4);
+    for (int column = 0; column < 5; ++column)
+    {
+        stateGrid->setColumnStretch(column, 1);
+    }
     stateCard->contentLayout()->addLayout(stateGrid);
     stateColumn->addWidget(stateCard);
 
     auto *controlCard = new CardWidget(QStringLiteral("六自由度手动控制"), IconKind::Action);
     auto *enableRow = new QHBoxLayout;
     enableRow->addWidget(makeLabel(QStringLiteral("启用控制"), QStringLiteral("bodyValue")));
-    auto *enable = new QCheckBox;
-    enable->setChecked(false);
     enableRow->addStretch();
-    enableRow->addWidget(enable);
+    m_enableControl = new QCheckBox(controlCard);
+    m_enableControl->setObjectName(QStringLiteral("dashboardEnable"));
+    m_enableControl->setChecked(false);
+    m_enableControl->setToolTip(QStringLiteral("只输出用户意图，不直接控制设备"));
+    enableRow->addWidget(m_enableControl);
     controlCard->contentLayout()->addLayout(enableRow);
+
     auto *permissionRow = new QHBoxLayout;
     permissionRow->addWidget(makeLabel(QStringLiteral("控制权限"), QStringLiteral("bodyValue")));
     permissionRow->addStretch();
     m_controlPermission = makeStatusPill(QStringLiteral("仅演示"), QStringLiteral("statusWarn"));
     permissionRow->addWidget(m_controlPermission);
     controlCard->contentLayout()->addLayout(permissionRow);
+
     auto *axisGrid = new QGridLayout;
-    axisGrid->setHorizontalSpacing(10);
-    axisGrid->setVerticalSpacing(7);
-    const QStringList axes = {QStringLiteral("前进"), QStringLiteral("横移"),
-                              QStringLiteral("升沉"), QStringLiteral("横滚"),
-                              QStringLiteral("俯仰"), QStringLiteral("航向")};
-    for (int i = 0; i < axes.size(); ++i)
+    axisGrid->setContentsMargins(0, 0, 0, 0);
+    axisGrid->setHorizontalSpacing(5);
+    axisGrid->setVerticalSpacing(6);
+
+    const QStringList axisNames = {QStringLiteral("前进"), QStringLiteral("横移"),
+                                   QStringLiteral("升沉"), QStringLiteral("横滚"),
+                                   QStringLiteral("俯仰"), QStringLiteral("航向")};
+    const QStringList axisHints = {QStringLiteral("前进 / 后退"), QStringLiteral("左 / 右"),
+                                   QStringLiteral("上 / 下"),     QStringLiteral("左 / 右"),
+                                   QStringLiteral("上 / 下"),     QStringLiteral("左 / 右")};
+    const QStringList positiveArrows = {QStringLiteral("↑"), QStringLiteral("→"),
+                                        QStringLiteral("↑"), QStringLiteral("↶"),
+                                        QStringLiteral("↶"), QStringLiteral("↶")};
+    const QStringList negativeArrows = {QStringLiteral("↓"), QStringLiteral("←"),
+                                        QStringLiteral("↓"), QStringLiteral("↷"),
+                                        QStringLiteral("↷"), QStringLiteral("↷")};
+    const ControlAxis controlAxes[] = {ControlAxis::Surge, ControlAxis::Sway,  ControlAxis::Heave,
+                                       ControlAxis::Roll,  ControlAxis::Pitch, ControlAxis::Yaw};
+    const auto sendAxisRequest = [this](const ControlAxis axis, const double value,
+                                        const QString &name, const QString &direction)
     {
-        auto *axisBox = new QVBoxLayout;
-        axisBox->setSpacing(3);
-        axisBox->addWidget(makeLabel(axes.at(i), QStringLiteral("bodyValue")), 0, Qt::AlignCenter);
-        auto *row = new QHBoxLayout;
-        auto *minus = makeButton(QStringLiteral("−"), QStringLiteral("softButton"));
-        auto *plus = makeButton(QStringLiteral("+"), QStringLiteral("softButton"));
-        auto *zero = makeLabel(QStringLiteral("0"), QStringLiteral("bodyValue"));
-        row->addWidget(minus);
-        row->addWidget(zero, 1, Qt::AlignCenter);
-        row->addWidget(plus);
-        axisBox->addLayout(row);
-        axisGrid->addLayout(axisBox, i / 3, i % 3);
-        connect(minus, &QPushButton::clicked, this,
-                [this, i]()
-                {
-                    Q_UNUSED(i)
-                    emit manualControlRequested(SixDofControlRequest());
-                    logRequest(QStringLiteral("手动控制：请求减小"));
-                });
-        connect(plus, &QPushButton::clicked, this,
-                [this, i]()
-                {
-                    Q_UNUSED(i)
-                    emit manualControlRequested(SixDofControlRequest());
-                    logRequest(QStringLiteral("手动控制：请求增大"));
-                });
+        SixDofControlRequest request;
+        switch (axis)
+        {
+        case ControlAxis::Surge:
+            request.surge = value;
+            break;
+        case ControlAxis::Sway:
+            request.sway = value;
+            break;
+        case ControlAxis::Heave:
+            request.heave = value;
+            break;
+        case ControlAxis::Roll:
+            request.roll = value;
+            break;
+        case ControlAxis::Pitch:
+            request.pitch = value;
+            break;
+        case ControlAxis::Yaw:
+            request.yaw = value;
+            break;
+        }
+        emit manualControlRequested(request);
+        logRequest(QStringLiteral("手动控制：%1 %2（归一化 %3）")
+                       .arg(name, direction)
+                       .arg(value, 0, 'f', 1));
+    };
+
+    auto addAxis = [&](QGridLayout *grid, const int index)
+    {
+        auto *axisWidget = new QWidget(controlCard);
+        axisWidget->setObjectName(QStringLiteral("dashboardAxis"));
+        auto *axisLayout = new QVBoxLayout(axisWidget);
+        axisLayout->setContentsMargins(0, 0, 0, 0);
+        axisLayout->setSpacing(2);
+        axisLayout->addWidget(makeLabel(axisNames.at(index), QStringLiteral("axisName")), 0,
+                              Qt::AlignCenter);
+        axisLayout->addWidget(makeLabel(axisHints.at(index), QStringLiteral("axisHint")), 0,
+                              Qt::AlignCenter);
+        auto *controls = new QHBoxLayout;
+        controls->setContentsMargins(0, 3, 0, 0);
+        controls->setSpacing(4);
+        auto *negative = axisButton(negativeArrows.at(index), axisWidget);
+        auto *zero = makeLabel(QStringLiteral("0"), QStringLiteral("axisValue"));
+        auto *positive = axisButton(positiveArrows.at(index), axisWidget);
+        controls->addWidget(negative);
+        controls->addWidget(zero, 1, Qt::AlignCenter);
+        controls->addWidget(positive);
+        axisLayout->addLayout(controls);
+        grid->addWidget(axisWidget, 0, index);
+        connect(negative, &QPushButton::clicked, this,
+                [this, sendAxisRequest, axis = controlAxes[index], name = axisNames.at(index)]()
+                { sendAxisRequest(axis, -1.0, name, QStringLiteral("负向")); });
+        connect(positive, &QPushButton::clicked, this,
+                [this, sendAxisRequest, axis = controlAxes[index], name = axisNames.at(index)]()
+                { sendAxisRequest(axis, 1.0, name, QStringLiteral("正向")); });
+    };
+    for (int index = 0; index < 6; ++index)
+    {
+        addAxis(axisGrid, index);
+    }
+    for (int column = 0; column < 6; ++column)
+    {
+        axisGrid->setColumnStretch(column, 1);
     }
     controlCard->contentLayout()->addLayout(axisGrid);
+
     auto *limitRow = new QHBoxLayout;
     limitRow->addWidget(makeLabel(QStringLiteral("最大推力上限"), QStringLiteral("bodyValue")));
-    auto *limitSlider = new QSlider(Qt::Horizontal);
-    limitSlider->setRange(0, 100);
-    limitSlider->setValue(preview.thrustLimitPercent);
-    limitRow->addWidget(limitSlider, 1);
-    auto *limitLabel = makeLabel(QStringLiteral("70%"), QStringLiteral("bodyValue"));
-    limitRow->addWidget(limitLabel);
-    connect(limitSlider, &QSlider::valueChanged, this,
-            [this, limitLabel](const int value)
-            {
-                limitLabel->setText(QStringLiteral("%1%").arg(value));
-                emit thrustLimitRequested(ThrustLimitRequest{value});
-                logRequest(QStringLiteral("推力上限请求：%1%").arg(value));
-            });
+    m_thrustLimitSlider = new QSlider(Qt::Horizontal, controlCard);
+    m_thrustLimitSlider->setRange(0, 100);
+    m_thrustLimitSlider->setSingleStep(5);
+    limitRow->addWidget(m_thrustLimitSlider, 1);
+    m_thrustLimitValue = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
+    limitRow->addWidget(m_thrustLimitValue);
     controlCard->contentLayout()->addLayout(limitRow);
     stateColumn->addWidget(controlCard);
     topRow->addLayout(stateColumn, 6);
@@ -274,31 +533,46 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     bottomRow->setSpacing(12);
     auto *summary = new CardWidget(QStringLiteral("电机状态汇总"), IconKind::Motor);
     auto *summaryGrid = new QGridLayout;
-    summaryGrid->setColumnStretch(0, 1);
-    summaryGrid->setColumnStretch(1, 1);
-    summaryGrid->setColumnStretch(2, 1);
-    summaryGrid->setColumnStretch(3, 1);
-    summaryGrid->addWidget(makeMetricLabel(QStringLiteral("总推进器")), 0, 0);
-    summaryGrid->addWidget(makeMetricLabel(QStringLiteral("在线")), 0, 1);
-    summaryGrid->addWidget(makeMetricLabel(QStringLiteral("离线")), 0, 2);
-    summaryGrid->addWidget(makeMetricLabel(QStringLiteral("警告")), 0, 3);
-    summaryGrid->addWidget(makeMetricValue(QStringLiteral("6")), 1, 0);
-    summaryGrid->addWidget(makeLabel(QStringLiteral("6"), QStringLiteral("metricValue")), 1, 1);
-    summaryGrid->addWidget(makeLabel(QStringLiteral("0"), QStringLiteral("metricValue")), 1, 2);
-    summaryGrid->addWidget(makeLabel(QStringLiteral("0"), QStringLiteral("metricValue")), 1, 3);
-    summaryGrid->addWidget(makeMetricLabel(QStringLiteral("平均转速  1,082")), 2, 0, 1, 2);
-    summaryGrid->addWidget(makeMetricLabel(QStringLiteral("平均电流  1.1 A")), 2, 2);
-    summaryGrid->addWidget(makeMetricLabel(QStringLiteral("平均温度  25.3 °C")), 2, 3);
+    summaryGrid->setContentsMargins(0, 0, 0, 0);
+    summaryGrid->setHorizontalSpacing(8);
+    summaryGrid->setVerticalSpacing(6);
+    m_totalThrusterValue = makeMetricValue(QStringLiteral("--"));
+    m_onlineThrusterValue = makeLabel(QStringLiteral("--"), QStringLiteral("metricValue"));
+    m_offlineThrusterValue = makeLabel(QStringLiteral("--"), QStringLiteral("metricValue"));
+    m_warningValue = makeLabel(QStringLiteral("--"), QStringLiteral("metricValue"));
+    const QStringList summaryLabels = {QStringLiteral("总推进器"), QStringLiteral("在线"),
+                                       QStringLiteral("离线"), QStringLiteral("警告")};
+    QLabel *summaryValues[] = {m_totalThrusterValue, m_onlineThrusterValue, m_offlineThrusterValue,
+                               m_warningValue};
+    for (int column = 0; column < 4; ++column)
+    {
+        summaryGrid->addWidget(makeMetricLabel(summaryLabels.at(column)), 0, column,
+                               Qt::AlignCenter);
+        summaryGrid->addWidget(summaryValues[column], 1, column, Qt::AlignCenter);
+        summaryGrid->setColumnStretch(column, 1);
+    }
+    m_averageRpmValue = makeMetricLabel(QStringLiteral("平均转速  --"));
+    m_averageCurrentValue = makeMetricLabel(QStringLiteral("平均电流  --"));
+    m_averageTemperatureValue = makeMetricLabel(QStringLiteral("平均温度  --"));
+    m_rpmChart = new MiniBarChart(QColor(QStringLiteral("#66b3f3")), summary);
+    m_currentChart = new MiniBarChart(QColor(QStringLiteral("#79b8ee")), summary);
+    m_temperatureChart = new MiniBarChart(QColor(QStringLiteral("#8bc6f3")), summary);
+    summaryGrid->addWidget(m_averageRpmValue, 2, 0);
+    summaryGrid->addWidget(m_rpmChart, 2, 1);
+    summaryGrid->addWidget(m_averageCurrentValue, 3, 0);
+    summaryGrid->addWidget(m_currentChart, 3, 1);
+    summaryGrid->addWidget(m_averageTemperatureValue, 4, 0);
+    summaryGrid->addWidget(m_temperatureChart, 4, 1);
     summary->contentLayout()->addLayout(summaryGrid);
     bottomRow->addWidget(summary, 4);
 
     auto *alarms = new CardWidget(QStringLiteral("活动报警"), IconKind::Alarm);
-    m_alarmValue = makeMetricValue(QStringLiteral("无活动报警"));
+    m_alarmValue = makeMetricValue(QStringLiteral("--"));
+    m_alarmSummary = makeLabel(QStringLiteral("等待有效数据"), QStringLiteral("mutedLabel"));
+    m_alarmSummary->setWordWrap(true);
     alarms->contentLayout()->addStretch();
     alarms->contentLayout()->addWidget(m_alarmValue, 0, Qt::AlignCenter);
-    alarms->contentLayout()->addWidget(
-        makeLabel(QStringLiteral("所有系统正常。"), QStringLiteral("mutedLabel")), 0,
-        Qt::AlignCenter);
+    alarms->contentLayout()->addWidget(m_alarmSummary, 0, Qt::AlignCenter);
     alarms->contentLayout()->addStretch();
     bottomRow->addWidget(alarms, 4);
 
@@ -308,6 +582,10 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     auto *disarm = makeButton(QStringLiteral("停用电机"), QStringLiteral("dangerButton"));
     auto *hold = makeButton(QStringLiteral("保持位置"), QStringLiteral("softButton"));
     auto *surface = makeButton(QStringLiteral("上浮（紧急）"), QStringLiteral("softButton"));
+    arm->setIcon(makeIcon(IconKind::Action));
+    disarm->setIcon(makeIcon(IconKind::Status));
+    hold->setIcon(makeIcon(IconKind::Manipulator));
+    surface->setIcon(makeIcon(IconKind::Action));
     quickGrid->addWidget(arm, 0, 0);
     quickGrid->addWidget(disarm, 0, 1);
     quickGrid->addWidget(hold, 1, 0);
@@ -344,6 +622,21 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     bottomRow->addWidget(quick, 4);
     root->addLayout(bottomRow);
 
+    connect(m_enableControl, &QCheckBox::toggled, this,
+            [this](const bool enabled)
+            {
+                emit manualControlEnableRequested(ManualControlEnableRequest{enabled});
+                logRequest(enabled ? QStringLiteral("手动控制已启用（仅记录请求）")
+                                   : QStringLiteral("手动控制已停用"));
+            });
+    connect(m_thrustLimitSlider, &QSlider::valueChanged, this,
+            [this](const int value)
+            {
+                m_thrustLimitValue->setText(QStringLiteral("%1%").arg(value));
+                emit thrustLimitRequested(ThrustLimitRequest{value});
+                logRequest(QStringLiteral("推力上限请求：%1%").arg(value));
+            });
+
     setSnapshot(preview);
 }
 
@@ -355,28 +648,163 @@ void DashboardPage::setSnapshot(const DashboardSnapshot &snapshot)
 
 void DashboardPage::refreshView()
 {
-    m_depthValue->setText(QStringLiteral("%1 m").arg(m_snapshot.depthM, 0, 'f', 1));
-    m_rollValue->setText(QStringLiteral("%1°").arg(m_snapshot.rollDeg, 0, 'f', 1));
-    m_pitchValue->setText(QStringLiteral("%1°").arg(m_snapshot.pitchDeg, 0, 'f', 1));
-    m_yawValue->setText(QStringLiteral("%1°").arg(m_snapshot.yawDeg, 0, 'f', 1));
-    m_voltageValue->setText(QStringLiteral("%1 V").arg(m_snapshot.busVoltageV, 0, 'f', 1));
-    m_modeValue->setText(m_snapshot.robotMode);
-    m_armValue->setText(m_snapshot.armed ? QStringLiteral("已解锁") : QStringLiteral("已停用"));
-    m_leakValue->setText(m_snapshot.leakDetected ? QStringLiteral("报警") : QStringLiteral("正常"));
+    const bool available = hasSystemData(m_snapshot);
+    m_depthValue->setText(formatNumber(available, m_snapshot.depthM, 1, QStringLiteral(" m")));
+    m_rollValue->setText(formatNumber(available, m_snapshot.rollDeg, 1, QStringLiteral("°")));
+    m_pitchValue->setText(formatNumber(available, m_snapshot.pitchDeg, 1, QStringLiteral("°")));
+    m_yawValue->setText(formatNumber(available, m_snapshot.yawDeg, 1, QStringLiteral("°")));
+    m_voltageValue->setText(
+        formatNumber(available, m_snapshot.busVoltageV, 1, QStringLiteral(" V")));
+    m_modeValue->setText(available && !m_snapshot.robotMode.isEmpty() ? m_snapshot.robotMode
+                                                                      : QStringLiteral("--"));
+    m_armValue->setText(
+        available ? (m_snapshot.armed ? QStringLiteral("已解锁") : QStringLiteral("已停用"))
+                  : QStringLiteral("--"));
+    m_leakValue->setText(
+        available ? (m_snapshot.leakDetected ? QStringLiteral("报警") : QStringLiteral("正常"))
+                  : QStringLiteral("--"));
     m_temperatureValue->setText(
-        QStringLiteral("%1 °C").arg(m_snapshot.internalTemperatureC, 0, 'f', 1));
+        formatNumber(available, m_snapshot.internalTemperatureC, 1, QStringLiteral(" °C")));
+    setTone(m_modeValue, "good");
+    setTone(m_armValue, available && m_snapshot.armed ? "good" : "warn");
+    setTone(m_leakValue, available && m_snapshot.leakDetected ? "bad" : "good");
+
+    if (m_stateUpdate != nullptr)
+    {
+        const QString timestamp =
+            available && m_snapshot.demo.lastUpdate.isValid()
+                ? m_snapshot.demo.lastUpdate.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+                : QStringLiteral("--");
+        m_stateUpdate->setText(QStringLiteral("更新时间：%1").arg(timestamp));
+    }
     if (m_controlPermission != nullptr)
     {
         m_controlPermission->setText(m_snapshot.canControl ? QStringLiteral("允许")
                                                            : QStringLiteral("仅演示"));
+        m_controlPermission->setToolTip(m_snapshot.canControl
+                                            ? QStringLiteral("当前快照允许控制")
+                                            : m_snapshot.controlUnavailableReason);
         m_controlPermission->setObjectName(m_snapshot.canControl ? QStringLiteral("statusGood")
                                                                  : QStringLiteral("statusWarn"));
-        m_controlPermission->style()->unpolish(m_controlPermission);
-        m_controlPermission->style()->polish(m_controlPermission);
+        setTone(m_controlPermission, m_snapshot.canControl ? "good" : "warn");
     }
-    m_alarmValue->setText(m_snapshot.alarmCount == 0
-                              ? QStringLiteral("无活动报警")
-                              : QStringLiteral("%1 条活动报警").arg(m_snapshot.alarmCount));
+    if (m_thrustLimitSlider != nullptr)
+    {
+        const QSignalBlocker blocker(m_thrustLimitSlider);
+        m_thrustLimitSlider->setValue(qBound(0, m_snapshot.thrustLimitPercent, 100));
+    }
+    if (m_thrustLimitValue != nullptr)
+    {
+        m_thrustLimitValue->setText(available
+                                        ? QStringLiteral("%1%").arg(m_snapshot.thrustLimitPercent)
+                                        : QStringLiteral("--"));
+    }
+
+    QVector<double> rpmValues;
+    QVector<double> currentValues;
+    QVector<double> temperatureValues;
+    int online = 0;
+    int offline = 0;
+    double rpmTotal = 0.0;
+    double currentTotal = 0.0;
+    double temperatureTotal = 0.0;
+    int numericCount = 0;
+    for (int i = 0; i < kDashboardThrusterCount; ++i)
+    {
+        const bool present = i < m_snapshot.thrusters.size();
+        if (present)
+        {
+            const ThrusterTelemetry &item = m_snapshot.thrusters.at(i);
+            const bool itemValid = item.stamp.validity == DataValidity::Valid;
+            const bool itemOnline = item.status == QStringLiteral("在线");
+            itemOnline ? ++online : ++offline;
+            if (itemValid)
+            {
+                rpmTotal += item.rpm;
+                currentTotal += item.currentA;
+                temperatureTotal += item.temperatureC;
+                ++numericCount;
+                rpmValues.append(item.rpm);
+                currentValues.append(item.currentA);
+                temperatureValues.append(item.temperatureC);
+            }
+            m_thrusterRpmValues.at(i)->setText(itemValid ? QString::number(item.rpm, 'f', 0)
+                                                         : QStringLiteral("--"));
+            m_thrusterCurrentValues.at(i)->setText(
+                itemValid ? QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 1)
+                          : QStringLiteral("--"));
+            m_thrusterTemperatureValues.at(i)->setText(
+                itemValid ? QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 0)
+                          : QStringLiteral("--"));
+            m_thrusterStatusValues.at(i)->setToolTip(item.status);
+            setTone(m_thrusterStatusValues.at(i), itemOnline ? "good" : "warn");
+        }
+        else
+        {
+            ++offline;
+            m_thrusterRpmValues.at(i)->setText(QStringLiteral("--"));
+            m_thrusterCurrentValues.at(i)->setText(QStringLiteral("--"));
+            m_thrusterTemperatureValues.at(i)->setText(QStringLiteral("--"));
+            m_thrusterStatusValues.at(i)->setToolTip(QStringLiteral("无数据"));
+            setTone(m_thrusterStatusValues.at(i), "warn");
+        }
+    }
+
+    m_totalThrusterValue->setText(available ? QString::number(m_snapshot.thrusters.size())
+                                            : QStringLiteral("--"));
+    m_onlineThrusterValue->setText(available ? QString::number(online) : QStringLiteral("--"));
+    m_offlineThrusterValue->setText(available ? QString::number(offline) : QStringLiteral("--"));
+    m_warningValue->setText(available ? QString::number(m_snapshot.alarmCount)
+                                      : QStringLiteral("--"));
+    setTone(m_onlineThrusterValue, "good");
+    setTone(m_offlineThrusterValue, offline > 0 ? "warn" : "good");
+    setTone(m_warningValue, m_snapshot.alarmCount > 0 ? "bad" : "good");
+    if (numericCount > 0)
+    {
+        m_averageRpmValue->setText(
+            QStringLiteral("平均转速  %1").arg(rpmTotal / numericCount, 0, 'f', 0));
+        m_averageCurrentValue->setText(
+            QStringLiteral("平均电流  %1 A").arg(currentTotal / numericCount, 0, 'f', 1));
+        m_averageTemperatureValue->setText(
+            QStringLiteral("平均温度  %1 °C").arg(temperatureTotal / numericCount, 0, 'f', 1));
+    }
+    else
+    {
+        m_averageRpmValue->setText(QStringLiteral("平均转速  --"));
+        m_averageCurrentValue->setText(QStringLiteral("平均电流  --"));
+        m_averageTemperatureValue->setText(QStringLiteral("平均温度  --"));
+    }
+    static_cast<MiniBarChart *>(m_rpmChart)->setValues(rpmValues);
+    static_cast<MiniBarChart *>(m_currentChart)->setValues(currentValues);
+    static_cast<MiniBarChart *>(m_temperatureChart)->setValues(temperatureValues);
+
+    if (!available)
+    {
+        m_alarmValue->setText(QStringLiteral("--"));
+        m_alarmSummary->setText(QStringLiteral("等待有效数据"));
+    }
+    else if (m_snapshot.alarmCount == 0)
+    {
+        m_alarmValue->setText(QStringLiteral("无活动报警"));
+        m_alarmSummary->setText(QStringLiteral("所有系统正常。"));
+    }
+    else
+    {
+        m_alarmValue->setText(QStringLiteral("%1 条活动报警").arg(m_snapshot.alarmCount));
+        if (m_snapshot.alarms.isEmpty())
+        {
+            m_alarmSummary->setText(QStringLiteral("请查看系统报警详情。"));
+        }
+        else
+        {
+            QStringList alarmLines;
+            for (int i = 0; i < qMin(3, m_snapshot.alarms.size()); ++i)
+            {
+                alarmLines.append(m_snapshot.alarms.at(i));
+            }
+            m_alarmSummary->setText(alarmLines.join(QStringLiteral("\n")));
+        }
+    }
 }
 
 void DashboardPage::logRequest(const QString &message)

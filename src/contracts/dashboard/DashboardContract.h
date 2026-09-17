@@ -9,6 +9,10 @@
 namespace rov
 {
 
+// The current ROV URDF defines thruster1..thruster8. The UI keeps these
+// stable IDs and does not infer device protocol target bytes from their rows.
+constexpr int kDashboardThrusterCount = 8;
+
 struct ThrusterTelemetry
 {
     // Stable business ID, not a table row and not a protocol target byte.
@@ -64,8 +68,14 @@ struct ThrustLimitRequest
     int percent = 70; // User intent, range 0..100 percent.
 };
 
+struct ManualControlEnableRequest
+{
+    bool enabled = false; // User intent only; permission is decided outside the page.
+};
+
 } // namespace rov
 
 Q_DECLARE_METATYPE(rov::DashboardSnapshot)
 Q_DECLARE_METATYPE(rov::SixDofControlRequest)
 Q_DECLARE_METATYPE(rov::ThrustLimitRequest)
+Q_DECLARE_METATYPE(rov::ManualControlEnableRequest)

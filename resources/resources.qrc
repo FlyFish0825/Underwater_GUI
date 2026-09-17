@@ -2,4 +2,7 @@
     <qresource prefix="/theme">
         <file>theme.qss</file>
     </qresource>
+    <qresource prefix="/dashboard">
+        <file alias="rov_top_view.png">dashboard/rov_top_view.png</file>
+    </qresource>
 </RCC>
