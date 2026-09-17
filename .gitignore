@@ -1,0 +1,169 @@
+# ============================================================
+# ROV Qt 上位机 Git 忽略规则
+# 说明：只忽略本地生成物、缓存和个人配置；文档、协议和参考图默认保留。
+# ============================================================
+
+# ---------- 操作系统 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ---------- Qt Creator / Qt 工具 ----------
+*.pro.user
+*.pro.user.*
+*.creator.user
+*.qbs.user
+.qmake.stash
+.qtc_clangd/
+.qtc/
+**/.qtcreator/
+**/.qt/
+*.creator
+
+# Qt Creator 本地构建套件和用户会话
+*.autosave
+*.user
+
+# ---------- CMake / 构建目录 ----------
+/build/
+/build-*/
+/cmake-build-*/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/install_manifest.txt
+**/compile_commands.json
+**/CTestTestfile.cmake
+**/CPackConfig.cmake
+**/CPackSourceConfig.cmake
+**/Testing/
+CMakeUserPresets.json
+
+# CMake 生成的工程文件（公共源码中的 CMakeLists.txt 不会被忽略）
+*.cmake.user
+*.ninja
+*.ninja_deps
+*.ninja_log
+**/*_autogen/
+**/moc_predefs.h
+**/qmake.conf
+
+# ---------- qmake / uic / moc / rcc 生成物 ----------
+**/Makefile
+**/moc_*.cpp
+**/moc_*.h
+**/qrc_*.cpp
+**/ui_*.h
+*.moc
+*.prl
+
+# ---------- 编译输出 ----------
+*.o
+*.obj
+*.lo
+*.a
+*.lib
+*.la
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.gch
+*.pch
+*.d
+*.dep
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# ---------- Qt 部署 / 打包 / 安装临时目录 ----------
+/deploy/
+/package/
+/installer-output/
+**/windeployqt/
+**/linuxdeployqt/
+*.AppImage
+*.msi
+*.deb
+*.rpm
+
+# ---------- 日志、缓存和测试输出 ----------
+/logs/
+**/logs/
+*.log
+*.trace
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+.cache/
+**/.cache/
+.pytest_cache/
+__pycache__/
+coverage/
+test-results/
+*.gcda
+*.gcno
+*.gcov
+*.stackdump
+*.core
+
+# ---------- IDE / 编辑器个人配置 ----------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.code-workspace
+.vs/
+*.suo
+*.userosscache
+*.sln.docstates
+*.orig
+*.rej
+
+# ---------- 本地环境、密钥和个人预设 ----------
+.env
+.env.*
+!.env.example
+*.local
+*.local.*
+secrets/
+local-config/
+local_config/
+
+# ---------- 本地 SDK / 工具链缓存 ----------
+/sdk-local/
+/toolchain-local/
+/toolchain/
+/third_party/_build/
+/_deps/
+
+# ---------- 下载缓存和临时解压目录 ----------
+/downloads/
+/tmp/
+/temp/
+/cache/
+/bootloader_reference/
+
+# ---------- 固件/数据运行时输出 ----------
+/firmware-output/
+/recordings/
+/captures/
+/exports/
+**/captures/
+**/recordings/
+*.csv.tmp
+*.json.tmp
+*.bin.tmp
+*.hex.tmp
+*.uf2.tmp
+
+# 注意：不要在此处忽略 docs/、协议规范、示意图/、*.md、*.png 等项目资料。
