@@ -24,6 +24,7 @@ namespace rov
 
 class BootloaderCommandDialog;
 class FirmwareHistoryDialog;
+class FirmwareLogRecordingDialog;
 class BootloaderDownloadController;
 class AppProgressBar;
 
@@ -70,6 +71,9 @@ class FirmwarePage final : public QWidget
     void updateDownloadProgress(quint8 target, int percent, quint16 sequence, int totalPackets);
     void finishFirmwareDownload(bool success, const QString &message);
     void showHistory();
+    void toggleLogRecording();
+    void showRecordedLogs();
+    void exportRecordedLogs();
     void logRequest(const QString &message);
     void renderRuntimeLog();
 
@@ -107,6 +111,12 @@ class FirmwarePage final : public QWidget
     FirmwareHistoryStore m_historyStore;
     // QPointer 会在对话框关闭销毁后自动变为空，支持历史窗口反复打开。
     QPointer<FirmwareHistoryDialog> m_historyDialog;
+    QPointer<FirmwareLogRecordingDialog> m_recordingDialog;
+    QPushButton *m_logRecordButton = nullptr;
+    QPushButton *m_viewRecordedButton = nullptr;
+    QPushButton *m_exportRecordedButton = nullptr;
+    QStringList m_recordedLogs;
+    bool m_logRecording = false;
     QComboBox *m_targetNodeCombo = nullptr;
     QLabel *m_stateNode = nullptr;
     QLabel *m_stateDevice = nullptr;

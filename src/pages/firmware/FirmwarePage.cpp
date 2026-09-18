@@ -3,6 +3,7 @@
 #include "preview/PreviewData.h"
 #include "pages/firmware/BootloaderCommandDialog.h"
 #include "pages/firmware/FirmwareHistoryDialog.h"
+#include "pages/firmware/FirmwareLogRecordingDialog.h"
 #include "pages/firmware/FirmwareLogFormatter.h"
 #include "communication/bootloader/BootloaderDownloadController.h"
 #include "communication/bootloader/BootloaderProtocol.h"
@@ -605,11 +606,19 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     logCard->contentLayout()->setSpacing(5);
     auto *clearLog = makeButton(QStringLiteral("清屏"), QStringLiteral("softButton"));
     auto *history = makeButton(QStringLiteral("历史记录"), QStringLiteral("softButton"));
+    m_logRecordButton = makeButton(QStringLiteral("开始记录"), QStringLiteral("softButton"));
+    m_viewRecordedButton = makeButton(QStringLiteral("查看记录"), QStringLiteral("softButton"));
+    m_exportRecordedButton = makeButton(QStringLiteral("导出记录"), QStringLiteral("softButton"));
+    m_viewRecordedButton->setEnabled(false);
+    m_exportRecordedButton->setEnabled(false);
     // 标题栏原有的 stretch 会把这两个按钮推到右侧，与“升级日志”保持同一行。
     auto *logHeaderLayout =
         qobject_cast<QHBoxLayout *>(logCard->titleLabel()->parentWidget()->layout());
     if (logHeaderLayout != nullptr)
     {
+        logHeaderLayout->addWidget(m_logRecordButton);
+        logHeaderLayout->addWidget(m_viewRecordedButton);
+        logHeaderLayout->addWidget(m_exportRecordedButton);
         logHeaderLayout->addWidget(clearLog);
         logHeaderLayout->addWidget(history);
     }
@@ -667,6 +676,9 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                     m_requestLog->clear();
             });
     connect(history, &QPushButton::clicked, this, &FirmwarePage::showHistory);
+    connect(m_logRecordButton, &QPushButton::clicked, this, &FirmwarePage::toggleLogRecording);
+    connect(m_viewRecordedButton, &QPushButton::clicked, this, &FirmwarePage::showRecordedLogs);
+    connect(m_exportRecordedButton, &QPushButton::clicked, this, &FirmwarePage::exportRecordedLogs);
 
     m_communication = new BootloaderCommunicationService(this);
     m_bootloader = new BootloaderService(m_communication, this);
@@ -829,6 +841,14 @@ void FirmwarePage::closeAuxiliaryWindows()
         dialog->close();
         delete dialog;
         m_historyDialog = nullptr;
+    }
+    if (m_recordingDialog != nullptr)
+    {
+        auto *dialog = m_recordingDialog.data();
+        dialog->setAttribute(Qt::WA_DeleteOnClose, false);
+        dialog->close();
+        delete dialog;
+        m_recordingDialog = nullptr;
     }
 }
 
@@ -1322,6 +1342,58 @@ void FirmwarePage::showHistory()
     m_historyDialog->activateWindow();
 }
 
+void FirmwarePage::toggleLogRecording()
+{
+    if (m_logRecording)
+    {
+        m_logRecording = false;
+        m_logRecordButton->setText(QStringLiteral("开始记录"));
+        m_logRecordButton->setObjectName(QStringLiteral("softButton"));
+        m_logRecordButton->style()->unpolish(m_logRecordButton);
+        m_logRecordButton->style()->polish(m_logRecordButton);
+        m_logRecordButton->update();
+        m_viewRecordedButton->setEnabled(!m_recordedLogs.isEmpty());
+        m_exportRecordedButton->setEnabled(!m_recordedLogs.isEmpty());
+        logRequest(QStringLiteral("日志记录结束：共 %1 条").arg(m_recordedLogs.size()));
+        return;
+    }
+
+    m_recordedLogs.clear();
+    m_logRecording = true;
+    m_logRecordButton->setText(QStringLiteral("结束记录"));
+    m_logRecordButton->setObjectName(QStringLiteral("dangerButton"));
+    m_logRecordButton->style()->unpolish(m_logRecordButton);
+    m_logRecordButton->style()->polish(m_logRecordButton);
+    m_logRecordButton->update();
+    m_viewRecordedButton->setEnabled(false);
+    m_exportRecordedButton->setEnabled(false);
+}
+
+void FirmwarePage::showRecordedLogs()
+{
+    if (m_recordedLogs.isEmpty())
+        return;
+    if (m_recordingDialog != nullptr)
+    {
+        m_recordingDialog->raise();
+        m_recordingDialog->activateWindow();
+        return;
+    }
+    m_recordingDialog = new FirmwareLogRecordingDialog(m_recordedLogs, nullptr);
+    m_recordingDialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_recordingDialog->setWindowModality(Qt::ApplicationModal);
+    m_recordingDialog->open();
+    m_recordingDialog->raise();
+    m_recordingDialog->activateWindow();
+}
+
+void FirmwarePage::exportRecordedLogs()
+{
+    if (m_recordedLogs.isEmpty())
+        return;
+    FirmwareLogRecordingDialog::exportEntries(m_recordedLogs, this);
+}
+
 void FirmwarePage::refreshSerialDevices()
 {
     if (m_serialDeviceCombo == nullptr)
@@ -1399,6 +1471,13 @@ void FirmwarePage::logRequest(const QString &message)
     while (m_runtimeLog.size() > 100)
         m_runtimeLog.removeFirst();
     renderRuntimeLog();
+    if (m_logRecording)
+    {
+        m_recordedLogs.append(timestamped);
+        constexpr int maxRecordedLogs = 20000;
+        while (m_recordedLogs.size() > maxRecordedLogs)
+            m_recordedLogs.removeFirst();
+    }
     m_historyStore.append(message);
     emit debugLogAppended(timestamped);
 }

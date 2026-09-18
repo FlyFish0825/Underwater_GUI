@@ -90,6 +90,8 @@ add_library(rov_page_firmware STATIC
     src/pages/firmware/BootloaderCommandDialog.h
     src/pages/firmware/FirmwareHistoryDialog.cpp
     src/pages/firmware/FirmwareHistoryDialog.h
+    src/pages/firmware/FirmwareLogRecordingDialog.cpp
+    src/pages/firmware/FirmwareLogRecordingDialog.h
     src/pages/firmware/FirmwareLogFormatter.cpp
     src/pages/firmware/FirmwareLogFormatter.h
     src/pages/firmware/FirmwarePage.cpp
