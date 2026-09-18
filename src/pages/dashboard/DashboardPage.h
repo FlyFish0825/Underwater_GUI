@@ -29,10 +29,12 @@ class DashboardPage final : public QWidget
     void manualControlRequested(const SixDofControlRequest &request);
     void manualControlEnableRequested(const ManualControlEnableRequest &request);
     void thrustLimitRequested(const ThrustLimitRequest &request);
+    void thrusterCommandRequested(const ThrusterCommandRequest &request);
 
   private:
     void refreshView();
     void logRequest(const QString &message);
+    void openThrusterDetails(int index);
 
     DashboardSnapshot m_snapshot;
     QLabel *m_depthValue = nullptr;
@@ -42,7 +44,6 @@ class DashboardPage final : public QWidget
     QLabel *m_voltageValue = nullptr;
     QLabel *m_modeValue = nullptr;
     QLabel *m_armValue = nullptr;
-    QLabel *m_leakValue = nullptr;
     QLabel *m_temperatureValue = nullptr;
     QLabel *m_alarmValue = nullptr;
     QLabel *m_alarmSummary = nullptr;
@@ -66,6 +67,9 @@ class DashboardPage final : public QWidget
     QVector<QLabel *> m_thrusterCurrentValues;
     QVector<QLabel *> m_thrusterTemperatureValues;
     QVector<QLabel *> m_thrusterStatusValues;
+    QVector<QLabel *> m_axisValueLabels;
+    QVector<double> m_axisValues;
+    QVector<bool> m_thrusterDisabled;
 };
 
 } // namespace rov

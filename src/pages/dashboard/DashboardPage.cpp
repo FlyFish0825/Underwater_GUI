@@ -5,9 +5,11 @@
 
 #include <QCheckBox>
 #include <QDateTime>
+#include <QDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
@@ -20,6 +22,7 @@
 #include <QVariant>
 
 #include <algorithm>
+#include <functional>
 
 namespace
 {
@@ -61,12 +64,19 @@ QString formatNumber(const bool available, const double value, const int precisi
     return QStringLiteral("%1%2").arg(value, 0, 'f', precision).arg(suffix);
 }
 
+QString formatAxisValue(const double value)
+{
+    const QString sign = value > 0.0 ? QStringLiteral("+") : QString();
+    return QStringLiteral("%1%2").arg(sign).arg(value, 0, 'f', 1);
+}
+
 QPushButton *axisButton(const QString &text, QWidget *parent)
 {
     auto *button = rov::makeButton(text, QStringLiteral("softButton"), parent);
     button->setProperty("dashboardAxis", true);
-    button->setFixedSize(30, 25);
+    button->setFixedSize(32, 30);
     button->setFocusPolicy(Qt::NoFocus);
+    button->setCursor(Qt::PointingHandCursor);
     return button;
 }
 
@@ -271,11 +281,50 @@ QWidget *metricTile(const QString &label, QLabel *&value, const QString &initial
     return tile;
 }
 
-QWidget *thrusterTile(const rov::ThrusterTelemetry &item, QLabel *&rpmValue, QLabel *&currentValue,
-                      QLabel *&temperatureValue, QLabel *&statusValue)
+class ThrusterCard final : public QFrame
 {
-    auto *tile = new QFrame;
+  public:
+    using ClickHandler = std::function<void()>;
+
+    explicit ThrusterCard(QWidget *parent = nullptr) : QFrame(parent)
+    {
+        setCursor(Qt::PointingHandCursor);
+        setMouseTracking(true);
+    }
+
+    ClickHandler onClicked;
+
+  protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton)
+        {
+            m_pressed = true;
+        }
+        QFrame::mousePressEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        const bool clicked = m_pressed && rect().contains(event->pos());
+        m_pressed = false;
+        QFrame::mouseReleaseEvent(event);
+        if (clicked && onClicked)
+        {
+            onClicked();
+        }
+    }
+
+  private:
+    bool m_pressed = false;
+};
+
+ThrusterCard *thrusterTile(const rov::ThrusterTelemetry &item, QLabel *&rpmValue,
+                           QLabel *&currentValue, QLabel *&temperatureValue, QLabel *&statusValue)
+{
+    auto *tile = new ThrusterCard;
     tile->setObjectName(QStringLiteral("card"));
+    tile->setProperty("dashboardInteractive", true);
     tile->setMinimumSize(148, 96);
     auto *layout = new QVBoxLayout(tile);
     layout->setContentsMargins(10, 8, 10, 8);
@@ -286,9 +335,11 @@ QWidget *thrusterTile(const rov::ThrusterTelemetry &item, QLabel *&rpmValue, QLa
     tile->setToolTip(item.label);
     auto *title = rov::makeLabel(QStringLiteral("推进器 %1").arg(shortLabel),
                                  QStringLiteral("thrusterTitle"));
+    title->setAttribute(Qt::WA_TransparentForMouseEvents);
     titleRow->addWidget(title);
     titleRow->addStretch();
     statusValue = rov::makeLabel(QStringLiteral("●"), QStringLiteral("statusGood"));
+    statusValue->setAttribute(Qt::WA_TransparentForMouseEvents);
     statusValue->setToolTip(item.status);
     titleRow->addWidget(statusValue);
     layout->addLayout(titleRow);
@@ -297,9 +348,12 @@ QWidget *thrusterTile(const rov::ThrusterTelemetry &item, QLabel *&rpmValue, QLa
     {
         auto *row = new QHBoxLayout;
         row->setSpacing(4);
-        row->addWidget(rov::makeMetricLabel(label));
+        auto *nameLabel = rov::makeMetricLabel(label);
+        nameLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+        row->addWidget(nameLabel);
         row->addStretch();
         value = rov::makeLabel(text, QStringLiteral("bodyValue"));
+        value->setAttribute(Qt::WA_TransparentForMouseEvents);
         row->addWidget(value);
         layout->addLayout(row);
     };
@@ -311,6 +365,102 @@ QWidget *thrusterTile(const rov::ThrusterTelemetry &item, QLabel *&rpmValue, QLa
     return tile;
 }
 
+class ThrusterDetailDialog final : public QDialog
+{
+  public:
+    ThrusterDetailDialog(const rov::ThrusterTelemetry &item, const bool disabled,
+                         QWidget *parent = nullptr)
+        : QDialog(parent)
+    {
+        setWindowTitle(QStringLiteral("推进器详情 · %1").arg(item.label));
+        setModal(true);
+        setMinimumWidth(360);
+
+        auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(18, 16, 18, 16);
+        layout->setSpacing(12);
+
+        auto *title = rov::makeLabel(QStringLiteral("推进器 %1").arg(item.label),
+                                     QStringLiteral("cardTitle"));
+        layout->addWidget(title);
+
+        auto *grid = new QGridLayout;
+        grid->setHorizontalSpacing(18);
+        grid->setVerticalSpacing(8);
+        grid->addWidget(rov::makeMetricLabel(QStringLiteral("当前状态")), 0, 0);
+        grid->addWidget(
+            rov::makeLabel(disabled ? QStringLiteral("已停用") : item.status,
+                           disabled ? QStringLiteral("statusBad") : QStringLiteral("statusGood")),
+            0, 1);
+        grid->addWidget(rov::makeMetricLabel(QStringLiteral("转速")), 1, 0);
+        grid->addWidget(rov::makeLabel(QStringLiteral("%1 rpm").arg(item.rpm, 0, 'f', 0),
+                                       QStringLiteral("bodyValue")),
+                        1, 1);
+        grid->addWidget(rov::makeMetricLabel(QStringLiteral("电流")), 2, 0);
+        grid->addWidget(rov::makeLabel(QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 1),
+                                       QStringLiteral("bodyValue")),
+                        2, 1);
+        grid->addWidget(rov::makeMetricLabel(QStringLiteral("温度")), 3, 0);
+        grid->addWidget(rov::makeLabel(QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 0),
+                                       QStringLiteral("bodyValue")),
+                        3, 1);
+        layout->addLayout(grid);
+
+        m_disableCheck = new QCheckBox(QStringLiteral("停用该推进器"), this);
+        m_disableCheck->setChecked(disabled);
+        layout->addWidget(m_disableCheck);
+
+        auto *actionRow = new QHBoxLayout;
+        m_testButton =
+            rov::makeButton(QStringLiteral("发送测试 1 秒"), QStringLiteral("softButton"), this);
+        auto *closeButton =
+            rov::makeButton(QStringLiteral("关闭"), QStringLiteral("softButton"), this);
+        actionRow->addWidget(m_testButton);
+        actionRow->addWidget(closeButton);
+        layout->addLayout(actionRow);
+
+        m_result = rov::makeLabel(QStringLiteral("演示模式：操作只记录为请求。"),
+                                  QStringLiteral("mutedLabel"));
+        m_result->setWordWrap(true);
+        layout->addWidget(m_result);
+
+        connect(m_disableCheck, &QCheckBox::toggled, this,
+                [this](const bool checked)
+                {
+                    m_result->setText(
+                        checked ? QStringLiteral("该推进器将被标记为停用，可取消勾选恢复。")
+                                : QStringLiteral("该推进器已准备恢复，点击关闭后生效。"));
+                });
+        connect(m_testButton, &QPushButton::clicked, this,
+                [this]
+                {
+                    if (m_disableCheck->isChecked())
+                    {
+                        m_result->setText(QStringLiteral("当前推进器已停用，未发送测试请求。"));
+                        return;
+                    }
+                    m_testRequested = true;
+                    m_result->setText(QStringLiteral("已记录 1 秒单推进器测试请求。"));
+                });
+        connect(closeButton, &QPushButton::clicked, this, &QDialog::accept);
+    }
+
+    bool disabled() const
+    {
+        return m_disableCheck->isChecked();
+    }
+    bool testRequested() const
+    {
+        return m_testRequested;
+    }
+
+  private:
+    QCheckBox *m_disableCheck = nullptr;
+    QPushButton *m_testButton = nullptr;
+    QLabel *m_result = nullptr;
+    bool m_testRequested = false;
+};
+
 } // namespace
 
 namespace rov
@@ -319,6 +469,7 @@ namespace rov
 DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
 {
     setObjectName(QStringLiteral("dashboardPage"));
+    m_thrusterDisabled = QVector<bool>(kDashboardThrusterCount, false);
     setStyleSheet(QStringLiteral(
         "QLabel#thrusterTitle { color: #18365b; font-weight: 650; }"
         "QLabel#bodyValue { color: #203b60; font-weight: 600; }"
@@ -331,7 +482,11 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
         "QLabel#axisName { color: #203b60; font-weight: 650; }"
         "QLabel#axisHint { color: #7a8fa6; font-size: 11px; }"
         "QLabel#axisValue { color: #203b60; font-weight: 650; min-width: 22px; }"
-        "QPushButton#softButton[dashboardAxis=\"true\"] { padding: 0; font-size: 15px; }"
+        "QPushButton#softButton[dashboardAxis=\"true\"] { min-width: 32px; min-height: 28px; "
+        "padding: 0; font-size: 18px; font-weight: 700; border-radius: 8px; }"
+        "QFrame#card[dashboardInteractive=\"true\"] { border-color: #b9d8f3; }"
+        "QFrame#card[dashboardInteractive=\"true\"]:hover { border-color: #3d9de8; "
+        "background: #f7fbff; }"
         "QCheckBox#dashboardEnable::indicator { width: 36px; height: 20px; border-radius: 10px; }"
         "QCheckBox#dashboardEnable::indicator:unchecked { background: #c8d5e2; border: 1px solid "
         "#b5c6d6; }"
@@ -362,6 +517,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
         QLabel *status = nullptr;
         const ThrusterTelemetry item = preview.thrusters.value(i);
         auto *tile = thrusterTile(item, rpm, current, temperature, status);
+        tile->onClicked = [this, i]() { openThrusterDetails(i); };
         m_thrusterRpmValues.append(rpm);
         m_thrusterCurrentValues.append(current);
         m_thrusterTemperatureValues.append(temperature);
@@ -403,11 +559,9 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
                          1, 1);
     stateGrid->addWidget(metricTile(QStringLiteral("解锁状态"), m_armValue, QStringLiteral("--")),
                          1, 2);
-    stateGrid->addWidget(metricTile(QStringLiteral("漏水状态"), m_leakValue, QStringLiteral("--")),
-                         1, 3);
     stateGrid->addWidget(
-        metricTile(QStringLiteral("内部温度"), m_temperatureValue, QStringLiteral("--")), 1, 4);
-    for (int column = 0; column < 5; ++column)
+        metricTile(QStringLiteral("内部温度"), m_temperatureValue, QStringLiteral("--")), 1, 3);
+    for (int column = 0; column < 4; ++column)
     {
         stateGrid->setColumnStretch(column, 1);
     }
@@ -434,7 +588,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
 
     auto *axisGrid = new QGridLayout;
     axisGrid->setContentsMargins(0, 0, 0, 0);
-    axisGrid->setHorizontalSpacing(5);
+    axisGrid->setHorizontalSpacing(3);
     axisGrid->setVerticalSpacing(6);
 
     const QStringList axisNames = {QStringLiteral("前进"), QStringLiteral("横移"),
@@ -495,21 +649,29 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
                               Qt::AlignCenter);
         auto *controls = new QHBoxLayout;
         controls->setContentsMargins(0, 3, 0, 0);
-        controls->setSpacing(4);
+        controls->setSpacing(2);
         auto *negative = axisButton(negativeArrows.at(index), axisWidget);
-        auto *zero = makeLabel(QStringLiteral("0"), QStringLiteral("axisValue"));
+        auto *zero = makeLabel(formatAxisValue(0.0), QStringLiteral("axisValue"));
         auto *positive = axisButton(positiveArrows.at(index), axisWidget);
+        m_axisValueLabels.append(zero);
+        m_axisValues.append(0.0);
         controls->addWidget(negative);
         controls->addWidget(zero, 1, Qt::AlignCenter);
         controls->addWidget(positive);
         axisLayout->addLayout(controls);
         grid->addWidget(axisWidget, 0, index);
+        const auto updateAxis = [this, sendAxisRequest, axis = controlAxes[index],
+                                 name = axisNames.at(index), index,
+                                 zero](const double delta, const QString &direction)
+        {
+            m_axisValues[index] = qBound(-1.0, m_axisValues[index] + delta, 1.0);
+            zero->setText(formatAxisValue(m_axisValues[index]));
+            sendAxisRequest(axis, m_axisValues[index], name, direction);
+        };
         connect(negative, &QPushButton::clicked, this,
-                [this, sendAxisRequest, axis = controlAxes[index], name = axisNames.at(index)]()
-                { sendAxisRequest(axis, -1.0, name, QStringLiteral("负向")); });
+                [updateAxis]() { updateAxis(-0.1, QStringLiteral("负向")); });
         connect(positive, &QPushButton::clicked, this,
-                [this, sendAxisRequest, axis = controlAxes[index], name = axisNames.at(index)]()
-                { sendAxisRequest(axis, 1.0, name, QStringLiteral("正向")); });
+                [updateAxis]() { updateAxis(0.1, QStringLiteral("正向")); });
     };
     for (int index = 0; index < 6; ++index)
     {
@@ -651,6 +813,50 @@ void DashboardPage::setSnapshot(const DashboardSnapshot &snapshot)
     refreshView();
 }
 
+void DashboardPage::openThrusterDetails(const int index)
+{
+    if (index < 0 || index >= kDashboardThrusterCount)
+    {
+        return;
+    }
+
+    ThrusterTelemetry item;
+    if (index < m_snapshot.thrusters.size())
+    {
+        item = m_snapshot.thrusters.at(index);
+    }
+    else
+    {
+        item.id = QStringLiteral("thruster%1").arg(index + 1);
+        item.label = QStringLiteral("T%1").arg(index + 1);
+        item.status = QStringLiteral("无数据");
+    }
+
+    const bool wasDisabled = m_thrusterDisabled.value(index, false);
+    ThrusterDetailDialog dialog(item, wasDisabled, this);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+
+    const bool disabled = dialog.disabled();
+    if (disabled != wasDisabled)
+    {
+        m_thrusterDisabled[index] = disabled;
+        emit thrusterCommandRequested(
+            ThrusterCommandRequest{item.id, ThrusterCommand::SetEnabled, !disabled});
+        logRequest(QStringLiteral("推进器 %1：%2")
+                       .arg(item.label,
+                            disabled ? QStringLiteral("请求停用") : QStringLiteral("请求恢复")));
+    }
+    if (dialog.testRequested())
+    {
+        emit thrusterCommandRequested(ThrusterCommandRequest{item.id, ThrusterCommand::Test, true});
+        logRequest(QStringLiteral("推进器 %1：请求测试 1 秒").arg(item.label));
+    }
+    refreshView();
+}
+
 void DashboardPage::refreshView()
 {
     const bool available = hasSystemData(m_snapshot);
@@ -665,14 +871,10 @@ void DashboardPage::refreshView()
     m_armValue->setText(
         available ? (m_snapshot.armed ? QStringLiteral("已解锁") : QStringLiteral("已停用"))
                   : QStringLiteral("--"));
-    m_leakValue->setText(
-        available ? (m_snapshot.leakDetected ? QStringLiteral("报警") : QStringLiteral("正常"))
-                  : QStringLiteral("--"));
     m_temperatureValue->setText(
         formatNumber(available, m_snapshot.internalTemperatureC, 1, QStringLiteral(" °C")));
     setTone(m_modeValue, "good");
     setTone(m_armValue, available && m_snapshot.armed ? "good" : "warn");
-    setTone(m_leakValue, available && m_snapshot.leakDetected ? "bad" : "good");
 
     if (m_stateUpdate != nullptr)
     {
@@ -720,6 +922,7 @@ void DashboardPage::refreshView()
         if (present)
         {
             const ThrusterTelemetry &item = m_snapshot.thrusters.at(i);
+            const bool disabled = m_thrusterDisabled.value(i, false);
             const bool itemValid = item.stamp.validity == DataValidity::Valid;
             const bool itemOnline = item.status == QStringLiteral("在线");
             itemOnline ? ++online : ++offline;
@@ -741,8 +944,12 @@ void DashboardPage::refreshView()
             m_thrusterTemperatureValues.at(i)->setText(
                 itemValid ? QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 0)
                           : QStringLiteral("--"));
-            m_thrusterStatusValues.at(i)->setToolTip(item.status);
-            setTone(m_thrusterStatusValues.at(i), itemOnline ? "good" : "warn");
+            m_thrusterStatusValues.at(i)->setText(disabled ? QStringLiteral("停用")
+                                                           : QStringLiteral("●"));
+            m_thrusterStatusValues.at(i)->setToolTip(disabled ? QStringLiteral("已在页面中停用")
+                                                              : item.status);
+            setTone(m_thrusterStatusValues.at(i),
+                    disabled ? "bad" : (itemOnline ? "good" : "warn"));
         }
         else
         {
@@ -750,8 +957,12 @@ void DashboardPage::refreshView()
             m_thrusterRpmValues.at(i)->setText(QStringLiteral("--"));
             m_thrusterCurrentValues.at(i)->setText(QStringLiteral("--"));
             m_thrusterTemperatureValues.at(i)->setText(QStringLiteral("--"));
-            m_thrusterStatusValues.at(i)->setToolTip(QStringLiteral("无数据"));
-            setTone(m_thrusterStatusValues.at(i), "warn");
+            const bool disabled = m_thrusterDisabled.value(i, false);
+            m_thrusterStatusValues.at(i)->setText(disabled ? QStringLiteral("停用")
+                                                           : QStringLiteral("●"));
+            m_thrusterStatusValues.at(i)->setToolTip(disabled ? QStringLiteral("已在页面中停用")
+                                                              : QStringLiteral("无数据"));
+            setTone(m_thrusterStatusValues.at(i), disabled ? "bad" : "warn");
         }
     }
 

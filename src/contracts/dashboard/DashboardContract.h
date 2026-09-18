@@ -73,9 +73,23 @@ struct ManualControlEnableRequest
     bool enabled = false; // User intent only; permission is decided outside the page.
 };
 
+enum class ThrusterCommand
+{
+    SetEnabled,
+    Test
+};
+
+struct ThrusterCommandRequest
+{
+    QString thrusterId;
+    ThrusterCommand command = ThrusterCommand::SetEnabled;
+    bool enabled = true;
+};
+
 } // namespace rov
 
 Q_DECLARE_METATYPE(rov::DashboardSnapshot)
 Q_DECLARE_METATYPE(rov::SixDofControlRequest)
 Q_DECLARE_METATYPE(rov::ThrustLimitRequest)
 Q_DECLARE_METATYPE(rov::ManualControlEnableRequest)
+Q_DECLARE_METATYPE(rov::ThrusterCommandRequest)
