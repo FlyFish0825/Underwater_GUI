@@ -1,6 +1,8 @@
 #include "pages/motor_debug/MotorDebugPage.h"
 
 #include "preview/PreviewData.h"
+#include "ui/common/AppCheckBox.h"
+#include "ui/common/AppComboBox.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QCheckBox>
@@ -126,13 +128,13 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     waveformCard->contentLayout()->setSpacing(6);
     auto *controls = new QHBoxLayout;
     controls->addWidget(makeLabel(QStringLiteral("时间刻度"), QStringLiteral("mutedLabel")));
-    auto *scale = new QComboBox;
+    auto *scale = new AppComboBox;
     scale->addItems(
         {QStringLiteral("1 秒/格"), QStringLiteral("500 毫秒/格"), QStringLiteral("100 毫秒/格")});
     controls->addWidget(scale);
     controls->addSpacing(8);
     controls->addWidget(makeLabel(QStringLiteral("触发"), QStringLiteral("mutedLabel")));
-    auto *trigger = new QComboBox;
+    auto *trigger = new AppComboBox;
     trigger->addItems({QStringLiteral("关闭"), QStringLiteral("转速"), QStringLiteral("电流")});
     controls->addWidget(trigger);
     controls->addStretch();
@@ -175,7 +177,7 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
         groupLayout->addWidget(makeLabel(groups.at(i), QStringLiteral("bodyValue")));
         for (int j = 0; j < 3; ++j)
         {
-            auto *check = new QCheckBox(
+            auto *check = new AppCheckBox(
                 j == 0 ? signalNames.at(i)
                        : QStringLiteral("%1 %2").arg(groups.at(i).left(7)).arg(j + 1));
             check->setChecked(j == 0);
@@ -195,7 +197,7 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     statusLayout->setColumnStretch(1, 1);
     statusLayout->setColumnStretch(3, 1);
     statusLayout->addWidget(makeLabel(QStringLiteral("电机"), QStringLiteral("mutedLabel")), 0, 0);
-    auto *motorSelect = new QComboBox;
+    auto *motorSelect = new AppComboBox;
     motorSelect->addItems({QStringLiteral("推进器 1（FL）"), QStringLiteral("推进器 2（FR）"),
                            QStringLiteral("推进器 3（ML）"), QStringLiteral("推进器 4（MR）")});
     statusLayout->addWidget(motorSelect, 0, 1, 1, 3);
@@ -245,10 +247,10 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     captureCard->setMaximumHeight(124);
     captureCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
     auto *captureLayout = new QHBoxLayout;
-    auto *sampleRate = new QComboBox;
+    auto *sampleRate = new AppComboBox;
     sampleRate->addItems(
         {QStringLiteral("1 kHz"), QStringLiteral("5 kHz"), QStringLiteral("10 kHz")});
-    auto *duration = new QComboBox;
+    auto *duration = new AppComboBox;
     duration->addItems({QStringLiteral("10 s"), QStringLiteral("30 s"), QStringLiteral("60 s")});
     captureLayout->addWidget(makeMetricLabel(QStringLiteral("采样率")));
     captureLayout->addWidget(sampleRate);
