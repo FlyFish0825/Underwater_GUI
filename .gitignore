@@ -167,3 +167,6 @@ local_config/
 *.uf2.tmp
 
 # 注意：不要在此处忽略 docs/、协议规范、示意图/、*.md、*.png 等项目资料。
+
+
+third_party

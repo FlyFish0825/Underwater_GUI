@@ -1,15 +1,19 @@
 #include "pages/dashboard/DashboardPage.h"
 
 #include "preview/PreviewData.h"
+#include "ui/common/AppCheckBox.h"
+#include "ui/common/AppSlider.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QCheckBox>
+#include <QFont>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSlider>
 #include <QStyle>
 #include <QVBoxLayout>
@@ -22,7 +26,8 @@ class RovTopView final : public QWidget
   public:
     explicit RovTopView(QWidget *parent = nullptr) : QWidget(parent)
     {
-        setMinimumSize(280, 280);
+        // 示意图随卡片伸缩；降低占位下限，给小分辨率下方的状态卡片留出空间。
+        setMinimumSize(220, 220);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
 
@@ -38,7 +43,10 @@ class RovTopView final : public QWidget
         const QColor light(QStringLiteral("#eaf2f9"));
         const QPointF center(width() * 0.50, height() * 0.52);
         const qreal bodyW = qMin(width() * 0.27, 132.0);
-        const qreal bodyH = qMin(height() * 0.64, 270.0);
+        // 紧凑窗口中为方向箭头和“后方”标签留出完整的上下安全边距；
+        // 大窗口仍使用更舒展的比例。
+        const qreal bodyRatio = height() < 360 ? 0.54 : 0.64;
+        const qreal bodyH = qMin(height() * bodyRatio, 270.0);
         const QRectF body(center.x() - bodyW / 2.0, center.y() - bodyH / 2.0, bodyW, bodyH);
 
         painter.setPen(QPen(dark, 2));
@@ -146,6 +154,7 @@ namespace rov
 DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
 {
     auto *root = new QVBoxLayout(this);
+    m_rootLayout = root;
     root->setContentsMargins(14, 12, 14, 10);
     root->setSpacing(10);
     root->addWidget(makePageHeader(QStringLiteral("总览"),
@@ -153,6 +162,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
                                    QStringLiteral("演示 · 未连接设备")));
 
     auto *topRow = new QHBoxLayout;
+    m_topRowLayout = topRow;
     topRow->setSpacing(12);
     auto *overview = new CardWidget(QStringLiteral("机器人总览（俯视图）"), IconKind::Dashboard);
     auto *overviewGrid = new QGridLayout;
@@ -162,17 +172,26 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     overviewGrid->addWidget(thrusterTile(preview.thrusters.at(0)), 0, 0);
     overviewGrid->addWidget(thrusterTile(preview.thrusters.at(1)), 0, 2);
     overviewGrid->addWidget(thrusterTile(preview.thrusters.at(2)), 1, 0);
-    overviewGrid->addWidget(new RovTopView, 0, 1, 3, 1);
+    m_rovTopView = new RovTopView;
+    overviewGrid->addWidget(m_rovTopView, 0, 1, 3, 1);
     overviewGrid->addWidget(thrusterTile(preview.thrusters.at(3)), 1, 2);
     overviewGrid->addWidget(thrusterTile(preview.thrusters.at(4)), 2, 0);
     overviewGrid->addWidget(thrusterTile(preview.thrusters.at(5)), 2, 2);
     overviewGrid->setColumnStretch(1, 2);
+    m_overviewGridLayout = overviewGrid;
     overview->contentLayout()->addLayout(overviewGrid);
+    m_cardContentLayouts.append(overview->contentLayout());
+    if (auto *header = overview->findChild<QFrame *>(QStringLiteral("cardHeader")))
+    {
+        m_cardHeaderLayouts.append(qobject_cast<QHBoxLayout *>(header->layout()));
+    }
     topRow->addWidget(overview, 6);
 
     auto *stateColumn = new QVBoxLayout;
+    m_stateColumnLayout = stateColumn;
     stateColumn->setSpacing(12);
     auto *stateCard = new CardWidget(QStringLiteral("机器人状态"), IconKind::Status);
+    m_stateCard = stateCard;
     auto *stateGrid = new QGridLayout;
     stateGrid->setSpacing(8);
     stateGrid->addWidget(metricTile(QStringLiteral("深度"), m_depthValue, QStringLiteral("--")), 0,
@@ -198,22 +217,32 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     stateGrid->setColumnStretch(2, 1);
     stateGrid->setColumnStretch(3, 1);
     stateCard->contentLayout()->addLayout(stateGrid);
-    stateColumn->addWidget(stateCard);
+    m_stateGridLayout = stateGrid;
+    m_cardContentLayouts.append(stateCard->contentLayout());
+    if (auto *header = stateCard->findChild<QFrame *>(QStringLiteral("cardHeader")))
+    {
+        m_cardHeaderLayouts.append(qobject_cast<QHBoxLayout *>(header->layout()));
+    }
+    stateColumn->addWidget(stateCard, 0);
 
     auto *controlCard = new CardWidget(QStringLiteral("六自由度手动控制"), IconKind::Action);
+    m_controlCard = controlCard;
     auto *enableRow = new QHBoxLayout;
     enableRow->addWidget(makeLabel(QStringLiteral("启用控制"), QStringLiteral("bodyValue")));
-    auto *enable = new QCheckBox;
+    auto *enable = new AppCheckBox;
     enable->setChecked(false);
     enableRow->addStretch();
     enableRow->addWidget(enable);
-    controlCard->contentLayout()->addLayout(enableRow);
     auto *permissionRow = new QHBoxLayout;
     permissionRow->addWidget(makeLabel(QStringLiteral("控制权限"), QStringLiteral("bodyValue")));
     permissionRow->addStretch();
     m_controlPermission = makeStatusPill(QStringLiteral("仅演示"), QStringLiteral("statusWarn"));
     permissionRow->addWidget(m_controlPermission);
-    controlCard->contentLayout()->addLayout(permissionRow);
+    auto *accessRow = new QHBoxLayout;
+    accessRow->setSpacing(14);
+    accessRow->addLayout(enableRow, 1);
+    accessRow->addLayout(permissionRow);
+    controlCard->contentLayout()->addLayout(accessRow);
     auto *axisGrid = new QGridLayout;
     axisGrid->setHorizontalSpacing(10);
     axisGrid->setVerticalSpacing(7);
@@ -222,10 +251,11 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
                               QStringLiteral("俯仰"), QStringLiteral("航向")};
     for (int i = 0; i < axes.size(); ++i)
     {
-        auto *axisBox = new QVBoxLayout;
-        axisBox->setSpacing(3);
-        axisBox->addWidget(makeLabel(axes.at(i), QStringLiteral("bodyValue")), 0, Qt::AlignCenter);
+        auto *axisBox = new QHBoxLayout;
+        axisBox->setSpacing(4);
+        axisBox->addWidget(makeLabel(axes.at(i), QStringLiteral("bodyValue")));
         auto *row = new QHBoxLayout;
+        row->setSpacing(3);
         auto *minus = makeButton(QStringLiteral("−"), QStringLiteral("softButton"));
         auto *plus = makeButton(QStringLiteral("+"), QStringLiteral("softButton"));
         auto *zero = makeLabel(QStringLiteral("0"), QStringLiteral("bodyValue"));
@@ -250,9 +280,15 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
                 });
     }
     controlCard->contentLayout()->addLayout(axisGrid);
+    m_axisGridLayout = axisGrid;
+    m_cardContentLayouts.append(controlCard->contentLayout());
+    if (auto *header = controlCard->findChild<QFrame *>(QStringLiteral("cardHeader")))
+    {
+        m_cardHeaderLayouts.append(qobject_cast<QHBoxLayout *>(header->layout()));
+    }
     auto *limitRow = new QHBoxLayout;
     limitRow->addWidget(makeLabel(QStringLiteral("最大推力上限"), QStringLiteral("bodyValue")));
-    auto *limitSlider = new QSlider(Qt::Horizontal);
+    auto *limitSlider = new AppSlider(Qt::Horizontal);
     limitSlider->setRange(0, 100);
     limitSlider->setValue(preview.thrustLimitPercent);
     limitRow->addWidget(limitSlider, 1);
@@ -266,11 +302,12 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
                 logRequest(QStringLiteral("推力上限请求：%1%").arg(value));
             });
     controlCard->contentLayout()->addLayout(limitRow);
-    stateColumn->addWidget(controlCard);
+    stateColumn->addWidget(controlCard, 1);
     topRow->addLayout(stateColumn, 6);
     root->addLayout(topRow, 1);
 
     auto *bottomRow = new QHBoxLayout;
+    m_bottomRowLayout = bottomRow;
     bottomRow->setSpacing(12);
     auto *summary = new CardWidget(QStringLiteral("电机状态汇总"), IconKind::Motor);
     auto *summaryGrid = new QGridLayout;
@@ -290,7 +327,13 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     summaryGrid->addWidget(makeMetricLabel(QStringLiteral("平均电流  1.1 A")), 2, 2);
     summaryGrid->addWidget(makeMetricLabel(QStringLiteral("平均温度  25.3 °C")), 2, 3);
     summary->contentLayout()->addLayout(summaryGrid);
+    m_cardContentLayouts.append(summary->contentLayout());
+    if (auto *header = summary->findChild<QFrame *>(QStringLiteral("cardHeader")))
+    {
+        m_cardHeaderLayouts.append(qobject_cast<QHBoxLayout *>(header->layout()));
+    }
     bottomRow->addWidget(summary, 4);
+    m_bottomCards.append(summary);
 
     auto *alarms = new CardWidget(QStringLiteral("活动报警"), IconKind::Alarm);
     m_alarmValue = makeMetricValue(QStringLiteral("无活动报警"));
@@ -301,6 +344,12 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
         Qt::AlignCenter);
     alarms->contentLayout()->addStretch();
     bottomRow->addWidget(alarms, 4);
+    m_bottomCards.append(alarms);
+    m_cardContentLayouts.append(alarms->contentLayout());
+    if (auto *header = alarms->findChild<QFrame *>(QStringLiteral("cardHeader")))
+    {
+        m_cardHeaderLayouts.append(qobject_cast<QHBoxLayout *>(header->layout()));
+    }
 
     auto *quick = new CardWidget(QStringLiteral("快捷操作"), IconKind::Action);
     auto *quickGrid = new QGridLayout;
@@ -317,6 +366,11 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
         makeLabel(QStringLiteral("请求已记录；未连接设备。"), QStringLiteral("mutedLabel"));
     m_requestLog->setWordWrap(true);
     quick->contentLayout()->addWidget(m_requestLog);
+    m_cardContentLayouts.append(quick->contentLayout());
+    if (auto *header = quick->findChild<QFrame *>(QStringLiteral("cardHeader")))
+    {
+        m_cardHeaderLayouts.append(qobject_cast<QHBoxLayout *>(header->layout()));
+    }
     connect(arm, &QPushButton::clicked, this,
             [this]()
             {
@@ -342,9 +396,131 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
                 logRequest(QStringLiteral("请求紧急上浮"));
             });
     bottomRow->addWidget(quick, 4);
+    m_bottomCards.append(quick);
     root->addLayout(bottomRow);
 
+    m_dashboardButtons = findChildren<QPushButton *>();
+    updateResponsiveLayout();
+
     setSnapshot(preview);
+}
+
+void DashboardPage::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    updateResponsiveLayout();
+}
+
+void DashboardPage::updateResponsiveLayout()
+{
+    if (m_rootLayout == nullptr)
+    {
+        return;
+    }
+
+    // 980x660 这类窗口的内容区高度有限。只收紧总览页自身的间距和控件高度，
+    // 不改变数据、信号和页面结构；窗口变大后自动恢复桌面布局。
+    const bool compact = width() < 1180 || height() < 760;
+    if (compact == m_compactLayout && m_rovTopView != nullptr)
+    {
+        return;
+    }
+    m_compactLayout = compact;
+
+    m_rootLayout->setContentsMargins(compact ? 8 : 14, compact ? 6 : 12,
+                                     compact ? 8 : 14, compact ? 6 : 10);
+    m_rootLayout->setSpacing(compact ? 6 : 10);
+    m_topRowLayout->setSpacing(compact ? 6 : 12);
+    m_stateColumnLayout->setSpacing(compact ? 6 : 12);
+    m_bottomRowLayout->setSpacing(compact ? 6 : 12);
+    m_overviewGridLayout->setSpacing(compact ? 5 : 8);
+    m_stateGridLayout->setSpacing(compact ? 5 : 8);
+    m_axisGridLayout->setHorizontalSpacing(compact ? 6 : 10);
+    m_axisGridLayout->setVerticalSpacing(compact ? 4 : 7);
+    m_rovTopView->setMinimumSize(compact ? QSize(170, 170) : QSize(220, 220));
+
+    if (auto *pageTitle = findChild<QLabel *>(QStringLiteral("pageTitle")))
+    {
+        QFont font = pageTitle->font();
+        font.setPointSize(compact ? 22 : 28);
+        pageTitle->setFont(font);
+    }
+    if (auto *pageSubtitle = findChild<QLabel *>(QStringLiteral("pageSubtitle")))
+    {
+        QFont font = pageSubtitle->font();
+        font.setPointSize(compact ? 12 : 14);
+        pageSubtitle->setFont(font);
+    }
+
+    for (auto *layout : m_cardContentLayouts)
+    {
+        if (layout != nullptr)
+        {
+            layout->setContentsMargins(compact ? 8 : 14, compact ? 6 : 12,
+                                       compact ? 8 : 14, compact ? 8 : 14);
+            layout->setSpacing(compact ? 6 : 10);
+        }
+    }
+    for (auto *layout : m_cardHeaderLayouts)
+    {
+        if (layout != nullptr)
+        {
+            layout->setContentsMargins(compact ? 10 : 14, compact ? 6 : 10,
+                                       compact ? 10 : 14, compact ? 5 : 9);
+        }
+    }
+    for (auto *button : m_dashboardButtons)
+    {
+        if (button != nullptr)
+        {
+            button->setFixedHeight(compact ? 26 : 34);
+        }
+    }
+
+    for (auto *label : findChildren<QLabel *>())
+    {
+        QFont font = label->font();
+        if (label->objectName() == QStringLiteral("metricLabel"))
+        {
+            font.setPointSize(compact ? 10 : 12);
+            label->setFont(font);
+        }
+        else if (label->objectName() == QStringLiteral("metricValue"))
+        {
+            font.setPointSize(compact ? 13 : 19);
+            label->setFont(font);
+        }
+        else if (label->objectName() == QStringLiteral("bodyValue"))
+        {
+            font.setPointSize(compact ? 11 : 13);
+            label->setFont(font);
+        }
+    }
+
+    // metricTile 也是 card，但不是 CardWidget；压缩其内部留白后，状态卡的三行指标
+    // 可以在小窗口中保持完整显示，而不会把控制卡挤到内容区外。
+    for (auto *frame : findChildren<QFrame *>())
+    {
+        if (dynamic_cast<CardWidget *>(frame) != nullptr || frame->layout() == nullptr)
+        {
+            continue;
+        }
+        auto *layout = qobject_cast<QVBoxLayout *>(frame->layout());
+        if (layout != nullptr)
+        {
+            layout->setContentsMargins(compact ? 7 : 10, compact ? 4 : 8,
+                                       compact ? 7 : 10, compact ? 4 : 8);
+            frame->setMinimumHeight(compact ? 36 : 0);
+        }
+    }
+
+    for (auto *card : m_bottomCards)
+    {
+        if (card != nullptr)
+        {
+            card->setMaximumHeight(compact ? 136 : QWIDGETSIZE_MAX);
+        }
+    }
 }
 
 void DashboardPage::setSnapshot(const DashboardSnapshot &snapshot)

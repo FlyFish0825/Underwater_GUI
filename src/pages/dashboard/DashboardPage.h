@@ -2,9 +2,15 @@
 
 #include "contracts/dashboard/DashboardContract.h"
 
+#include <QHBoxLayout>
+#include <QList>
+#include <QVBoxLayout>
 #include <QWidget>
 
 class QLabel;
+class QGridLayout;
+class QPushButton;
+class QResizeEvent;
 
 namespace rov
 {
@@ -27,10 +33,27 @@ class DashboardPage final : public QWidget
     void thrustLimitRequested(const ThrustLimitRequest &request);
 
   private:
+    void resizeEvent(QResizeEvent *event) override;
+    void updateResponsiveLayout();
     void refreshView();
     void logRequest(const QString &message);
 
     DashboardSnapshot m_snapshot;
+    QVBoxLayout *m_rootLayout = nullptr;
+    QHBoxLayout *m_topRowLayout = nullptr;
+    QVBoxLayout *m_stateColumnLayout = nullptr;
+    QHBoxLayout *m_bottomRowLayout = nullptr;
+    QGridLayout *m_overviewGridLayout = nullptr;
+    QGridLayout *m_stateGridLayout = nullptr;
+    QGridLayout *m_axisGridLayout = nullptr;
+    QList<QVBoxLayout *> m_cardContentLayouts;
+    QList<QHBoxLayout *> m_cardHeaderLayouts;
+    QList<QPushButton *> m_dashboardButtons;
+    QList<QWidget *> m_bottomCards;
+    QWidget *m_rovTopView = nullptr;
+    QWidget *m_stateCard = nullptr;
+    QWidget *m_controlCard = nullptr;
+    bool m_compactLayout = false;
     QLabel *m_depthValue = nullptr;
     QLabel *m_rollValue = nullptr;
     QLabel *m_pitchValue = nullptr;

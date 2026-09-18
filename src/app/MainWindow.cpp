@@ -139,7 +139,7 @@ QString navigationAsset(const rov::IconKind icon)
     case rov::IconKind::Dashboard:
         return QStringLiteral(":/icons/nav/dashboard.png");
     case rov::IconKind::Motor:
-        return QStringLiteral(":/icons/nav/motor.png");
+        return QStringLiteral(":/icons/nav/motor_debug.png");
     case rov::IconKind::Firmware:
         return QStringLiteral(":/icons/nav/firmware.png");
     case rov::IconKind::Manipulator:
@@ -157,9 +157,8 @@ QToolButton *navigationButton(const QString &text, const QString &description,
                               const rov::IconKind icon, QWidget *parent)
 {
     const QString asset = navigationAsset(icon);
-    const bool isSettings = icon == rov::IconKind::Settings;
     auto *button = new rov::AnimatedNavButton(text, description, icon, asset,
-                                              isSettings ? 8 : 4, isSettings ? 1 : 2, parent);
+                                              8, 1, 0, parent);
     return button;
 }
 
@@ -211,7 +210,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     auto *topBar = new TitleBarFrame(root);
     topBar->setObjectName(QStringLiteral("topBar"));
-    topBar->setFixedHeight(48);
+    // 顶部工具区保持紧凑，把垂直空间优先留给页面主体。
+    topBar->setFixedHeight(44);
     auto *topLayout = new QHBoxLayout(topBar);
     topLayout->setContentsMargins(20, 0, 18, 0);
     topLayout->setSpacing(10);
@@ -228,17 +228,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     auto *minimize = new QToolButton(topBar);
     minimize->setObjectName(QStringLiteral("windowButton"));
     minimize->setText(QStringLiteral("—"));
-    minimize->setFixedSize(42, 48);
+    minimize->setFixedSize(42, 44);
     minimize->setFocusPolicy(Qt::NoFocus);
     auto *maximize = new QToolButton(topBar);
     maximize->setObjectName(QStringLiteral("windowButton"));
     maximize->setText(QStringLiteral("□"));
-    maximize->setFixedSize(42, 48);
+    maximize->setFixedSize(42, 44);
     maximize->setFocusPolicy(Qt::NoFocus);
     auto *close = new QToolButton(topBar);
     close->setObjectName(QStringLiteral("closeButton"));
     close->setText(QStringLiteral("×"));
-    close->setFixedSize(42, 48);
+    close->setFixedSize(42, 44);
     close->setFocusPolicy(Qt::NoFocus);
     topLayout->addWidget(minimize);
     topLayout->addWidget(maximize);
@@ -274,11 +274,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     bodyLayout->setSpacing(0);
     auto *sidebar = new QFrame(body);
     sidebar->setObjectName(QStringLiteral("sideBar"));
-    // 保留导航清晰度的同时压缩侧栏宽度，把更多空间留给页面内容。
-    sidebar->setFixedWidth(184);
+    // 侧栏采用图片导航样式，悬停名称由按钮浮层显示，把页面空间留给主体内容。
+    sidebar->setFixedWidth(76);
     auto *navLayout = new QVBoxLayout(sidebar);
     navLayout->setContentsMargins(8, 14, 8, 12);
-    navLayout->setSpacing(5);
+    navLayout->setSpacing(6);
     m_navGroup = new QButtonGroup(this);
     m_navGroup->setExclusive(true);
     const struct NavEntry
@@ -304,8 +304,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         buttons.append(button);
     }
     navLayout->addStretch();
-    navLayout->addWidget(
-        makeLabel(QStringLiteral("ROV-UI-2.1-integrated"), QStringLiteral("mutedLabel")));
     bodyLayout->addWidget(sidebar);
 
     m_pages = new QStackedWidget;
@@ -369,7 +367,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     auto *footer = new QFrame(root);
     footer->setObjectName(QStringLiteral("bottomBar"));
-    footer->setFixedHeight(40);
+    footer->setFixedHeight(34);
     auto *footerLayout = new QHBoxLayout(footer);
     footerLayout->setContentsMargins(18, 0, 18, 0);
     footerLayout->setSpacing(18);

@@ -17,14 +17,15 @@ class QTimer;
 namespace rov
 {
 
-// 可复用的侧栏动画导航按钮。
-// 该控件只负责图标帧、主题着色和悬停提示，不负责页面切换或通信业务。
+// 可复用的侧栏导航按钮。
+// 该控件只负责稳定图标、主题着色和悬停提示，不负责页面切换或通信业务。
 class AnimatedNavButton final : public QToolButton
 {
   public:
     AnimatedNavButton(const QString &title, const QString &description, IconKind icon,
-                      const QString &assetPath, int columns, int rows,
+                      const QString &assetPath, int columns, int rows, int frameRow,
                       QWidget *parent = nullptr);
+    ~AnimatedNavButton() override;
 
     // 主题或样式表改变后重新生成着色缓存，避免把颜色写死在动画组件中。
     void refreshTheme();
@@ -35,7 +36,7 @@ class AnimatedNavButton final : public QToolButton
     void changeEvent(QEvent *event) override;
 
   private:
-    void loadFrames(const QString &assetPath, int columns, int rows);
+    void loadFrames(const QString &assetPath, int columns, int rows, int frameRow);
     void rebuildTintedFrames();
     void updateDisplayedFrame();
     void advanceAnimation();
@@ -47,16 +48,20 @@ class AnimatedNavButton final : public QToolButton
     QString m_title;
     QString m_description;
     IconKind m_fallbackIcon;
+    int m_frameRow = 0;
     QVector<QImage> m_frames;
     QVector<QPixmap> m_normalFrames;
     QVector<QPixmap> m_activeFrames;
-    QTimer *m_animationTimer = nullptr;
     QFrame *m_hoverCard = nullptr;
     QGraphicsOpacityEffect *m_hoverOpacity = nullptr;
     QPropertyAnimation *m_hoverFade = nullptr;
+    QTimer *m_hoverHideTimer = nullptr;
+    QTimer *m_hoverStateTimer = nullptr;
+    QTimer *m_animationTimer = nullptr;
+    bool m_hovering = false;
     int m_currentFrame = 0;
     int m_targetFrame = 0;
-    int m_direction = 0;
+    int m_animationDirection = 0;
 };
 
 } // namespace rov

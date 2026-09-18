@@ -10,11 +10,39 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt5 5.9 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets)
+
+# Fluent-Qt 作为可选的第三方控件库接入：只构建库本身，不构建它的示例、画廊、
+# 测试和 Python 绑定，避免把与上位机无关的目标带入现有工程。
+set(FLUENT_QT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(FLUENT_QT_BUILD_GALLERY OFF CACHE BOOL "" FORCE)
+set(FLUENT_QT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(FLUENT_QT_BUILD_PYSIDE6_BINDINGS OFF CACHE BOOL "" FORCE)
+set(FLUENT_QT_BUILD_WEBASSEMBLY_SUPPORT OFF CACHE BOOL "" FORCE)
+set(FLUENT_QT_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/Fluent-Qt EXCLUDE_FROM_ALL)
 
 add_library(rov_ui_common STATIC
     src/ui/common/AnimatedNavButton.cpp
     src/ui/common/AnimatedNavButton.h
+    src/ui/common/AppCheckBox.cpp
+    src/ui/common/AppCheckBox.h
+    src/ui/common/AppComboBox.cpp
+    src/ui/common/AppComboBox.h
+    src/ui/common/AppFluentButton.cpp
+    src/ui/common/AppFluentButton.h
+    src/ui/common/AppInfoBar.cpp
+    src/ui/common/AppInfoBar.h
+    src/ui/common/AppLineEdit.cpp
+    src/ui/common/AppLineEdit.h
+    src/ui/common/AppProgressBar.cpp
+    src/ui/common/AppProgressBar.h
+    src/ui/common/AppProgressRing.cpp
+    src/ui/common/AppProgressRing.h
+    src/ui/common/AppSlider.cpp
+    src/ui/common/AppSlider.h
+    src/ui/common/AppToggleSwitch.cpp
+    src/ui/common/AppToggleSwitch.h
     src/ui/common/UiPrimitives.cpp
     src/ui/common/UiPrimitives.h
 )
@@ -25,6 +53,8 @@ add_library(rov_preview STATIC
 )
 
 add_library(rov_communication STATIC
+    src/communication/bootloader/BootloaderDownloadController.cpp
+    src/communication/bootloader/BootloaderDownloadController.h
     src/communication/bootloader/BootloaderProtocol.cpp
     src/communication/bootloader/BootloaderProtocol.h
     src/communication/bootloader/BootloaderService.cpp
@@ -117,6 +147,12 @@ endforeach()
 
 target_link_libraries(rov_page_firmware PUBLIC rov_communication)
 target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history)
+target_link_libraries(rov_ui_common PUBLIC FluentQt::FluentQt)
+target_link_libraries(rov_page_dashboard PUBLIC rov_ui_common)
+target_link_libraries(rov_page_motor_debug PUBLIC rov_ui_common)
+target_link_libraries(rov_page_firmware PUBLIC rov_ui_common)
+target_link_libraries(rov_page_manipulator PUBLIC rov_ui_common)
+target_link_libraries(rov_page_settings PUBLIC rov_ui_common)
 
 target_include_directories(rov_ui PRIVATE src)
 

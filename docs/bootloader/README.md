@@ -4,6 +4,18 @@
 
 ## 1. 通信链路
 
+### V1.3.1 单节点窗口流控
+
+WRITE 回复 Byte6 非零时启用单窗口发送，Byte4~5 总包数必须与固件匹配。
+按回复的窗口大小（当前为 64 个逻辑包）发送后停止 DATA，等待 `0x32 WINDOW_STATUS`。
+每包仍为 56 字节固件数据，尾包用 FF 补齐。Classic CAN 连发八个物理帧后停 1 ms；
+CAN FD 每个逻辑包一帧。界面进度按已确认写入并回读的包数更新。
+
+500 ms 未收到确认时先查询 0x32；查询显示窗口未完整提交则重发当前窗口。
+可用窗口为零时继续等待/查询。连续五次查询/重发无进展后停止并提示重新下载，
+不会自动擦除。只有 NextSequence 等于总包数才发送 WRITE_END，缺包为零后才校验。
+WRITE_END 返回 WRITE 忙状态时重新等待/查询窗口。Byte6=0 保持旧协议兼容。
+
 ```text
 FirmwarePage
     ↓
@@ -158,16 +170,23 @@ F:\file\BaiduSyncdisk\Project\Observer_Motor\build\Boot-Release\Observer_boot.bi
 - 常用命令发送和响应解析；
 - Bootloader 命令中心与 Peer 监视；
 - 固件页节点选择和结构化节点状态。
+- Legacy 单节点正式下载：`ENTER_BOOT → ERASE → WRITE → DATA → WRITE_END → VERIFY → JUMP_APP`；
+- 64 字节逻辑 DATA 包、56 字节有效载荷，支持手动选择 Classic CAN `0x100~0x107` 八片分片或 CAN FD+BRS `0x100` 单帧；
+- Classic CAN 分片按 3 ms 间隔逐帧发送，避免 USB CDC/网关发送队列突发溢出导致缺包；
+- CRC-32/MPEG-2 计算、下载阶段、数据包进度和设备错误码显示。
 
-### 尚未实现
+### 当前限制
 
-- `WRITE_DATA` 固件分包传输；
-- ERASE → WRITE → DATA → WRITE_END → VERIFY 的完整异步升级状态机；
-- 动态升级任务卡、失败重试和升级历史持久化；
+- 自动缺包修复（设备在 `WRITE_END` 报告缺包时，当前版本会停止并保留错误信息，避免盲目跳转）；
+- 8 节点自治升级、Provider/Coordinator 修复轮次和 Guard/Rollback；
 - Trial 启动状态的真实回读；
 - Jetson Nano/TCP Transport。
 
-在上述功能完成前，页面中的“编程/升级”不能宣称已经完成真实烧录。
+“编程”和“下载到选中节点”按钮现在执行真实的 Legacy 单节点下载。固件页上方的“升级总线”
+下拉框可手动选择 `Classic CAN（8 分片）` 或 `CAN FD+BRS（64 字节）`：控制帧始终是标准
+Classic CAN 8 字节，只有 DATA 数据面按选择切换。正式下载只接受 `.bin` 镜像；`.hex`、`.uf2`
+仍可用于查看文件信息，但需要先转换成 BIN。目标节点必须已经进入 Bootloader，或由下载流程先
+发送 `ENTER_BOOT` 后等待复位。
 
 ## 8. 实机测试建议
 
@@ -175,8 +194,11 @@ F:\file\BaiduSyncdisk\Project\Observer_Motor\build\Boot-Release\Observer_boot.bi
 2. 启动 `build/gui/rov_ui.exe`，进入“固件升级”。
 3. 确认状态显示绿色“下位机在线”和递增心跳计数。
 4. 选择 Node，点击“读取版本”“设备信息”“运行状态”。
-5. 对照底层 `COMMAND_TEST_GUIDE.md` 检查 CAN ID、payload 和响应状态。
-6. 未完成完整升级状态机前，不要使用真实固件执行擦除或编程测试。
+5. 拖入 Boot-Release 的 `.bin` 文件，确认文件大小、SHA-256 和 CRC32 日志。
+6. 在页面上方“升级总线”选择 Classic CAN 或 CAN FD+BRS，再点击“下载到选中节点”（或“编程”），
+   观察擦除、写入进度、校验和启动 APP。
+7. 对照底层 `COMMAND_TEST_GUIDE.md` 检查 CAN ID、payload 和响应状态；如果设备报告缺包或错误码，
+   页面会停止流程并保留中文错误与原始帧，确认总线和供电后再重试。
 
 ## 9. 参考资料
 

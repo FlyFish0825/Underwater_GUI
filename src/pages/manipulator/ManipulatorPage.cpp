@@ -1,6 +1,7 @@
 #include "pages/manipulator/ManipulatorPage.h"
 
 #include "preview/PreviewData.h"
+#include "ui/common/AppSlider.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QGridLayout>
@@ -113,7 +114,7 @@ ManipulatorPage::ManipulatorPage(QWidget *parent) : QWidget(parent)
                           .arg(i == 0 ? QStringLiteral("0.03") : QStringLiteral("0.02")),
                       QStringLiteral("bodyValue")));
         axisLayout->addLayout(values);
-        auto *slider = new QSlider(Qt::Horizontal);
+        auto *slider = new AppSlider(Qt::Horizontal);
         slider->setRange(0, 100);
         slider->setValue(i == 0 ? 45 : 32);
         axisLayout->addWidget(slider);
@@ -180,7 +181,7 @@ ManipulatorPage::ManipulatorPage(QWidget *parent) : QWidget(parent)
     {
         auto *row = new QHBoxLayout;
         row->addWidget(makeMetricLabel(name));
-        auto *slider = new QSlider(Qt::Horizontal);
+        auto *slider = new AppSlider(Qt::Horizontal);
         slider->setValue(50);
         row->addWidget(slider);
         settingsLayout->addLayout(row);

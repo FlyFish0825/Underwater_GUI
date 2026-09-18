@@ -85,23 +85,31 @@ QLabel#pageSubtitle {
 QToolButton#navButton {
     color: #344d6d;
     border: none;
-    border-radius: 7px;
-    text-align: left;
-    padding: 0 12px;
-    font-size: 14px;
+    border-radius: 15px;
+    padding: 0;
+    min-width: 48px;
+    max-width: 60px;
+    min-height: 48px;
+    max-height: 48px;
 }
 
 QToolButton#navButton:hover {
-    background: #f0f6fc;
+    background: #e8f3ff;
     color: #147de5;
+    border: 1px solid #c7e3fb;
 }
 
 QToolButton#navButton:checked {
+    /* 选中页不抢占悬停激活色，激活底色只跟随当前鼠标位置。 */
+    background: transparent;
+    color: #344d6d;
+    border: 1px solid transparent;
+}
+
+QToolButton#navButton:checked:hover {
     background: #e8f3ff;
     color: #0879df;
-    border-left: 3px solid #1687ee;
-    padding-left: 9px;
-    font-weight: 600;
+    border: 1px solid #c7e3fb;
 }
 
 QFrame#navTooltip {
@@ -130,7 +138,8 @@ QFrame#card {
 /* 固件文件拖放卡片：拖入可接受文件时用蓝色边框和浅色背景提示。 */
 QFrame#firmwareDropZone {
     background: #fbfdff;
-    border: 1px dashed #cbdceb;
+    /* 普通态也预留 2px 边框，切换高亮时不会改变卡片内容位置。 */
+    border: 2px dashed #cbdceb;
     border-radius: 5px;
 }
 

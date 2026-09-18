@@ -1,6 +1,6 @@
 # ROV Qt 上位机
 
-这是水下机器人 ROV 的 Qt Widgets 上位机工程。当前已在固件升级页接入 **Windows USB CDC 虚拟串口发现、VID/PID 筛选、串口接管、心跳监视、CAN 网关 AA55 增量拆包和 Bootloader 命令中心**；完整固件传输升级流程及其他设备驱动仍按任务卡逐步实现。
+这是水下机器人 ROV 的 Qt Widgets 上位机工程。当前已在固件升级页接入 **Windows USB CDC 虚拟串口发现、VID/PID 筛选、串口接管、心跳监视、CAN 网关 AA55 增量拆包、Bootloader 命令中心和可选择 Classic CAN/CAN FD 的 Legacy 单节点正式下载**；其他设备驱动仍按任务卡逐步实现。
 
 ## 开始开发前必须阅读
 
@@ -61,11 +61,11 @@ UI → Service/Data → Protocol → Transport
 
 ## USB CDC 通信
 
-固件页按底层 `CAN_To_Uart` 工程筛选 `VID_0483`、`PID_5740`（十六进制）。启动或点击“刷新设备”后，若发现匹配设备会自动连接；找不到设备时仍可手动刷新和接管。USB CDC 不使用波特率；界面解析 `AA 55` CAN 网关帧并显示 CAN 数据，`AA 58` 心跳帧只在后台用于在线判断，不在日志中显示。心跳连续约 2.5 秒未收到时标记为疑似离线。当前不会自动发送 Bootloader 命令，便于先验证下位机链路。
+固件页按底层 `CAN_To_Uart` 工程筛选 `VID_0483`、`PID_5740`（十六进制）。启动或点击“刷新设备”后，若发现匹配设备会自动连接；找不到设备时仍可手动刷新和接管。USB CDC 不使用波特率；界面解析 `AA 55` CAN 网关帧并显示 CAN 数据，`AA 58` 心跳帧只在后台用于在线判断，不在日志中显示。心跳连续约 2.5 秒未收到时标记为疑似离线。点击“下载到选中节点”会按 `ENTER_BOOT → ERASE → WRITE → DATA → WRITE_END → VERIFY → JUMP_APP` 执行真实下载。
 
 ## Bootloader
 
-固件升级页的 Bootloader 功能、命令列表、通信协议、测试步骤和未实现项见 [Bootloader 功能说明](docs/bootloader/README.md)。
+固件升级页的 Bootloader 功能、命令列表、Classic CAN/CAN FD 选择、真实下载流程、限制和测试步骤见 [Bootloader 功能说明](docs/bootloader/README.md)。
 
 多人协作请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。所有开发者和 Agent 都必须先阅读 `agent/` 目录中的统一提示词及通信分层规范，从 `main` 创建功能分支，通过 Pull Request 合并；不要直接向 `main` 推送。
 
