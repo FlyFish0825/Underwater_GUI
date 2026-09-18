@@ -4,12 +4,16 @@
 
 ## 1. 通信链路
 
-### V1.3.1 单节点窗口流控
+### V1.3.1 单节点窗口流控与 AA59 网关流控
 
 WRITE 回复 Byte6 非零时启用单窗口发送，Byte4~5 总包数必须与固件匹配。
 按回复的窗口大小（当前为 64 个逻辑包）发送后停止 DATA，等待 `0x32 WINDOW_STATUS`。
-每包仍为 56 字节固件数据，尾包用 FF 补齐。Classic CAN 连发八个物理帧后停 1 ms；
-CAN FD 每个逻辑包一帧。界面进度按已确认写入并回读的包数更新。
+每包仍为 56 字节固件数据，编码为固定 64 字节 Bootloader DATA 包，尾包用
+FF 补齐。连续 APP 数据不再通过 AA55 加固定延时发送，而是使用 AA59：先发
+BEGIN，获得固定初始 Credit=16，再按 Credit 发送 DATA_BLOCK；收到累计
+FLOW_ACK 后补充 Credit，最后一块确认完成后才发送 END。Classic CAN 的每个
+64 字节逻辑块由 H750 自动拆成 `0x100~0x107` 八帧；CAN FD 每块对应一帧。
+界面进度按已确认写入并回读的包数更新。
 
 500 ms 未收到确认时先查询 0x32；查询显示窗口未完整提交则重发当前窗口。
 可用窗口为零时继续等待/查询。连续五次查询/重发无进展后停止并提示重新下载，
@@ -22,7 +26,7 @@ FirmwarePage
 BootloaderService
     ↓ 生成 CAN payload
 BootloaderCommunicationService
-    ↓ AA55 网关封装
+    ↓ 控制帧 AA55 / 连续 DATA 使用 AA59 Credit/ACK
 USB CDC 虚拟串口
     ↓
 STM32H750 CAN_To_Uart
@@ -30,7 +34,9 @@ STM32H750 CAN_To_Uart
 STM32G431 Bootloader
 ```
 
-Bootloader 协议层只处理 CAN payload，不知道 COM 口、USB CDC、AA55 或 Qt 控件。USB CDC 传输层只负责 VID/PID 设备枚举、串口打开/关闭和字节收发。
+Bootloader 协议层只处理 CAN payload，不知道 COM 口、USB CDC、AA55、AA59
+或 Qt 控件。USB CDC 接收入口先按协议族和长度统一拆包，再分别交给 AA55、
+AA58 和 AA59 解码器，避免固件数据内部出现 `AA55` 时被误认为新帧。
 
 ## 2. USB CDC 与心跳
 
@@ -165,6 +171,8 @@ F:\file\BaiduSyncdisk\Project\Observer_Motor\build\Boot-Release\Observer_boot.bi
 
 - USB CDC 虚拟串口 VID/PID 搜索和自动重连；
 - AA55 CAN 网关帧增量拆包和 CRC8；
+- AA59 连续数据 BEGIN/DATA_BLOCK/END、CRC16、初始 Credit=16、累计 ACK、
+  重复 ACK 去重、状态码与超时处理；
 - AA58 心跳校验和在线状态；
 - Host CONTROL / Node RESPONSE / Peer Control 编解码；
 - 常用命令发送和响应解析；
@@ -172,7 +180,7 @@ F:\file\BaiduSyncdisk\Project\Observer_Motor\build\Boot-Release\Observer_boot.bi
 - 固件页节点选择和结构化节点状态。
 - Legacy 单节点正式下载：`ENTER_BOOT → ERASE → WRITE → DATA → WRITE_END → VERIFY → JUMP_APP`；
 - 64 字节逻辑 DATA 包、56 字节有效载荷，支持手动选择 Classic CAN `0x100~0x107` 八片分片或 CAN FD+BRS `0x100` 单帧；
-- Classic CAN 分片按 3 ms 间隔逐帧发送，避免 USB CDC/网关发送队列突发溢出导致缺包；
+- APP DATA 通过 AA59 Credit/ACK 发送，不再依赖固定毫秒延时；
 - CRC-32/MPEG-2 计算、下载阶段、数据包进度和设备错误码显示。
 
 ### 当前限制

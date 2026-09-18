@@ -14,8 +14,8 @@ namespace rov
  *
  * 严格按照底层协议文档执行：ENTER_BOOT（无 ACK 等待）→ ERASE → WRITE →
  * DATA → WRITE_END → VERIFY → JUMP_APP。数据面固定使用 Session=0，并由
- * BootloaderService 根据用户选择发送 0x100~0x107 的 Classic CAN 片段，或
- * 一帧 64 字节 CAN FD+BRS 数据帧。
+ * BootloaderService 根据用户选择，将每个 64 字节 DATA 包通过 AA59 交给
+ * H750：Classic CAN 由网关拆成 0x100~0x107，CAN FD+BRS 发送为一帧。
  */
 class BootloaderDownloadController final : public QObject
 {
@@ -44,6 +44,7 @@ class BootloaderDownloadController final : public QObject
         Erasing,
         Writing,
         Streaming,
+        WaitingGatewayFlow,
         WaitingWindow,
         Ending,
         Verifying,
@@ -60,6 +61,8 @@ class BootloaderDownloadController final : public QObject
     void pumpData();
     void queryWindow();
     void handleWindow(const BootResponse &response);
+    void handleDataWindowProgress(int completedPackets, int totalPackets);
+    void handleDataWindowFinished(bool success, const QString &message);
     bool sendControl(BootCommand command, quint8 byte2 = 0,
                      const QByteArray &params = QByteArray());
     void armResponseTimeout(int milliseconds, const QString &phase);
@@ -76,7 +79,6 @@ class BootloaderDownloadController final : public QObject
     QString m_firmwarePath;
     quint32 m_crc32 = 0;
     quint16 m_sequence = 0;
-    quint8 m_fragmentIndex = 0;
     int m_totalPackets = 0;
     int m_windowPackets = 0;
     int m_windowStart = 0;
@@ -84,6 +86,10 @@ class BootloaderDownloadController final : public QObject
     int m_committed = 0;
     int m_windowAttempts = 0;
     bool m_windowQueried = false;
+    quint16 m_pendingWindowStart = 0;
+    quint16 m_pendingWindowEnd = 0;
+    bool m_hasDeferredWindowResponse = false;
+    BootResponse m_deferredWindowResponse;
 };
 
 } // namespace rov

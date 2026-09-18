@@ -62,6 +62,8 @@ add_library(rov_communication STATIC
     src/communication/bootloader/BootloaderTypes.h
     src/communication/protocol/CanGatewayProtocol.cpp
     src/communication/protocol/CanGatewayProtocol.h
+    src/communication/protocol/CanFlowControlProtocol.cpp
+    src/communication/protocol/CanFlowControlProtocol.h
     src/communication/protocol/SystemHeartbeatProtocol.cpp
     src/communication/protocol/SystemHeartbeatProtocol.h
     src/communication/service/BootloaderCommunicationService.cpp
@@ -179,4 +181,14 @@ endif()
 
 if (WIN32)
     set_target_properties(rov_ui PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
+include(CTest)
+if (BUILD_TESTING)
+    add_executable(rov_can_flow_protocol_test
+        tests/CanFlowControlProtocolTest.cpp
+    )
+    target_include_directories(rov_can_flow_protocol_test PRIVATE src)
+    target_link_libraries(rov_can_flow_protocol_test PRIVATE Qt5::Core rov_communication)
+    add_test(NAME rov_can_flow_protocol_test COMMAND rov_can_flow_protocol_test)
 endif()

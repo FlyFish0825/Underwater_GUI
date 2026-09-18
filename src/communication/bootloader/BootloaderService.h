@@ -11,8 +11,9 @@ namespace rov
 /**
  * @brief 面向 Firmware UI 的异步 Bootloader 命令服务。
  *
- * 服务只接收结构化参数并产生 CAN payload，再交给通信服务封装 AA55；
- * 不阻塞 GUI 等待响应，也不把命令号和 CRC 计算散落在 QWidget 中。
+ * 服务只接收结构化参数并产生 CAN payload。零散控制帧使用 AA55；连续
+ * APP 数据窗口使用 AA59 Credit/ACK 状态机。不阻塞 GUI 等待响应，也不把
+ * 命令号和 CRC 计算散落在 QWidget 中。
  */
 class BootloaderService final : public QObject
 {
@@ -40,6 +41,16 @@ class BootloaderService final : public QObject
     bool sendClassicDataFragment(quint8 target, quint16 sequence,
                                  const QByteArray &payload, quint16 session,
                                  quint8 fragmentIndex);
+    /**
+     * @brief 把一段连续 Bootloader DATA 包交给 AA59 状态机发送。
+     *
+     * payloads 中每项是 Bootloader 的 56 字节有效负载；函数会编码成 64 字节
+     * DATA 包。Classic CAN 与 CAN FD 都使用同一 AA59 Credit/ACK 流控。
+     */
+    bool startDataWindow(quint8 target, quint16 firstSequence,
+                         const QVector<QByteArray> &payloads, quint16 session,
+                         bool canFd);
+    void cancelDataWindow();
     bool sendPeerCommand(quint8 target, BootCommand command, quint8 source, quint16 session,
                          quint16 value);
 
@@ -48,6 +59,8 @@ class BootloaderService final : public QObject
     void peerMessageReceived(const rov::PeerControlMessage &message);
     void commandSent(rov::BootCommand command, quint8 target);
     void errorOccurred(const QString &message);
+    void dataWindowProgress(int completedPackets, int totalPackets);
+    void dataWindowFinished(bool success, const QString &message);
 
   private:
     BootloaderCommunicationService *m_communication = nullptr;

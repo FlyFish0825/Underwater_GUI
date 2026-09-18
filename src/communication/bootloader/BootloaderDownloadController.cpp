@@ -48,6 +48,10 @@ BootloaderDownloadController::BootloaderDownloadController(BootloaderService *se
             });
     connect(m_service, &BootloaderService::hostResponseReceived, this,
             &BootloaderDownloadController::handleResponse);
+    connect(m_service, &BootloaderService::dataWindowProgress, this,
+            &BootloaderDownloadController::handleDataWindowProgress);
+    connect(m_service, &BootloaderService::dataWindowFinished, this,
+            &BootloaderDownloadController::handleDataWindowFinished);
 }
 
 bool BootloaderDownloadController::start(const quint8 target, const QString &firmwarePath,
@@ -99,9 +103,10 @@ bool BootloaderDownloadController::start(const quint8 target, const QString &fir
     m_firmware = image;
     m_crc32 = BootloaderProtocol::crc32Mpeg2(m_firmware);
     m_sequence = 0;
-    m_fragmentIndex = 0;
     m_windowPackets = m_windowStart = m_windowEnd = m_committed = m_windowAttempts = 0;
     m_windowQueried = false;
+    m_pendingWindowStart = m_pendingWindowEnd = 0;
+    m_hasDeferredWindowResponse = false;
     m_totalPackets = (m_firmware.size() + BootloaderProtocol::dataPayloadSize - 1)
                      / BootloaderProtocol::dataPayloadSize;
     m_phase = Phase::WaitingBoot;
@@ -133,10 +138,14 @@ void BootloaderDownloadController::cancel()
         return;
     m_stepTimer.stop();
     m_responseTimer.stop();
-    if (m_service != nullptr)
-        m_service->sendHostCommand(m_target, BootCommand::Abort);
-    emit logMessage(QStringLiteral("已发送 ABORT，用户取消本次下载"));
+    // 先切回 Idle，再取消 AA59，避免取消信号被当成本次下载失败重复处理。
     m_phase = Phase::Idle;
+    if (m_service != nullptr)
+    {
+        m_service->cancelDataWindow();
+        m_service->sendHostCommand(m_target, BootCommand::Abort);
+    }
+    emit logMessage(QStringLiteral("已发送 ABORT，用户取消本次下载"));
     emit phaseChanged(QStringLiteral("已取消"));
     emit finished(false, QStringLiteral("用户取消下载"));
 }
@@ -195,69 +204,85 @@ void BootloaderDownloadController::sendWrite()
 
 void BootloaderDownloadController::pumpData()
 {
-    // 单窗口模式：发送边界与 Flash 提交边界分开，不能以发送完成代替确认。
-    if (m_windowPackets > 0 && m_sequence >= m_windowEnd)
-    {
-        m_phase = Phase::WaitingWindow;
-        m_windowQueried = false;
-        emit phaseChanged(QStringLiteral("等待窗口写入确认"));
-        m_responseTimer.start(500);
-        return;
-    }
     if (m_sequence >= m_totalPackets)
     {
         sendWriteEnd();
         return;
     }
-    const int offset = static_cast<int>(m_sequence) * BootloaderProtocol::dataPayloadSize;
-    const QByteArray chunk = m_firmware.mid(offset, BootloaderProtocol::dataPayloadSize);
-    bool sent = false;
-    if (m_canFd)
+
+    // AA59 负责 USB→H750→CAN 的 Credit/ACK；Bootloader 自己的窗口负责
+    // 节点 Flash 提交确认。两层边界必须分开，不能用网关 ACK 替代节点 ACK。
+    const int batchEnd = m_windowPackets > 0 ? m_windowEnd : m_totalPackets;
+    QVector<QByteArray> payloads;
+    payloads.reserve(batchEnd - m_sequence);
+    for (int sequence = m_sequence; sequence < batchEnd; ++sequence)
     {
-        sent = m_service->sendDataPacket(m_target, m_sequence, chunk, 0, true);
+        const int offset = sequence * BootloaderProtocol::dataPayloadSize;
+        payloads.append(m_firmware.mid(offset, BootloaderProtocol::dataPayloadSize));
     }
-    else
+    m_pendingWindowStart = m_sequence;
+    m_pendingWindowEnd = static_cast<quint16>(batchEnd);
+    m_hasDeferredWindowResponse = false;
+    m_phase = Phase::WaitingGatewayFlow;
+    emit phaseChanged(QStringLiteral("AA59 流控发送固件数据"));
+    emit logMessage(QStringLiteral("AA59 BEGIN：Bootloader Seq %1～%2 · %3 个逻辑块 · %4")
+                        .arg(m_pendingWindowStart)
+                        .arg(m_pendingWindowEnd - 1)
+                        .arg(payloads.size())
+                        .arg(m_canFd ? QStringLiteral("CAN FD+BRS")
+                                     : QStringLiteral("Classic CAN，由 H750 拆分 8 帧")));
+    if (!m_service->startDataWindow(m_target, m_pendingWindowStart, payloads, 0, m_canFd))
     {
-        // Classic CAN 一个逻辑包固定拆成 0x100~0x107 八个物理帧。
-        // 八帧连续发完后再停 1 ms，避免把同一逻辑包拆成多次事件发送，
-        // 同时给 USB CDC、H750 转发任务和下位机接收中断留下包间隔。
-        sent = true;
-        for (m_fragmentIndex = 0; m_fragmentIndex < 8; ++m_fragmentIndex)
-        {
-            if (!m_service->sendClassicDataFragment(m_target, m_sequence, chunk, 0,
-                                                    m_fragmentIndex))
-            {
-                sent = false;
-                break;
-            }
-        }
+        fail(QStringLiteral("无法启动 AA59 数据窗口"));
+        return;
     }
-    if (!sent)
+}
+
+void BootloaderDownloadController::handleDataWindowProgress(const int completedPackets,
+                                                            const int totalPackets)
+{
+    if (m_phase != Phase::WaitingGatewayFlow || totalPackets <= 0)
+        return;
+    if (m_windowPackets == 0)
     {
-        fail(QStringLiteral("发送 DATA Seq=%1%2 失败")
-                 .arg(m_sequence)
-                 .arg(m_canFd ? QString() : QStringLiteral(" 分片%1").arg(m_fragmentIndex)));
+        const int completed = static_cast<int>(m_pendingWindowStart) + completedPackets;
+        emit progressChanged(m_target, completed * 100 / qMax(1, m_totalPackets),
+                             static_cast<quint16>(completed), m_totalPackets);
+    }
+}
+
+void BootloaderDownloadController::handleDataWindowFinished(const bool success,
+                                                            const QString &message)
+{
+    if (m_phase != Phase::WaitingGatewayFlow)
+        return;
+    if (!success)
+    {
+        fail(QStringLiteral("网关 AA59 流控失败：%1").arg(message));
         return;
     }
 
-    if (!m_canFd)
-        m_fragmentIndex = 0;
-    ++m_sequence;
-    const int percent = (m_sequence * 100) / qMax(1, m_totalPackets);
+    m_sequence = m_pendingWindowEnd;
+    emit logMessage(QStringLiteral("%1；已确认 H750 接收 Bootloader Seq %2～%3")
+                        .arg(message)
+                        .arg(m_pendingWindowStart)
+                        .arg(m_pendingWindowEnd - 1));
     if (m_windowPackets == 0)
-        emit progressChanged(m_target, percent, m_sequence, m_totalPackets);
-    if (m_sequence == 1 || m_sequence == m_totalPackets || (m_sequence % 25) == 0)
     {
-        emit logMessage(QStringLiteral("发送 DATA：Seq=%1/%2 · 进度 %3% · 每包 56 字节 · %4")
-                            .arg(m_sequence)
-                            .arg(m_totalPackets)
-                            .arg(percent)
-                            .arg(m_canFd ? QStringLiteral("CAN FD+BRS，ID=0x100，DLC=64")
-                                         : QStringLiteral("Classic CAN，ID=0x100~0x107，8×8 字节，8 帧后暂停 1 ms")));
+        sendWriteEnd();
+        return;
     }
-    // Classic CAN 八帧一组完成后暂停 1 ms；CAN FD 每个逻辑包一帧，也使用
-    // 同样的 1 ms 事件循环间隔。
-    m_stepTimer.start(1);
+
+    m_phase = Phase::WaitingWindow;
+    m_windowQueried = false;
+    emit phaseChanged(QStringLiteral("等待 Bootloader 窗口写入确认"));
+    if (m_hasDeferredWindowResponse)
+    {
+        m_hasDeferredWindowResponse = false;
+        handleWindow(m_deferredWindowResponse);
+    }
+    else
+        m_responseTimer.start(500);
 }
 
 void BootloaderDownloadController::queryWindow()
@@ -388,7 +413,8 @@ void BootloaderDownloadController::handleResponse(const BootResponse &response)
     const bool expected =
         (m_phase == Phase::Erasing && response.command == BootCommand::Erase)
         || (m_phase == Phase::Writing && response.command == BootCommand::Write)
-        || ((m_phase == Phase::Streaming || m_phase == Phase::WaitingWindow)
+        || ((m_phase == Phase::Streaming || m_phase == Phase::WaitingGatewayFlow
+             || m_phase == Phase::WaitingWindow)
             && response.command == BootCommand::Write && response.status == BootStatus::Error)
         || (m_phase == Phase::Ending
             && (response.command == BootCommand::WriteEnd
@@ -396,7 +422,8 @@ void BootloaderDownloadController::handleResponse(const BootResponse &response)
         || (m_phase == Phase::Verifying && response.command == BootCommand::Verify)
         || (m_phase == Phase::Jumping && response.command == BootCommand::JumpApp);
     const bool windowResponse = m_windowPackets > 0
-        && (m_phase == Phase::Streaming || m_phase == Phase::WaitingWindow)
+        && (m_phase == Phase::Streaming || m_phase == Phase::WaitingGatewayFlow
+            || m_phase == Phase::WaitingWindow)
         && response.command == BootCommand::WindowStatus;
     if (!expected && !windowResponse)
         return;
@@ -413,6 +440,14 @@ void BootloaderDownloadController::handleResponse(const BootResponse &response)
         return;
     if (windowResponse)
     {
+        if (m_phase == Phase::WaitingGatewayFlow)
+        {
+            // 节点回复可能比 AA59 END ACK 更早到达；先缓存，等网关会话完整
+            // 结束后再推进 Bootloader 窗口，避免两套状态机互相越级。
+            m_deferredWindowResponse = response;
+            m_hasDeferredWindowResponse = true;
+            return;
+        }
         handleWindow(response);
         return;
     }
@@ -517,6 +552,8 @@ void BootloaderDownloadController::fail(const QString &message)
     m_stepTimer.stop();
     m_responseTimer.stop();
     m_phase = Phase::Idle;
+    if (m_service != nullptr)
+        m_service->cancelDataWindow();
     emit phaseChanged(QStringLiteral("失败"));
     emit logMessage(QStringLiteral("下载失败：%1").arg(message));
     emit finished(false, message);

@@ -22,6 +22,10 @@ BootloaderService::BootloaderService(BootloaderCommunicationService *communicati
             });
     connect(m_communication, &BootloaderCommunicationService::errorOccurred, this,
             &BootloaderService::errorOccurred);
+    connect(m_communication, &BootloaderCommunicationService::flowTransferProgress,
+            this, &BootloaderService::dataWindowProgress);
+    connect(m_communication, &BootloaderCommunicationService::flowTransferFinished,
+            this, &BootloaderService::dataWindowFinished);
 }
 
 bool BootloaderService::sendHostCommand(quint8 target, BootCommand command, quint8 byte2,
@@ -95,6 +99,41 @@ bool BootloaderService::sendClassicDataFragment(const quint8 target, const quint
     frame.flags = 0; // 标准 Classic CAN 数据帧
     frame.data = fragment;
     return m_communication->sendCanFrame(frame);
+}
+
+bool BootloaderService::startDataWindow(const quint8 target, const quint16 firstSequence,
+                                        const QVector<QByteArray> &payloads,
+                                        const quint16 session, const bool canFd)
+{
+    if (m_communication == nullptr || payloads.isEmpty())
+        return false;
+
+    QVector<CanGatewayFrame> blocks;
+    blocks.reserve(payloads.size());
+    for (int index = 0; index < payloads.size(); ++index)
+    {
+        const quint32 sequence = static_cast<quint32>(firstSequence)
+                                 + static_cast<quint32>(index);
+        if (sequence > 0xFFFFU)
+            return false;
+        const QByteArray packet = BootloaderProtocol::encodeDataPacket(
+            target, static_cast<quint16>(sequence), payloads.at(index), session);
+        if (packet.size() != BootloaderProtocol::dataPacketSize)
+            return false;
+
+        CanGatewayFrame block;
+        block.canId = 0x100U;
+        block.flags = canFd ? 0x06U : 0x00U;
+        block.data = packet;
+        blocks.append(block);
+    }
+    return m_communication->startFlowTransfer(blocks);
+}
+
+void BootloaderService::cancelDataWindow()
+{
+    if (m_communication != nullptr)
+        m_communication->cancelFlowTransfer();
 }
 
 bool BootloaderService::sendPeerCommand(quint8 target, BootCommand command, quint8 source,
