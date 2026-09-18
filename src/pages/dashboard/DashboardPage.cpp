@@ -15,6 +15,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStyle>
+#include <QTransform>
 #include <QVBoxLayout>
 #include <QVariant>
 
@@ -134,6 +135,10 @@ class RovTopView final : public QWidget
     explicit RovTopView(QWidget *parent = nullptr) : QWidget(parent)
     {
         m_image.load(QStringLiteral(":/dashboard/rov_top_view.png"));
+        if (!m_image.isNull())
+        {
+            m_image = m_image.transformed(QTransform().rotate(90), Qt::SmoothTransformation);
+        }
         setMinimumSize(250, 350);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
