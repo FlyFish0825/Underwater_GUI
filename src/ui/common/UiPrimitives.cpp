@@ -1,5 +1,7 @@
 #include "ui/common/UiPrimitives.h"
 
+#include "ui/common/AppFluentButton.h"
+
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QPainterPath>
@@ -221,10 +223,20 @@ QLabel *makeStatusPill(const QString &text, const QString &statusObjectName)
 
 QPushButton *makeButton(const QString &text, const QString &objectName, QWidget *parent)
 {
-    auto *button = new QPushButton(text, parent);
+    auto *button = new AppFluentButton(text, parent);
     if (!objectName.isEmpty())
     {
         button->setObjectName(objectName);
+    }
+    // 旧 QSS 中的对象名继续保留给主题和测试使用；Fluent-Qt 自绘按钮需要
+    // 同时设置自己的语义样式，否则 primaryButton 会退化成普通白色按钮。
+    if (objectName == QStringLiteral("primaryButton"))
+    {
+        button->setFluentStyle(fluent::basicinput::Button::Accent);
+    }
+    else if (objectName == QStringLiteral("dangerButton"))
+    {
+        button->setCriticalOnHover(true);
     }
     return button;
 }

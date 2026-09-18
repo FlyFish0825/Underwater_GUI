@@ -4,8 +4,12 @@
 
 class QLabel;
 class QButtonGroup;
+class QGraphicsProxyWidget;
+class QGraphicsScene;
+class QGraphicsView;
+class QCloseEvent;
 class QResizeEvent;
-class QScrollArea;
+class QShowEvent;
 class QStackedWidget;
 
 namespace rov
@@ -28,15 +32,22 @@ class MainWindow final : public QMainWindow
 
   private:
     void resizeEvent(QResizeEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    bool nativeEvent(const QByteArray &eventType, void *message, long *result) override;
     void updatePageViewport();
+    void fitNormalGeometryToScreen();
     void handleRequest(const QString &message);
     void selectPage(int index);
 
     QStackedWidget *m_pages = nullptr;
-    QScrollArea *m_pageScroll = nullptr;
+    QGraphicsView *m_pageView = nullptr;
+    QGraphicsScene *m_pageScene = nullptr;
+    QGraphicsProxyWidget *m_pageProxy = nullptr;
     QButtonGroup *m_navGroup = nullptr;
     QLabel *m_footerStatus = nullptr;
     QLabel *m_footerLog = nullptr;
+    bool m_screenSignalConnected = false;
 };
 
 } // namespace rov

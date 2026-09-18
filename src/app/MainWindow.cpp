@@ -6,23 +6,42 @@
 #include "pages/motor_debug/MotorDebugPage.h"
 #include "pages/settings/SettingsPlaceholder.h"
 #include "pages/vision/VisionPage.h"
+#include "ui/common/AnimatedNavButton.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QButtonGroup>
+#include <QCloseEvent>
 #include <QFrame>
+#include <QGraphicsProxyWidget>
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QScreen>
 #include <QScrollArea>
+#include <QShowEvent>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWindow>
+#include <QtMath>
+#include <QVector>
 
 #include <functional>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 namespace
 {
+
+constexpr int kMinimumWindowWidth = 980;
+constexpr int kMinimumWindowHeight = 660;
+constexpr double kWindowAspectRatio = 1800.0 / 1211.0;
 
 class TitleBarFrame final : public QFrame
 {
@@ -113,19 +132,53 @@ class TitleBarFrame final : public QFrame
     std::function<void()> m_restoreFromMaximizedHandler;
 };
 
-QToolButton *navigationButton(const QString &text, const rov::IconKind icon, QWidget *parent)
+QString navigationAsset(const rov::IconKind icon)
 {
-    auto *button = new QToolButton(parent);
-    button->setObjectName(QStringLiteral("navButton"));
-    button->setText(text);
-    button->setIcon(rov::makeIcon(icon));
-    button->setIconSize(QSize(22, 22));
-    button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    button->setCheckable(true);
-    button->setAutoExclusive(true);
-    button->setMinimumHeight(48);
-    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    switch (icon)
+    {
+    case rov::IconKind::Dashboard:
+        return QStringLiteral(":/icons/nav/dashboard.png");
+    case rov::IconKind::Motor:
+        return QStringLiteral(":/icons/nav/motor_debug.png");
+    case rov::IconKind::Firmware:
+        return QStringLiteral(":/icons/nav/firmware.png");
+    case rov::IconKind::Manipulator:
+        return QStringLiteral(":/icons/nav/manipulator.png");
+    case rov::IconKind::Vision:
+        return QStringLiteral(":/icons/nav/vision.png");
+    case rov::IconKind::Settings:
+        return QStringLiteral(":/icons/nav/settings.png");
+    default:
+        return QString();
+    }
+}
+
+QToolButton *navigationButton(const QString &text, const QString &description,
+                              const rov::IconKind icon, QWidget *parent)
+{
+    const QString asset = navigationAsset(icon);
+    auto *button = new rov::AnimatedNavButton(text, description, icon, asset,
+                                              8, 1, 0, parent);
     return button;
+}
+
+QSize initialWindowSize(QScreen *screen)
+{
+    if (screen == nullptr)
+    {
+        return QSize(1440, qRound(1440.0 / kWindowAspectRatio));
+    }
+    const QRect available = screen->availableGeometry();
+    const int maxWidth = qMax(kMinimumWindowWidth, available.width() - 32);
+    const int maxHeight = qMax(kMinimumWindowHeight, available.height() - 32);
+    int width = qMin(1440, maxWidth);
+    int height = qRound(width / kWindowAspectRatio);
+    if (height > maxHeight)
+    {
+        height = maxHeight;
+        width = qRound(height * kWindowAspectRatio);
+    }
+    return QSize(qMax(kMinimumWindowWidth, width), qMax(kMinimumWindowHeight, height));
 }
 
 QLabel *statusDotLabel(const QString &text, const QString &color)
@@ -144,10 +197,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setWindowTitle(QStringLiteral("水下机器人上位机"));
-    resize(1440, 900);
-    setMinimumSize(1180, 720);
+    setContentsMargins(1, 1, 1, 1);
+    setMinimumSize(kMinimumWindowWidth, kMinimumWindowHeight);
+    resize(initialWindowSize(QGuiApplication::primaryScreen()));
 
-    auto *root = new QWidget(this);
+    auto *root = new QFrame(this);
     root->setObjectName(QStringLiteral("appRoot"));
     setCentralWidget(root);
     auto *rootLayout = new QVBoxLayout(root);
@@ -156,7 +210,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     auto *topBar = new TitleBarFrame(root);
     topBar->setObjectName(QStringLiteral("topBar"));
-    topBar->setFixedHeight(48);
+    // 顶部工具区保持紧凑，把垂直空间优先留给页面主体。
+    topBar->setFixedHeight(44);
     auto *topLayout = new QHBoxLayout(topBar);
     topLayout->setContentsMargins(20, 0, 18, 0);
     topLayout->setSpacing(10);
@@ -173,17 +228,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     auto *minimize = new QToolButton(topBar);
     minimize->setObjectName(QStringLiteral("windowButton"));
     minimize->setText(QStringLiteral("—"));
-    minimize->setFixedSize(42, 48);
+    minimize->setFixedSize(42, 44);
     minimize->setFocusPolicy(Qt::NoFocus);
     auto *maximize = new QToolButton(topBar);
     maximize->setObjectName(QStringLiteral("windowButton"));
     maximize->setText(QStringLiteral("□"));
-    maximize->setFixedSize(42, 48);
+    maximize->setFixedSize(42, 44);
     maximize->setFocusPolicy(Qt::NoFocus);
     auto *close = new QToolButton(topBar);
     close->setObjectName(QStringLiteral("closeButton"));
     close->setText(QStringLiteral("×"));
-    close->setFixedSize(42, 48);
+    close->setFixedSize(42, 44);
     close->setFocusPolicy(Qt::NoFocus);
     topLayout->addWidget(minimize);
     topLayout->addWidget(maximize);
@@ -219,64 +274,100 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     bodyLayout->setSpacing(0);
     auto *sidebar = new QFrame(body);
     sidebar->setObjectName(QStringLiteral("sideBar"));
-    sidebar->setFixedWidth(216);
+    // 侧栏采用图片导航样式，悬停名称由按钮浮层显示，把页面空间留给主体内容。
+    sidebar->setFixedWidth(76);
     auto *navLayout = new QVBoxLayout(sidebar);
     navLayout->setContentsMargins(8, 14, 8, 12);
-    navLayout->setSpacing(5);
+    navLayout->setSpacing(6);
     m_navGroup = new QButtonGroup(this);
     m_navGroup->setExclusive(true);
     const struct NavEntry
     {
         QString label;
+        QString description;
         IconKind icon;
-    } entries[] = {{QStringLiteral("总览"), IconKind::Dashboard},
-                   {QStringLiteral("电机调试"), IconKind::Motor},
-                   {QStringLiteral("固件升级"), IconKind::Firmware},
-                   {QStringLiteral("机械臂"), IconKind::Manipulator},
-                   {QStringLiteral("视觉"), IconKind::Vision},
-                   {QStringLiteral("设置"), IconKind::Settings}};
+    } entries[] = {{QStringLiteral("总览"), QStringLiteral("机器人状态 · 控制"),
+                    IconKind::Dashboard},
+                   {QStringLiteral("电机调试"), QStringLiteral("实时波形 · FOC 参数"), IconKind::Motor},
+                   {QStringLiteral("固件升级"), QStringLiteral("Bootloader · CAN 节点"),
+                    IconKind::Firmware},
+                   {QStringLiteral("机械臂"), QStringLiteral("关节 · 笛卡尔控制"), IconKind::Manipulator},
+                   {QStringLiteral("视觉"), QStringLiteral("相机 · 图像处理"), IconKind::Vision},
+                   {QStringLiteral("设置"), QStringLiteral("系统 · 通信配置"), IconKind::Settings}};
     QVector<QToolButton *> buttons;
     for (int i = 0; i < 6; ++i)
     {
-        auto *button = navigationButton(entries[i].label, entries[i].icon, sidebar);
+        auto *button = navigationButton(entries[i].label, entries[i].description, entries[i].icon,
+                                        sidebar);
         m_navGroup->addButton(button, i);
         navLayout->addWidget(button);
         buttons.append(button);
     }
     navLayout->addStretch();
-    navLayout->addWidget(
-        makeLabel(QStringLiteral("ROV-UI-2.1-integrated"), QStringLiteral("mutedLabel")));
     bodyLayout->addWidget(sidebar);
 
-    m_pages = new QStackedWidget(body);
+    m_pages = new QStackedWidget;
     m_pages->setObjectName(QStringLiteral("pageStack"));
-    m_pages->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    auto *dashboard = new DashboardPage(m_pages);
-    auto *motorDebug = new MotorDebugPage(m_pages);
-    auto *firmware = new FirmwarePage(m_pages);
-    auto *manipulator = new ManipulatorPage(m_pages);
-    auto *vision = new VisionPage(m_pages);
-    auto *settings = new SettingsPlaceholder(m_pages);
+    m_pages->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // 页面先无父级创建，再按导航顺序显式加入 QStackedWidget。
+    // 避免 QStackedWidget 在滚动容器重新挂载页面时自动改变索引。
+    auto *dashboard = new DashboardPage;
+    auto *motorDebug = new MotorDebugPage;
+    auto *firmware = new FirmwarePage;
+    auto *manipulator = new ManipulatorPage;
+    auto *vision = new VisionPage;
+    auto *settings = new SettingsPlaceholder;
+    const auto scrollablePage = [](QWidget *page, const QString &objectName)
+    {
+        auto *scroll = new QScrollArea;
+        scroll->setObjectName(objectName);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidgetResizable(true);
+        scroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        scroll->setWidget(page);
+        return scroll;
+    };
+    auto *motorDebugScroll =
+        scrollablePage(motorDebug, QStringLiteral("motorDebugPageScroll"));
+    auto *firmwareScroll = scrollablePage(firmware, QStringLiteral("firmwarePageScroll"));
     m_pages->addWidget(dashboard);
-    m_pages->addWidget(motorDebug);
-    m_pages->addWidget(firmware);
+    m_pages->addWidget(motorDebugScroll);
+    m_pages->addWidget(firmwareScroll);
     m_pages->addWidget(manipulator);
     m_pages->addWidget(vision);
     m_pages->addWidget(settings);
-    m_pages->setMinimumSize(QSize());
-    m_pageScroll = new QScrollArea(body);
-    m_pageScroll->setObjectName(QStringLiteral("pageScroll"));
-    m_pageScroll->setFrameShape(QFrame::NoFrame);
-    m_pageScroll->setWidgetResizable(false);
-    m_pageScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_pageScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_pageScroll->setWidget(m_pages);
-    bodyLayout->addWidget(m_pageScroll, 1);
+    // 机械臂、视觉和设置页保留原有的小屏幕等比保护。
+    // 电机调试与固件升级页改由页面内部自适应，避免宽屏下整页缩小后两侧留白。
+    for (QWidget *page : {static_cast<QWidget *>(manipulator), static_cast<QWidget *>(vision),
+                          static_cast<QWidget *>(settings)})
+    {
+        page->setProperty("fitViewportScale", true);
+    }
+    m_pageView = new QGraphicsView(body);
+    m_pageView->setObjectName(QStringLiteral("pageView"));
+    m_pageView->setFrameShape(QFrame::NoFrame);
+    m_pageView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_pageView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // 页面固定设计尺寸不再垂直居中，顶部与标题栏紧贴，避免窗口上方留下大块空白。
+    m_pageView->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    m_pageView->setInteractive(true);
+    m_pageScene = new QGraphicsScene(m_pageView);
+    m_pageScene->setBackgroundBrush(Qt::NoBrush);
+    m_pageProxy = m_pageScene->addWidget(m_pages);
+    m_pageView->setScene(m_pageScene);
+    bodyLayout->addWidget(m_pageView, 1);
+    // USB CDC 连接检查属于全局状态，不放在 Bootloader 页面内部。
+    if (QWidget *connectionBar = firmware->connectionBar())
+    {
+        rootLayout->insertWidget(1, connectionBar, 0);
+    }
     rootLayout->addWidget(body, 1);
 
     auto *footer = new QFrame(root);
     footer->setObjectName(QStringLiteral("bottomBar"));
-    footer->setFixedHeight(40);
+    footer->setFixedHeight(34);
     auto *footerLayout = new QHBoxLayout(footer);
     footerLayout->setContentsMargins(18, 0, 18, 0);
     footerLayout->setSpacing(18);
@@ -321,8 +412,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             [this](const VisionModeRequest &)
             { handleRequest(QStringLiteral("视觉：已记录显示模式请求")); });
 
-    const bool compactWindow = width() < 1360 || height() < 820;
-    m_pages->setMinimumSize(compactWindow ? QSize(920, 820) : QSize());
     updatePageViewport();
     QTimer::singleShot(0, this, [this]() { updatePageViewport(); });
 }
@@ -333,31 +422,223 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     updatePageViewport();
 }
 
-void MainWindow::updatePageViewport()
+void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (m_pages == nullptr || m_pageScroll == nullptr)
+    if (auto *firmware = findChild<FirmwarePage *>())
+        firmware->closeAuxiliaryWindows();
+    QMainWindow::closeEvent(event);
+}
+
+void MainWindow::showEvent(QShowEvent *event)
+{
+    QMainWindow::showEvent(event);
+    if (!m_screenSignalConnected && windowHandle() != nullptr)
+    {
+        m_screenSignalConnected = true;
+        connect(windowHandle(), &QWindow::screenChanged, this,
+                [this](QScreen *)
+                {
+                    QTimer::singleShot(0, this,
+                                       [this]()
+                                       {
+                                           fitNormalGeometryToScreen();
+                                           updatePageViewport();
+                                       });
+                });
+    }
+    fitNormalGeometryToScreen();
+    updatePageViewport();
+}
+
+void MainWindow::fitNormalGeometryToScreen()
+{
+    if (isMaximized() || isFullScreen() || windowHandle() == nullptr)
     {
         return;
     }
-    const bool compactWindow = width() < 1360 || height() < 820;
-    m_pages->setMinimumSize(compactWindow ? QSize(920, 820) : QSize());
-    m_pageScroll->setHorizontalScrollBarPolicy(compactWindow ? Qt::ScrollBarAsNeeded
-                                                             : Qt::ScrollBarAlwaysOff);
-    m_pageScroll->setVerticalScrollBarPolicy(compactWindow ? Qt::ScrollBarAsNeeded
-                                                           : Qt::ScrollBarAlwaysOff);
-    const QSize viewportSize = m_pageScroll->viewport()->size();
+    QScreen *screen = windowHandle()->screen();
+    if (screen == nullptr)
+    {
+        return;
+    }
+
+    // 只受屏幕可用区域限制，不再额外扣除 16px 边距，避免窗口尚未铺满屏幕
+    // 就达到放大上限；宽高比仍由 WM_SIZING 严格保持。
+    QRect available = screen->availableGeometry();
+    QSize fitted = frameGeometry().size();
+    int width = qMax(kMinimumWindowWidth, fitted.width());
+    int height = qRound(width / kWindowAspectRatio);
+    if (width > available.width() || height > available.height())
+    {
+        height = qMin(height, available.height());
+        width = qRound(height * kWindowAspectRatio);
+        width = qMin(width, available.width());
+        height = qRound(width / kWindowAspectRatio);
+    }
+    fitted = QSize(qMax(kMinimumWindowWidth, width), qMax(kMinimumWindowHeight, height));
+    if (fitted != frameGeometry().size())
+    {
+        resize(fitted);
+    }
+
+    QRect target(frameGeometry().topLeft(), fitted);
+    if (!available.contains(target.topLeft()) || !available.contains(target.bottomRight()))
+    {
+        target.moveLeft(
+            qBound(available.left(), target.left(), available.right() - fitted.width() + 1));
+        target.moveTop(
+            qBound(available.top(), target.top(), available.bottom() - fitted.height() + 1));
+        move(target.topLeft());
+    }
+}
+
+bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, long *result)
+{
+#ifdef Q_OS_WIN
+    if (eventType == "windows_generic_MSG" && message != nullptr && result != nullptr &&
+        !isMaximized() && !isFullScreen())
+    {
+        auto *msg = static_cast<MSG *>(message);
+        if (msg->message == WM_SIZING && msg->lParam != 0)
+        {
+            auto *rect = reinterpret_cast<RECT *>(msg->lParam);
+            const LONG proposedWidth = qMax<LONG>(1, rect->right - rect->left);
+            const LONG proposedHeight = qMax<LONG>(1, rect->bottom - rect->top);
+            LONG width = proposedWidth;
+            LONG height = proposedHeight;
+            const auto edge = static_cast<UINT>(msg->wParam);
+
+            if (edge == WMSZ_LEFT || edge == WMSZ_RIGHT)
+            {
+                height = qRound(width / kWindowAspectRatio);
+                const LONG centerY = (rect->top + rect->bottom) / 2;
+                rect->top = centerY - height / 2;
+                rect->bottom = rect->top + height;
+            }
+            else if (edge == WMSZ_TOP || edge == WMSZ_BOTTOM)
+            {
+                width = qRound(height * kWindowAspectRatio);
+                const LONG centerX = (rect->left + rect->right) / 2;
+                rect->left = centerX - width / 2;
+                rect->right = rect->left + width;
+            }
+            else
+            {
+                width = qMax<LONG>(width, static_cast<LONG>(qRound(height * kWindowAspectRatio)));
+                height = qRound(width / kWindowAspectRatio);
+            }
+
+            if (edge == WMSZ_LEFT || edge == WMSZ_TOPLEFT || edge == WMSZ_BOTTOMLEFT)
+            {
+                rect->left = rect->right - width;
+            }
+            else
+            {
+                rect->right = rect->left + width;
+            }
+            if (edge == WMSZ_TOP || edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT)
+            {
+                rect->top = rect->bottom - height;
+            }
+            else
+            {
+                rect->bottom = rect->top + height;
+            }
+
+            *result = TRUE;
+            return true;
+        }
+        if (msg->message == WM_NCHITTEST)
+        {
+            const QPoint local = mapFromGlobal(QCursor::pos());
+            constexpr int border = 6;
+            const bool left = local.x() >= 0 && local.x() < border;
+            const bool right = local.x() >= width() - border && local.x() < width();
+            const bool top = local.y() >= 0 && local.y() < border;
+            const bool bottom = local.y() >= height() - border && local.y() < height();
+            if (left && top)
+            {
+                *result = HTTOPLEFT;
+                return true;
+            }
+            if (right && top)
+            {
+                *result = HTTOPRIGHT;
+                return true;
+            }
+            if (left && bottom)
+            {
+                *result = HTBOTTOMLEFT;
+                return true;
+            }
+            if (right && bottom)
+            {
+                *result = HTBOTTOMRIGHT;
+                return true;
+            }
+            if (left)
+            {
+                *result = HTLEFT;
+                return true;
+            }
+            if (right)
+            {
+                *result = HTRIGHT;
+                return true;
+            }
+            if (top)
+            {
+                *result = HTTOP;
+                return true;
+            }
+            if (bottom)
+            {
+                *result = HTBOTTOM;
+                return true;
+            }
+        }
+    }
+#else
+    Q_UNUSED(eventType)
+    Q_UNUSED(message)
+    Q_UNUSED(result)
+#endif
+    return QMainWindow::nativeEvent(eventType, message, result);
+}
+
+void MainWindow::updatePageViewport()
+{
+    if (m_pages == nullptr || m_pageView == nullptr || m_pageScene == nullptr ||
+        m_pageProxy == nullptr)
+    {
+        return;
+    }
+    const QSize viewportSize = m_pageView->viewport()->size();
     if (viewportSize.isEmpty())
     {
         return;
     }
-    if (compactWindow)
+
+    // 总览页始终铺满视口；复杂页面只有在其真实最小高度超出小窗口时才等比缩放，
+    // 这样不会在正常尺寸下留下大块空白，也不会让底部表格/日志被裁切。
+    QSize pageSize = viewportSize;
+    qreal scale = 1.0;
+    if (QWidget *currentPage = m_pages->currentWidget(); currentPage != nullptr &&
+        currentPage->property("fitViewportScale").toBool())
     {
-        m_pages->resize(qMax(920, viewportSize.width()), qMax(820, viewportSize.height()));
+        const QSize required = currentPage->minimumSizeHint();
+        if (required.width() > viewportSize.width() || required.height() > viewportSize.height())
+        {
+            pageSize = required.expandedTo(viewportSize);
+            scale = qMin(static_cast<qreal>(viewportSize.width()) / pageSize.width(),
+                         static_cast<qreal>(viewportSize.height()) / pageSize.height());
+        }
     }
-    else
-    {
-        m_pages->resize(viewportSize);
-    }
+    m_pages->setMinimumSize(pageSize);
+    m_pages->resize(pageSize);
+    m_pageProxy->setTransform(QTransform::fromScale(scale, scale));
+    m_pageProxy->setPos((viewportSize.width() - pageSize.width() * scale) / 2.0, 0.0);
+    m_pageScene->setSceneRect(QRectF(QPointF(0, 0), QSizeF(viewportSize)));
 }
 
 void MainWindow::handleRequest(const QString &message)
@@ -376,6 +657,7 @@ void MainWindow::setPageIndex(const int index)
     if (m_pages != nullptr && index >= 0 && index < m_pages->count())
     {
         m_pages->setCurrentIndex(index);
+        updatePageViewport();
         if (m_navGroup != nullptr && m_navGroup->button(index) != nullptr)
         {
             m_navGroup->button(index)->setChecked(true);

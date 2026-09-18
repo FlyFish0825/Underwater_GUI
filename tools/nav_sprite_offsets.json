@@ -1,0 +1,59 @@
+{
+  "sourceSize": {
+    "width": 1774,
+    "height": 887
+  },
+  "frameSize": {
+    "width": 180,
+    "height": 150
+  },
+  "xCrop": [47, 256, 464, 673, 884, 1094, 1303, 1513],
+  "rows": [
+    {
+      "name": "dashboard",
+      "output": "nav_dashboard.png",
+      "yCrop": 22,
+      "anchor": "dashboard_outer_frame",
+      "offsets": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]
+    },
+    {
+      "name": "motor_debug",
+      "output": "nav_motor_debug.png",
+      "yCrop": 168,
+      "anchor": "motor_outer_ring_center",
+      "offsets": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]
+    },
+    {
+      "name": "firmware",
+      "output": "nav_firmware.png",
+      "yCrop": 317,
+      "anchor": "firmware_chip_body_pins",
+      "offsets": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]
+    },
+    {
+      "name": "manipulator",
+      "output": "nav_manipulator.png",
+      "yCrop": 459,
+      "sourceHeight": 147,
+      "canvasY": 4,
+      "anchor": "manipulator_base",
+      "offsets": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]
+    },
+    {
+      "name": "vision",
+      "output": "nav_vision.png",
+      "yCrop": 586,
+      "sourceHeight": 140,
+      "canvasY": 4,
+      "anchor": "vision_camera_body",
+      "offsets": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]
+    },
+    {
+      "name": "settings",
+      "output": "nav_settings.png",
+      "yCrop": 715,
+      "anchor": "settings_center_hole",
+      "offsets": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]
+    }
+  ]
+}

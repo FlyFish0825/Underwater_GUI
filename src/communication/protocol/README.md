@@ -4,3 +4,7 @@
 `0x07`）校验、CAN 帧解析和编码。协议对象只包含数据，不包含 QWidget、日志
 文案或页面 ID；后续 Bootloader 的 CONTROL/RESPONSE 命令应继续放在本层或
 独立的协议服务中。
+
+`SystemHeartbeatProtocol` 独立解析每 1000 ms 发送的 `AA 58`、20 字节
+System PING，使用 CRC16-CCITT 校验。心跳只用于判断 USB CDC 公共链路是否
+在线，不转换成 CAN 帧，也不参与 Bootloader 状态机。

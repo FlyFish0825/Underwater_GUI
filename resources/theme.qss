@@ -8,8 +8,19 @@ QMainWindow, QWidget#appRoot {
     background: #f5f8fb;
 }
 
+QMainWindow {
+    background: #737d87;
+}
+
 QWidget#appRoot {
-    border: 1px solid #cbd9e7;
+    border: none;
+}
+
+QFrame#connectionBar {
+    background: #ffffff;
+    border: 1px solid #dce7f1;
+    border-left: none;
+    border-right: none;
 }
 
 QFrame#topBar {
@@ -74,29 +85,67 @@ QLabel#pageSubtitle {
 QToolButton#navButton {
     color: #344d6d;
     border: none;
-    border-radius: 7px;
-    text-align: left;
-    padding: 0 12px;
-    font-size: 14px;
+    border-radius: 15px;
+    padding: 0;
+    min-width: 48px;
+    max-width: 60px;
+    min-height: 48px;
+    max-height: 48px;
 }
 
 QToolButton#navButton:hover {
-    background: #f0f6fc;
+    background: #e8f3ff;
     color: #147de5;
+    border: 1px solid #c7e3fb;
 }
 
 QToolButton#navButton:checked {
+    /* 选中页不抢占悬停激活色，激活底色只跟随当前鼠标位置。 */
+    background: transparent;
+    color: #344d6d;
+    border: 1px solid transparent;
+}
+
+QToolButton#navButton:checked:hover {
     background: #e8f3ff;
     color: #0879df;
-    border-left: 3px solid #1687ee;
-    padding-left: 9px;
+    border: 1px solid #c7e3fb;
+}
+
+QFrame#navTooltip {
+    background: #ffffff;
+    border: 1px solid #dfe8f1;
+    border-radius: 6px;
+}
+
+QLabel#navTooltipTitle {
+    color: #172947;
+    font-size: 14px;
     font-weight: 600;
+}
+
+QLabel#navTooltipDescription {
+    color: #66809e;
+    font-size: 11px;
 }
 
 QFrame#card {
     background: #ffffff;
     border: 1px solid #dbe6f0;
     border-radius: 7px;
+}
+
+/* 固件文件拖放卡片：拖入可接受文件时用蓝色边框和浅色背景提示。 */
+QFrame#firmwareDropZone {
+    background: #fbfdff;
+    /* 普通态也预留 2px 边框，切换高亮时不会改变卡片内容位置。 */
+    border: 2px dashed #cbdceb;
+    border-radius: 5px;
+}
+
+QFrame#firmwareDropZone[dropActive="true"] {
+    background: #eaf4ff;
+    border: 2px dashed #1685df;
 }
 
 QFrame#cardHeader {
@@ -269,9 +318,103 @@ QPlainTextEdit {
     font-size: 11px;
 }
 
+QTextBrowser {
+    color: #5b7390;
+    background: #fbfdff;
+    border: 1px solid #e2eaf2;
+    border-radius: 4px;
+    font-family: "Consolas", "Microsoft YaHei UI", monospace;
+    font-size: 12px;
+}
+
+/* 固件页在缩放显示时提高字号，保证设备信息和命令文字可读。 */
+QWidget#firmwarePage {
+    font-size: 15px;
+}
+
+QWidget#firmwarePage QTableWidget,
+QWidget#firmwarePage QComboBox,
+QWidget#firmwarePage QPushButton,
+QWidget#firmwarePage QHeaderView::section {
+    font-size: 14px;
+}
+
+QWidget#firmwarePage QTextBrowser {
+    font-size: 12px;
+}
+
+/* 历史记录独立窗口使用更易阅读的字号。 */
+QDialog#historyDialog QLabel {
+    font-size: 15px;
+}
+
+QDialog#historyDialog QTextBrowser {
+    font-size: 14px;
+}
+
+QDialog#historyDialog QPushButton {
+    min-height: 30px;
+    padding: 4px 14px;
+    font-size: 14px;
+}
+
+/* 高级命令窗口：命令列表、说明和实时监视区使用统一的中文可读字号。 */
+QDialog#commandCenter QLabel,
+QDialog#commandCenter QListWidget,
+QDialog#commandCenter QComboBox,
+QDialog#commandCenter QLineEdit,
+QDialog#commandCenter QCheckBox,
+QDialog#commandCenter QPushButton {
+    font-size: 14px;
+}
+
+QDialog#commandCenter QTextBrowser {
+    font-size: 13px;
+}
+
 QScrollArea {
     border: none;
     background: transparent;
+}
+
+QScrollArea#motorDebugPageScroll QScrollBar:vertical,
+QScrollArea#firmwarePageScroll QScrollBar:vertical {
+    width: 10px;
+    margin: 2px 1px 2px 1px;
+    background: #edf2f7;
+    border: none;
+    border-radius: 5px;
+}
+
+QScrollArea#motorDebugPageScroll QScrollBar::handle:vertical,
+QScrollArea#firmwarePageScroll QScrollBar::handle:vertical {
+    min-height: 34px;
+    background: #a9bacb;
+    border-radius: 4px;
+}
+
+QScrollArea#motorDebugPageScroll QScrollBar::handle:vertical:hover,
+QScrollArea#firmwarePageScroll QScrollBar::handle:vertical:hover {
+    background: #7f97ae;
+}
+
+QScrollArea#motorDebugPageScroll QScrollBar::add-line:vertical,
+QScrollArea#motorDebugPageScroll QScrollBar::sub-line:vertical,
+QScrollArea#firmwarePageScroll QScrollBar::add-line:vertical,
+QScrollArea#firmwarePageScroll QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QScrollArea#motorDebugPageScroll QScrollBar::add-page:vertical,
+QScrollArea#motorDebugPageScroll QScrollBar::sub-page:vertical,
+QScrollArea#firmwarePageScroll QScrollBar::add-page:vertical,
+QScrollArea#firmwarePageScroll QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+QGraphicsView#pageView {
+    border: none;
+    background: #f5f8fb;
 }
 
 QSlider::groove:horizontal {

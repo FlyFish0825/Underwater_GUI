@@ -469,6 +469,8 @@ namespace rov
 DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
 {
     setObjectName(QStringLiteral("dashboardPage"));
+    // Reuse the main window's existing small-screen scaling without changing other pages.
+    setProperty("fitViewportScale", true);
     m_thrusterDisabled = QVector<bool>(kDashboardThrusterCount, false);
     setStyleSheet(QStringLiteral(
         "QLabel#thrusterTitle { color: #18365b; font-weight: 650; }"
