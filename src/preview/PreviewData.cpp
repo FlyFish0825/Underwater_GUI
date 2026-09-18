@@ -45,15 +45,19 @@ DashboardSnapshot dashboardPreview()
     snapshot.leakDetected = false;
     snapshot.thrustLimitPercent = 70;
     snapshot.alarmCount = 0;
-    const QStringList ids = {QStringLiteral("thruster_fl"), QStringLiteral("thruster_fr"),
-                             QStringLiteral("thruster_ml"), QStringLiteral("thruster_mr"),
-                             QStringLiteral("thruster_rl"), QStringLiteral("thruster_rr")};
-    const QStringList labels = {QStringLiteral("FL"), QStringLiteral("FR"), QStringLiteral("ML"),
-                                QStringLiteral("MR"), QStringLiteral("RL"), QStringLiteral("RR")};
-    const double rpm[] = {1200.0, 1180.0, 950.0, 960.0, 1190.0, 1210.0};
-    const double current[] = {1.2, 1.1, 0.9, 0.9, 1.2, 1.2};
-    const double temperature[] = {26.0, 25.0, 24.0, 24.0, 25.0, 26.0};
-    for (int i = 0; i < 6; ++i)
+    const QStringList ids = {QStringLiteral("thruster1"), QStringLiteral("thruster2"),
+                             QStringLiteral("thruster3"), QStringLiteral("thruster4"),
+                             QStringLiteral("thruster5"), QStringLiteral("thruster6"),
+                             QStringLiteral("thruster7"), QStringLiteral("thruster8")};
+    const QStringList labels = {
+        QStringLiteral("T1 · 前左 · 水平"), QStringLiteral("T2 · 前右 · 水平"),
+        QStringLiteral("T3 · 后左 · 水平"), QStringLiteral("T4 · 后右 · 水平"),
+        QStringLiteral("T5 · 前左 · 垂向"), QStringLiteral("T6 · 前右 · 垂向"),
+        QStringLiteral("T7 · 后左 · 垂向"), QStringLiteral("T8 · 后右 · 垂向")};
+    const double rpm[] = {1200.0, 1180.0, 950.0, 960.0, 720.0, 715.0, 705.0, 710.0};
+    const double current[] = {1.2, 1.1, 0.9, 0.9, 0.8, 0.8, 0.8, 0.8};
+    const double temperature[] = {26.0, 25.0, 24.0, 24.0, 25.0, 25.0, 24.0, 24.0};
+    for (int i = 0; i < kDashboardThrusterCount; ++i)
     {
         ThrusterTelemetry item;
         item.id = ids.at(i);

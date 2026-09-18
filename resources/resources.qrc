@@ -10,4 +10,7 @@
         <file alias="vision.png">nav_animation/generated/nav_vision.png</file>
         <file alias="settings.png">nav_animation/generated/nav_settings.png</file>
     </qresource>
+    <qresource prefix="/dashboard">
+        <file alias="rov_top_view.png">dashboard/rov_top_view.png</file>
+    </qresource>
 </RCC>
