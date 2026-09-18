@@ -25,6 +25,7 @@ class FirmwareHistoryStore final
     FirmwareHistoryStore();
 
     void append(const QString &message);
+    bool clear();
     QVector<FirmwareHistoryEntry> load() const;
     QString filePath() const;
 

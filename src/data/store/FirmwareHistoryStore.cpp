@@ -69,6 +69,15 @@ void FirmwareHistoryStore::append(const QString &message)
         file.write(QJsonDocument(array).toJson(QJsonDocument::Indented));
 }
 
+bool FirmwareHistoryStore::clear()
+{
+    QFile file(m_filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+        return false;
+    file.write("[]\n");
+    return file.error() == QFile::NoError;
+}
+
 QString FirmwareHistoryStore::filePath() const
 {
     return m_filePath;
