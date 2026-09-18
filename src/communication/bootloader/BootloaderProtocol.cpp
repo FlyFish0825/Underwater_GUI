@@ -1,5 +1,6 @@
 #include "communication/bootloader/BootloaderProtocol.h"
 
+#include <algorithm>
 #include <QHash>
 
 namespace rov
@@ -31,6 +32,7 @@ QString commandName(const quint8 value)
         {0x2D, QStringLiteral("FULL_STREAM")},      {0x2E, QStringLiteral("COMMIT_PREPARE")},
         {0x2F, QStringLiteral("COMMIT_ACK")},       {0x30, QStringLiteral("GET_STATUS")},
         {0x31, QStringLiteral("COMMIT_EXECUTE")},
+        {0x32, QStringLiteral("WINDOW_STATUS")},
     };
     return names.value(value, QStringLiteral("UNKNOWN_0x%1").arg(value, 2, 16, QLatin1Char('0')).toUpper());
 }
@@ -109,6 +111,49 @@ QByteArray BootloaderProtocol::encodePeerControl(quint8 target, BootCommand comm
     putLe16(frame, value);
     frame.append(static_cast<char>(crc8(frame)));
     return frame;
+}
+
+QByteArray BootloaderProtocol::encodeDataPacket(quint8 target, quint16 sequence,
+                                                 const QByteArray &payload, quint16 session)
+{
+    if (payload.size() > dataPayloadSize)
+        return {};
+
+    QByteArray packet(dataPacketSize, static_cast<char>(0xFF));
+    packet[0] = static_cast<char>(target);
+    packet[1] = static_cast<char>(0x01); // WRITE_DATA
+    packet[2] = static_cast<char>(sequence & 0xFFU);
+    packet[3] = static_cast<char>((sequence >> 8U) & 0xFFU);
+    packet[4] = static_cast<char>(session & 0xFFU);
+    packet[5] = static_cast<char>((session >> 8U) & 0xFFU);
+    packet[6] = 0;
+    packet[7] = 0;
+    if (!payload.isEmpty())
+        std::copy(payload.cbegin(), payload.cend(), packet.begin() + 8);
+    return packet;
+}
+
+QVector<QByteArray> BootloaderProtocol::splitClassicDataPacket(const QByteArray &packet)
+{
+    if (packet.size() != dataPacketSize)
+        return {};
+    QVector<QByteArray> fragments;
+    fragments.reserve(8);
+    for (int index = 0; index < 8; ++index)
+        fragments.append(packet.mid(index * 8, 8));
+    return fragments;
+}
+
+quint32 BootloaderProtocol::crc32Mpeg2(const QByteArray &bytes)
+{
+    quint32 crc = 0xFFFFFFFFU;
+    for (const char value : bytes)
+    {
+        crc ^= static_cast<quint32>(static_cast<quint8>(value)) << 24U;
+        for (int bit = 0; bit < 8; ++bit)
+            crc = (crc & 0x80000000U) ? ((crc << 1U) ^ 0x04C11DB7U) : (crc << 1U);
+    }
+    return crc;
 }
 
 bool BootloaderProtocol::decodeHostResponse(quint32 canId, const QByteArray &data,

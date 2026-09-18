@@ -1,5 +1,6 @@
 #include "data/store/FirmwareHistoryStore.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -12,9 +13,18 @@ namespace rov
 
 FirmwareHistoryStore::FirmwareHistoryStore()
 {
-    const QString directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir().mkpath(directory);
+    // 历史记录与程序放在一起，便于携带整个程序目录或直接查看数据文件。
+    const QString directory = QCoreApplication::applicationDirPath();
     m_filePath = QDir(directory).filePath(QStringLiteral("firmware_history.json"));
+
+    // 兼容旧版本：首次切换目录时，把原 AppData 文件迁移到程序目录。
+    if (!QFile::exists(m_filePath))
+    {
+        const QString legacyDirectory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        const QString legacyPath = QDir(legacyDirectory).filePath(QStringLiteral("firmware_history.json"));
+        if (QFile::exists(legacyPath))
+            QFile::copy(legacyPath, m_filePath);
+    }
 }
 
 QVector<FirmwareHistoryEntry> FirmwareHistoryStore::load() const

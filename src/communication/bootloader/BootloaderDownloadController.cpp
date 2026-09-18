@@ -1,0 +1,538 @@
+#include "communication/bootloader/BootloaderDownloadController.h"
+
+#include "communication/bootloader/BootloaderProtocol.h"
+
+#include <QFile>
+#include <QFileInfo>
+
+namespace rov
+{
+
+namespace
+{
+quint16 readLe16(const QByteArray &data, int offset = 0)
+{
+    return static_cast<quint8>(data.at(offset))
+           | (static_cast<quint16>(static_cast<quint8>(data.at(offset + 1))) << 8U);
+}
+
+void appendLe32(QByteArray &bytes, quint32 value)
+{
+    bytes.append(static_cast<char>(value & 0xFFU));
+    bytes.append(static_cast<char>((value >> 8U) & 0xFFU));
+    bytes.append(static_cast<char>((value >> 16U) & 0xFFU));
+    bytes.append(static_cast<char>((value >> 24U) & 0xFFU));
+}
+
+QString hex32(const quint32 value)
+{
+    return QStringLiteral("0x%1").arg(value, 8, 16, QLatin1Char('0')).toUpper();
+}
+
+} // namespace
+
+BootloaderDownloadController::BootloaderDownloadController(BootloaderService *service,
+                                                           QObject *parent)
+    : QObject(parent), m_service(service), m_stepTimer(this), m_responseTimer(this)
+{
+    Q_ASSERT(m_service != nullptr);
+    m_stepTimer.setSingleShot(true);
+    connect(&m_stepTimer, &QTimer::timeout, this, &BootloaderDownloadController::step);
+    m_responseTimer.setSingleShot(true);
+    connect(&m_responseTimer, &QTimer::timeout, this,
+            [this]() {
+                if (m_phase == Phase::WaitingWindow)
+                    queryWindow();
+                else
+                    fail(QStringLiteral("等待设备回复超时，下载已停止"));
+            });
+    connect(m_service, &BootloaderService::hostResponseReceived, this,
+            &BootloaderDownloadController::handleResponse);
+}
+
+bool BootloaderDownloadController::start(const quint8 target, const QString &firmwarePath,
+                                        const bool canFd)
+{
+    if (isRunning())
+    {
+        emit logMessage(QStringLiteral("下载任务正在进行，请先等待当前任务结束"));
+        return false;
+    }
+    if (m_service == nullptr)
+    {
+        emit logMessage(QStringLiteral("下载失败：通信服务不可用"));
+        return false;
+    }
+    if (firmwarePath.isEmpty())
+    {
+        emit logMessage(QStringLiteral("下载失败：尚未选择固件文件"));
+        return false;
+    }
+    if (QFileInfo(firmwarePath).suffix().compare(QStringLiteral("bin"), Qt::CaseInsensitive) != 0)
+    {
+        emit logMessage(QStringLiteral("下载失败：正式 Bootloader 下载目前只接受 .bin 镜像，HEX/UF2 请先转换为 BIN"));
+        return false;
+    }
+
+    QFile file(firmwarePath);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        emit logMessage(QStringLiteral("下载失败：无法打开固件：%1").arg(file.errorString()));
+        return false;
+    }
+    const QByteArray image = file.readAll();
+    file.close();
+    if (image.isEmpty())
+    {
+        emit logMessage(QStringLiteral("下载失败：固件文件为空"));
+        return false;
+    }
+    if (image.size() > 106 * 1024)
+    {
+        emit logMessage(QStringLiteral("下载失败：固件大小 %1 字节，超过 APP 区域 106 KiB 限制")
+                            .arg(image.size()));
+        return false;
+    }
+    m_target = target;
+    m_canFd = canFd;
+    m_firmwarePath = QFileInfo(firmwarePath).absoluteFilePath();
+    m_firmware = image;
+    m_crc32 = BootloaderProtocol::crc32Mpeg2(m_firmware);
+    m_sequence = 0;
+    m_fragmentIndex = 0;
+    m_windowPackets = m_windowStart = m_windowEnd = m_committed = m_windowAttempts = 0;
+    m_windowQueried = false;
+    m_totalPackets = (m_firmware.size() + BootloaderProtocol::dataPayloadSize - 1)
+                     / BootloaderProtocol::dataPayloadSize;
+    m_phase = Phase::WaitingBoot;
+    emit phaseChanged(QStringLiteral("准备进入 Bootloader（数据面：%1）")
+                          .arg(m_canFd ? QStringLiteral("CAN FD+BRS") : QStringLiteral("Classic CAN")));
+    emit progressChanged(m_target, 0, 0, m_totalPackets);
+    emit logMessage(QStringLiteral("开始正式下载：Node %1 · %2 · %3 · %4 字节 · %5 · 数据包 %6 个")
+                        .arg(m_target)
+                        .arg(QFileInfo(m_firmwarePath).fileName())
+                        .arg(m_canFd ? QStringLiteral("CAN FD+BRS") : QStringLiteral("Classic CAN"))
+                        .arg(m_firmware.size())
+                        .arg(hex32(m_crc32))
+                        .arg(m_totalPackets));
+
+    // APP 收到 ENTER_BOOT 后不会 ACK；Bootloader 已在运行时会回复，但两种情况
+    // 都统一等待一小段时间再擦除，给 MCU 留出复位和重新进入 Bootloader 的时间。
+    if (!sendControl(BootCommand::EnterBoot))
+    {
+        fail(QStringLiteral("发送 ENTER_BOOT 失败"));
+        return false;
+    }
+    m_stepTimer.start(800);
+    return true;
+}
+
+void BootloaderDownloadController::cancel()
+{
+    if (!isRunning())
+        return;
+    m_stepTimer.stop();
+    m_responseTimer.stop();
+    if (m_service != nullptr)
+        m_service->sendHostCommand(m_target, BootCommand::Abort);
+    emit logMessage(QStringLiteral("已发送 ABORT，用户取消本次下载"));
+    m_phase = Phase::Idle;
+    emit phaseChanged(QStringLiteral("已取消"));
+    emit finished(false, QStringLiteral("用户取消下载"));
+}
+
+void BootloaderDownloadController::step()
+{
+    if (!isRunning())
+        return;
+    if (m_phase == Phase::WaitingBoot)
+        sendErase();
+    else if (m_phase == Phase::Streaming)
+        pumpData();
+}
+
+bool BootloaderDownloadController::sendControl(const BootCommand command, const quint8 byte2,
+                                               const QByteArray &params)
+{
+    if (m_service == nullptr || !m_service->sendHostCommand(m_target, command, byte2, params))
+        return false;
+    const QString raw = BootloaderProtocol::encodeHostControl(m_target, command, byte2, params)
+                            .toHex(' ')
+                            .toUpper();
+    emit logMessage(QStringLiteral("TX Node%1 · %2 · CAN=0x000 · DATA=%3")
+                        .arg(m_target)
+                        .arg(bootCommandName(command))
+                        .arg(QString(raw)));
+    return true;
+}
+
+void BootloaderDownloadController::sendErase()
+{
+    m_phase = Phase::Erasing;
+    emit phaseChanged(QStringLiteral("正在擦除 APP 区域"));
+    if (!sendControl(BootCommand::Erase))
+    {
+        fail(QStringLiteral("发送 ERASE 失败"));
+        return;
+    }
+    armResponseTimeout(8000, QStringLiteral("擦除 APP"));
+}
+
+void BootloaderDownloadController::sendWrite()
+{
+    m_phase = Phase::Writing;
+    emit phaseChanged(QStringLiteral("正在建立写入会话"));
+    QByteArray params;
+    appendLe32(params, static_cast<quint32>(m_firmware.size()));
+    // Byte2=0 表示 APP 区域，Session=0 表示 Legacy 单节点模式。
+    if (!sendControl(BootCommand::Write, 0, params))
+    {
+        fail(QStringLiteral("发送 WRITE 失败"));
+        return;
+    }
+    armResponseTimeout(3000, QStringLiteral("建立写入会话"));
+}
+
+void BootloaderDownloadController::pumpData()
+{
+    // 单窗口模式：发送边界与 Flash 提交边界分开，不能以发送完成代替确认。
+    if (m_windowPackets > 0 && m_sequence >= m_windowEnd)
+    {
+        m_phase = Phase::WaitingWindow;
+        m_windowQueried = false;
+        emit phaseChanged(QStringLiteral("等待窗口写入确认"));
+        m_responseTimer.start(500);
+        return;
+    }
+    if (m_sequence >= m_totalPackets)
+    {
+        sendWriteEnd();
+        return;
+    }
+    const int offset = static_cast<int>(m_sequence) * BootloaderProtocol::dataPayloadSize;
+    const QByteArray chunk = m_firmware.mid(offset, BootloaderProtocol::dataPayloadSize);
+    bool sent = false;
+    if (m_canFd)
+    {
+        sent = m_service->sendDataPacket(m_target, m_sequence, chunk, 0, true);
+    }
+    else
+    {
+        // Classic CAN 一个逻辑包固定拆成 0x100~0x107 八个物理帧。
+        // 八帧连续发完后再停 1 ms，避免把同一逻辑包拆成多次事件发送，
+        // 同时给 USB CDC、H750 转发任务和下位机接收中断留下包间隔。
+        sent = true;
+        for (m_fragmentIndex = 0; m_fragmentIndex < 8; ++m_fragmentIndex)
+        {
+            if (!m_service->sendClassicDataFragment(m_target, m_sequence, chunk, 0,
+                                                    m_fragmentIndex))
+            {
+                sent = false;
+                break;
+            }
+        }
+    }
+    if (!sent)
+    {
+        fail(QStringLiteral("发送 DATA Seq=%1%2 失败")
+                 .arg(m_sequence)
+                 .arg(m_canFd ? QString() : QStringLiteral(" 分片%1").arg(m_fragmentIndex)));
+        return;
+    }
+
+    if (!m_canFd)
+        m_fragmentIndex = 0;
+    ++m_sequence;
+    const int percent = (m_sequence * 100) / qMax(1, m_totalPackets);
+    if (m_windowPackets == 0)
+        emit progressChanged(m_target, percent, m_sequence, m_totalPackets);
+    if (m_sequence == 1 || m_sequence == m_totalPackets || (m_sequence % 25) == 0)
+    {
+        emit logMessage(QStringLiteral("发送 DATA：Seq=%1/%2 · 进度 %3% · 每包 56 字节 · %4")
+                            .arg(m_sequence)
+                            .arg(m_totalPackets)
+                            .arg(percent)
+                            .arg(m_canFd ? QStringLiteral("CAN FD+BRS，ID=0x100，DLC=64")
+                                         : QStringLiteral("Classic CAN，ID=0x100~0x107，8×8 字节，8 帧后暂停 1 ms")));
+    }
+    // Classic CAN 八帧一组完成后暂停 1 ms；CAN FD 每个逻辑包一帧，也使用
+    // 同样的 1 ms 事件循环间隔。
+    m_stepTimer.start(1);
+}
+
+void BootloaderDownloadController::queryWindow()
+{
+    // ACK 丢失时先查询；无响应时不猜测进度、不直接重发或擦除。
+    if (++m_windowAttempts > 5)
+    {
+        fail(QStringLiteral("窗口连续查询/重发无进展，请检查连接后重新下载"));
+        return;
+    }
+    m_windowQueried = true;
+    emit logMessage(QStringLiteral("窗口等待超时或设备忙，查询窗口状态（%1/5）").arg(m_windowAttempts));
+    if (!sendControl(BootCommand::WindowStatus))
+    {
+        fail(QStringLiteral("查询窗口状态失败"));
+        return;
+    }
+    m_responseTimer.start(500);
+}
+
+void BootloaderDownloadController::handleWindow(const BootResponse &response)
+{
+    if (response.status != BootStatus::Write || response.data.size() != 4)
+        return;
+    const int next = readLe16(response.data);
+    const int window = static_cast<quint8>(response.data.at(2));
+    const int credits = static_cast<quint8>(response.data.at(3));
+    if (next < m_committed)
+        return; // 忽略延迟到达的旧窗口通知。
+    if (next > m_sequence || next > m_totalPackets || window != m_windowPackets)
+    {
+        fail(QStringLiteral("窗口响应范围或窗口大小异常，已停止下载"));
+        return;
+    }
+    if (next > m_committed)
+    {
+        m_committed = next;
+        m_windowAttempts = 0;
+        emit progressChanged(m_target, next * 100 / m_totalPackets, next, m_totalPackets);
+        emit logMessage(QStringLiteral("窗口已写入并回读：%1/%2 包").arg(next).arg(m_totalPackets));
+    }
+    if (m_phase != Phase::WaitingWindow && next < m_windowEnd)
+        return;
+    if (next == m_totalPackets)
+    {
+        m_stepTimer.stop();
+        m_responseTimer.stop();
+        sendWriteEnd();
+        return;
+    }
+    if (credits == 0)
+    {
+        m_stepTimer.stop();
+        m_phase = Phase::WaitingWindow;
+        if (!m_responseTimer.isActive())
+            m_responseTimer.start(500);
+        return;
+    }
+    if (next < m_windowEnd && !m_windowQueried)
+        return; // 未确认完成时，等待超时后的主动查询再决定重发。
+    m_stepTimer.stop();
+    m_responseTimer.stop();
+    if (next >= m_windowEnd)
+    {
+        m_windowStart = next;
+        m_windowEnd = qMin(next + m_windowPackets, m_totalPackets);
+    }
+    else
+        emit logMessage(QStringLiteral("窗口尚未提交完整，重发 Seq %1~%2")
+                            .arg(m_windowStart).arg(m_windowEnd - 1));
+    m_sequence = static_cast<quint16>(m_windowStart);
+    m_windowQueried = false;
+    m_phase = Phase::Streaming;
+    emit phaseChanged(QStringLiteral("正在发送固件窗口"));
+    m_stepTimer.start(1);
+}
+
+void BootloaderDownloadController::sendWriteEnd()
+{
+    m_phase = Phase::Ending;
+    emit phaseChanged(QStringLiteral("正在结束写入并检查缺包"));
+    if (!sendControl(BootCommand::WriteEnd))
+    {
+        fail(QStringLiteral("发送 WRITE_END 失败"));
+        return;
+    }
+    armResponseTimeout(5000, QStringLiteral("结束写入"));
+}
+
+void BootloaderDownloadController::sendVerify()
+{
+    m_phase = Phase::Verifying;
+    emit phaseChanged(QStringLiteral("正在校验固件 CRC32"));
+    QByteArray params;
+    appendLe32(params, m_crc32);
+    if (!sendControl(BootCommand::Verify, 0, params))
+    {
+        fail(QStringLiteral("发送 VERIFY 失败"));
+        return;
+    }
+    armResponseTimeout(8000, QStringLiteral("校验固件"));
+}
+
+void BootloaderDownloadController::sendJumpApp()
+{
+    m_phase = Phase::Jumping;
+    emit phaseChanged(QStringLiteral("校验通过，正在启动 APP"));
+    if (!sendControl(BootCommand::JumpApp))
+    {
+        fail(QStringLiteral("发送 JUMP_APP 失败"));
+        return;
+    }
+    armResponseTimeout(2000, QStringLiteral("启动 APP"));
+}
+
+void BootloaderDownloadController::armResponseTimeout(const int milliseconds,
+                                                       const QString &phase)
+{
+    Q_UNUSED(phase)
+    m_responseTimer.start(milliseconds);
+}
+
+void BootloaderDownloadController::handleResponse(const BootResponse &response)
+{
+    if (!isRunning() || response.nodeId != m_target)
+        return;
+
+    const bool expected =
+        (m_phase == Phase::Erasing && response.command == BootCommand::Erase)
+        || (m_phase == Phase::Writing && response.command == BootCommand::Write)
+        || ((m_phase == Phase::Streaming || m_phase == Phase::WaitingWindow)
+            && response.command == BootCommand::Write && response.status == BootStatus::Error)
+        || (m_phase == Phase::Ending
+            && (response.command == BootCommand::WriteEnd
+                || response.command == BootCommand::MissingCount))
+        || (m_phase == Phase::Verifying && response.command == BootCommand::Verify)
+        || (m_phase == Phase::Jumping && response.command == BootCommand::JumpApp);
+    const bool windowResponse = m_windowPackets > 0
+        && (m_phase == Phase::Streaming || m_phase == Phase::WaitingWindow)
+        && response.command == BootCommand::WindowStatus;
+    if (!expected && !windowResponse)
+        return;
+
+    if (response.status == BootStatus::Error)
+    {
+        const QString code = QStringLiteral("0x%1").arg(response.errorCode, 2, 16, QLatin1Char('0')).toUpper();
+        fail(QStringLiteral("设备拒绝 %1：设备返回错误（错误码 %2）")
+                 .arg(bootCommandName(response.command), code));
+        return;
+    }
+
+    if (m_phase == Phase::WaitingBoot)
+        return;
+    if (windowResponse)
+    {
+        handleWindow(response);
+        return;
+    }
+    if (m_phase == Phase::Erasing && response.command == BootCommand::Erase)
+    {
+        if (response.status == BootStatus::Erase)
+            return; // 底层擦除开始时会先回一次 ERASE 状态。
+        if (response.status == BootStatus::Ready)
+        {
+            m_responseTimer.stop();
+            sendWrite();
+        }
+        return;
+    }
+    if (m_phase == Phase::Writing && response.command == BootCommand::Write)
+    {
+        if (response.status == BootStatus::Write || response.status == BootStatus::Ready)
+        {
+            if (response.data.size() != 4)
+                return;
+            m_windowPackets = static_cast<quint8>(response.data.at(3));
+            if (m_windowPackets > 0 && (readLe16(response.data, 1) != m_totalPackets
+                                       || response.data.at(0) != 0))
+            {
+                fail(QStringLiteral("WRITE 返回的区域或总包数与固件不一致"));
+                return;
+            }
+            m_responseTimer.stop();
+            m_windowEnd = qMin(m_windowPackets, m_totalPackets);
+            emit logMessage(QStringLiteral("下载窗口：%1 个逻辑包（0 表示旧版连续模式）").arg(m_windowPackets));
+            m_phase = Phase::Streaming;
+            emit phaseChanged(QStringLiteral("正在发送固件数据"));
+            m_stepTimer.start(0);
+        }
+        return;
+    }
+    if (m_phase == Phase::Ending)
+    {
+        if (response.command == BootCommand::WriteEnd && response.status == BootStatus::Write
+            && m_windowPackets > 0)
+        {
+            m_phase = Phase::WaitingWindow;
+            queryWindow();
+            return;
+        }
+        if (response.command == BootCommand::MissingCount)
+        {
+            const quint16 missing = response.data.size() >= 2
+                                        ? static_cast<quint16>(static_cast<quint8>(response.data.at(0)))
+                                              | (static_cast<quint16>(static_cast<quint8>(response.data.at(1))) << 8U)
+                                        : 0;
+            if (missing != 0)
+            {
+                fail(QStringLiteral("设备报告缺少 %1 个数据包，当前版本未自动修复，已停止以避免误刷" ).arg(missing));
+                return;
+            }
+        }
+        if (response.command == BootCommand::WriteEnd
+            && (response.status == BootStatus::Verify || response.status == BootStatus::Ready
+                || response.status == BootStatus::Repair))
+        {
+            if (response.data.size() >= 2)
+            {
+                const quint16 missing = response.data.size() >= 2
+                                            ? static_cast<quint16>(static_cast<quint8>(response.data.at(0)))
+                                                  | (static_cast<quint16>(static_cast<quint8>(response.data.at(1))) << 8U)
+                                            : 0;
+                if (missing != 0)
+                {
+                    fail(QStringLiteral("设备报告缺少 %1 个数据包，当前版本未自动修复，已停止以避免误刷" ).arg(missing));
+                    return;
+                }
+            }
+            m_responseTimer.stop();
+            sendVerify();
+        }
+        return;
+    }
+    if (m_phase == Phase::Verifying && response.command == BootCommand::Verify)
+    {
+        if (response.status == BootStatus::Verify)
+            return;
+        if (response.status == BootStatus::Ready)
+        {
+            m_responseTimer.stop();
+            sendJumpApp();
+        }
+        return;
+    }
+    if (m_phase == Phase::Jumping && response.command == BootCommand::JumpApp
+        && response.status == BootStatus::Ready)
+    {
+        m_responseTimer.stop();
+        complete(QStringLiteral("下载成功，设备已跳转到 APP"));
+    }
+}
+
+void BootloaderDownloadController::fail(const QString &message)
+{
+    if (!isRunning())
+        return;
+    m_stepTimer.stop();
+    m_responseTimer.stop();
+    m_phase = Phase::Idle;
+    emit phaseChanged(QStringLiteral("失败"));
+    emit logMessage(QStringLiteral("下载失败：%1").arg(message));
+    emit finished(false, message);
+}
+
+void BootloaderDownloadController::complete(const QString &message)
+{
+    if (!isRunning())
+        return;
+    m_stepTimer.stop();
+    m_responseTimer.stop();
+    m_phase = Phase::Idle;
+    emit phaseChanged(QStringLiteral("完成"));
+    emit logMessage(message);
+    emit progressChanged(m_target, 100, static_cast<quint16>(m_totalPackets), m_totalPackets);
+    emit finished(true, message);
+}
+
+} // namespace rov

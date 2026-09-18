@@ -4,10 +4,14 @@
 #include "pages/firmware/BootloaderCommandDialog.h"
 #include "pages/firmware/FirmwareHistoryDialog.h"
 #include "pages/firmware/FirmwareLogFormatter.h"
+#include "communication/bootloader/BootloaderDownloadController.h"
 #include "communication/bootloader/BootloaderProtocol.h"
+#include "ui/common/AppProgressBar.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QDateTime>
+#include <QApplication>
+#include <QScrollArea>
 #include <QCryptographicHash>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -350,8 +354,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     root->setContentsMargins(10, 8, 10, 8);
     root->setSpacing(8);
     root->addWidget(makePageHeader(QStringLiteral("固件升级"),
-                                   QStringLiteral("管理固件信息并发出未来升级请求。"),
-                                   QStringLiteral("演示 · 仅界面与请求")));
+                                   QStringLiteral("按底层 Bootloader 协议下载固件并校验后启动 APP。"),
+                                   QStringLiteral("手动选择 Classic CAN / CAN FD+BRS")));
 
     auto *mainRow = new QHBoxLayout;
     m_mainRowLayout = mainRow;
@@ -371,7 +375,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     auto *dropText = new QVBoxLayout;
     dropText->setSpacing(1);
     m_dropTitle = makeLabel(QStringLiteral("将固件文件拖放到此处"), QStringLiteral("bodyValue"));
-    m_dropHint = makeLabel(QStringLiteral("支持格式：.bin、.hex、.uf2"), QStringLiteral("mutedLabel"));
+    m_dropHint = makeLabel(QStringLiteral("正式下载支持 .bin；.hex、.uf2 可载入查看"),
+                           QStringLiteral("mutedLabel"));
     dropText->addWidget(m_dropTitle);
     dropText->addWidget(m_dropHint);
     dropLayout->addLayout(dropText, 1);
@@ -397,7 +402,25 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     m_description = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
     m_description->setWordWrap(true);
     info->addWidget(m_description, 4, 1);
-    fileCard->contentLayout()->addLayout(info);
+    auto *fileDetails = new QWidget;
+    fileDetails->setObjectName(QStringLiteral("firmwareFileDetails"));
+    fileDetails->setStyleSheet(QStringLiteral("QWidget#firmwareFileDetails { background: white; }"));
+    auto *fileDetailsLayout = new QVBoxLayout(fileDetails);
+    fileDetailsLayout->setContentsMargins(0, 0, 4, 0);
+    fileDetailsLayout->setSizeConstraint(QLayout::SetMinAndMaxSize);
+    fileDetailsLayout->addLayout(info);
+    fileDetailsLayout->addStretch();
+    m_fileName->setWordWrap(true);
+    m_description->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+    auto *fileDetailsScroll = new QScrollArea;
+    fileDetailsScroll->setObjectName(QStringLiteral("firmwareFileDetailsScroll"));
+    fileDetailsScroll->setFrameShape(QFrame::NoFrame);
+    fileDetailsScroll->setWidgetResizable(true);
+    fileDetailsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    fileDetailsScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    fileDetailsScroll->setFixedHeight(160);
+    fileDetailsScroll->setWidget(fileDetails);
+    fileCard->contentLayout()->addWidget(fileDetailsScroll);
     fileCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
 
     auto *left = new QVBoxLayout;
@@ -408,6 +431,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     nodeControl->contentLayout()->setSpacing(6);
     auto *targetForm = new QGridLayout;
     targetForm->addWidget(makeLabel(QStringLiteral("当前目标"), QStringLiteral("mutedLabel")), 0, 0);
+    // 使用 Qt 原生下拉框，确保弹出列表始终跟随控件定位；Fluent 自定义
+    // ComboBox 在当前无边框主窗口/DPI 组合下会出现弹层坐标偏移。
     m_targetNodeCombo = new QComboBox;
     targetForm->addWidget(m_targetNodeCombo, 0, 1);
     nodeControl->contentLayout()->addLayout(targetForm);
@@ -477,7 +502,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     // USB CDC 只负责连接状态检查，控件由 MainWindow 放到全局连接栏。
     m_connectionBar = new QFrame;
     m_connectionBar->setObjectName(QStringLiteral("connectionBar"));
-    m_connectionBar->setFixedHeight(46);
+    m_connectionBar->setFixedHeight(40);
     auto *connectionRow = new QHBoxLayout(m_connectionBar);
     connectionRow->setContentsMargins(12, 4, 12, 4);
     connectionRow->setSpacing(8);
@@ -489,6 +514,14 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     connectionRow->addWidget(refreshSerial);
     m_serialConnectButton = makeButton(QStringLiteral("接管串口"), QStringLiteral("primaryButton"));
     connectionRow->addWidget(m_serialConnectButton);
+    connectionRow->addWidget(makeLabel(QStringLiteral("升级总线"), QStringLiteral("mutedLabel")));
+    m_transferModeCombo = new QComboBox;
+    m_transferModeCombo->setToolTip(QStringLiteral("手动选择固件 DATA 使用 Classic CAN 分片或 CAN FD+BRS"));
+    m_transferModeCombo->addItem(QStringLiteral("Classic CAN（8 分片）"), false);
+    m_transferModeCombo->addItem(QStringLiteral("CAN FD+BRS（64 字节）"), true);
+    m_transferModeCombo->setCurrentIndex(0);
+    m_transferModeCombo->setMinimumWidth(150);
+    connectionRow->addWidget(m_transferModeCombo);
     m_serialStatus = makeLabel(connectionStatusText(false, QStringLiteral("未连接 · VID_0483 PID_5740")),
                                QStringLiteral("mutedLabel"));
     m_serialStatus->setTextFormat(Qt::RichText);
@@ -506,12 +539,13 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     m_nodeTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_nodeTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_nodeTable->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_nodeTable->verticalHeader()->setDefaultSectionSize(24);
+    m_nodeTable->verticalHeader()->setDefaultSectionSize(25);
     m_nodeTable->verticalHeader()->setDefaultAlignment(Qt::AlignCenter);
-    m_nodeTable->verticalHeader()->setFixedWidth(36);
-    // 预留表头、边框和 8 行完整行高，避免第 8 个节点被卡片裁掉。
-    m_nodeTable->setMinimumHeight(8 * 26 + 42);
-    m_nodeTable->setColumnWidth(0, 66);
+    // 行号栏需要同时容纳主题边距和两位数字，避免首列数字被裁切。
+    m_nodeTable->verticalHeader()->setFixedWidth(46);
+    // 表格高度只容纳表头和 8 行数据，避免空白视口挤占日志区域。
+    m_nodeTable->setFixedHeight(8 * 25 + 36);
+    m_nodeTable->setColumnWidth(0, 76);
     m_nodeTable->setColumnWidth(2, 100);
     m_nodeTable->setColumnWidth(3, 100);
     m_nodeTable->setColumnWidth(4, 100);
@@ -525,6 +559,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     auto *progressLayout = new QGridLayout;
     progressLayout->setHorizontalSpacing(10);
     progressLayout->setVerticalSpacing(3);
+    m_progressBars.clear();
+    m_progressStates.clear();
     for (int i = 0; i < 8; ++i)
     {
         auto *row = new QHBoxLayout;
@@ -533,47 +569,60 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                       QStringLiteral("bodyValue")));
         row->addWidget(
             makeLabel(thrusterDisplayName(i), QStringLiteral("bodyValue")), 1);
-        auto *bar = new QProgressBar;
+        auto *bar = new AppProgressBar;
         bar->setRange(0, 100);
         bar->setValue(i == 0 ? 100 : (i == 1 ? 65 : 0));
-        bar->setTextVisible(false);
         row->addWidget(bar, 2);
-        row->addWidget(
-            makeLabel(i == 0 ? QStringLiteral("成功") : QStringLiteral("空闲"),
-                      i == 0 ? QStringLiteral("statusGood") : QStringLiteral("statusIdle")));
+        auto *barState = makeLabel(i == 0 ? QStringLiteral("成功") : QStringLiteral("空闲"),
+                                   i == 0 ? QStringLiteral("statusGood") : QStringLiteral("statusIdle"));
+        row->addWidget(barState);
+        m_progressBars.append(bar);
+        m_progressStates.append(barState);
         progressLayout->addLayout(row, i / 2, i % 2);
     }
     auto *actions = new QHBoxLayout;
-    actions->addWidget(makeButton(QStringLiteral("进入 Boot"), QStringLiteral("softButton")));
-    actions->addWidget(makeButton(QStringLiteral("擦除"), QStringLiteral("softButton")));
-    actions->addWidget(makeButton(QStringLiteral("编程"), QStringLiteral("softButton")));
+    auto *enterBootButton = makeButton(QStringLiteral("进入 Boot"), QStringLiteral("softButton"));
+    auto *eraseButton = makeButton(QStringLiteral("擦除"), QStringLiteral("softButton"));
+    actions->addWidget(enterBootButton);
+    actions->addWidget(eraseButton);
+    m_programButton = makeButton(QStringLiteral("编程"), QStringLiteral("softButton"));
+    m_programButton->setToolTip(QStringLiteral("按 Legacy 协议完整下载 BIN：擦除、写入、校验并启动 APP"));
+    actions->addWidget(m_programButton);
     auto *verify = makeButton(QStringLiteral("校验"), QStringLiteral("softButton"));
     actions->addWidget(verify);
-    actions->addWidget(makeButton(QStringLiteral("重启"), QStringLiteral("softButton")));
-    auto *update = makeButton(QStringLiteral("升级选中节点"), QStringLiteral("primaryButton"));
-    actions->addWidget(update, 1);
+    auto *resetButton = makeButton(QStringLiteral("重启"), QStringLiteral("softButton"));
+    actions->addWidget(resetButton);
+    m_updateButton = makeButton(QStringLiteral("下载到选中节点"), QStringLiteral("primaryButton"));
+    m_updateButton->setToolTip(QStringLiteral("对当前目标节点执行完整 Bootloader 下载"));
+    actions->addWidget(m_updateButton, 1);
     progressLayout->addLayout(actions, 4, 0, 1, 2);
     targetCard->contentLayout()->addLayout(progressLayout);
-    right->addWidget(targetCard, 6);
+    targetCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    right->addWidget(targetCard, 0);
 
     auto *logCard = new CardWidget(QStringLiteral("升级日志"), IconKind::List);
-    auto *logToolbar = new QHBoxLayout;
-    logToolbar->addStretch();
+    logCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
+    logCard->contentLayout()->setSpacing(5);
     auto *clearLog = makeButton(QStringLiteral("清屏"), QStringLiteral("softButton"));
     auto *history = makeButton(QStringLiteral("历史记录"), QStringLiteral("softButton"));
-    logToolbar->addWidget(clearLog);
-    logToolbar->addWidget(history);
-    logCard->contentLayout()->addLayout(logToolbar);
+    // 标题栏原有的 stretch 会把这两个按钮推到右侧，与“升级日志”保持同一行。
+    auto *logHeaderLayout =
+        qobject_cast<QHBoxLayout *>(logCard->titleLabel()->parentWidget()->layout());
+    if (logHeaderLayout != nullptr)
+    {
+        logHeaderLayout->addWidget(clearLog);
+        logHeaderLayout->addWidget(history);
+    }
     m_requestLog = new QTextBrowser;
     m_requestLog->setReadOnly(true);
     m_requestLog->setLineWrapMode(QTextEdit::NoWrap);
-    m_requestLog->setMinimumHeight(90);
+    m_requestLog->setMinimumHeight(100);
+    m_requestLog->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_requestLog->setOpenLinks(false);
     m_requestLog->setOpenExternalLinks(false);
     logCard->contentLayout()->addWidget(m_requestLog);
-    logCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-    right->addWidget(logCard);
-    right->addStretch(1);
+    logCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    right->addWidget(logCard, 1);
     mainRow->addLayout(right, 7);
     root->addLayout(mainRow, 1);
 
@@ -581,26 +630,35 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             [this]()
             {
                 emit verifyRequested();
-                logRequest(QStringLiteral("请求校验；不执行设备操作"));
+                if (m_firmwarePath.isEmpty())
+                {
+                    logRequest(QStringLiteral("校验失败：请先选择 .bin 固件文件"));
+                    return;
+                }
+                QFile file(m_firmwarePath);
+                if (!file.open(QIODevice::ReadOnly))
+                {
+                    logRequest(QStringLiteral("校验失败：无法读取固件：%1").arg(file.errorString()));
+                    return;
+                }
+                const quint32 crc = BootloaderProtocol::crc32Mpeg2(file.readAll());
+                QByteArray params;
+                params.append(static_cast<char>(crc & 0xFFU));
+                params.append(static_cast<char>((crc >> 8U) & 0xFFU));
+                params.append(static_cast<char>((crc >> 16U) & 0xFFU));
+                params.append(static_cast<char>((crc >> 24U) & 0xFFU));
+                sendCommonCommand(BootCommand::Verify, QStringLiteral("校验固件"), 0, params);
             });
+    connect(enterBootButton, &QPushButton::clicked, this,
+            [this]() { sendCommonCommand(BootCommand::EnterBoot, QStringLiteral("进入 Boot")); });
+    connect(eraseButton, &QPushButton::clicked, this,
+            [this]() { sendCommonCommand(BootCommand::Erase, QStringLiteral("擦除 APP")); });
+    connect(resetButton, &QPushButton::clicked, this,
+            [this]() { sendCommonCommand(BootCommand::Reset, QStringLiteral("重启节点")); });
     dropZone->setFileHandler([this](const QString &path) { loadFirmwareFile(path); });
     connect(browse, &QPushButton::clicked, this, &FirmwarePage::browseFirmwareFile);
-    connect(update, &QPushButton::clicked, this,
-            [this]()
-            {
-                FirmwareUpgradeRequest request;
-                for (const auto &node : m_snapshot.nodes)
-                {
-                    if (node.online)
-                    {
-                        request.nodeIds.append(node.nodeId);
-                    }
-                }
-                request.firmwarePath = m_firmwarePath.isEmpty() ? m_snapshot.fileName : m_firmwarePath;
-                emit upgradeRequested(request);
-                logRequest(
-                    QStringLiteral("请求升级 %1 个在线演示节点").arg(request.nodeIds.size()));
-            });
+    connect(m_programButton, &QPushButton::clicked, this, &FirmwarePage::startFirmwareDownload);
+    connect(m_updateButton, &QPushButton::clicked, this, &FirmwarePage::startFirmwareDownload);
     connect(clearLog, &QPushButton::clicked, this,
             [this]()
             {
@@ -612,6 +670,19 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
 
     m_communication = new BootloaderCommunicationService(this);
     m_bootloader = new BootloaderService(m_communication, this);
+    m_downloadController = new BootloaderDownloadController(m_bootloader, this);
+    connect(m_downloadController, &BootloaderDownloadController::phaseChanged, this,
+            [this](const QString &phase)
+            {
+                if (m_stateProgress != nullptr)
+                    m_stateProgress->setText(phase);
+            });
+    connect(m_downloadController, &BootloaderDownloadController::progressChanged, this,
+            &FirmwarePage::updateDownloadProgress);
+    connect(m_downloadController, &BootloaderDownloadController::logMessage, this,
+            &FirmwarePage::logRequest);
+    connect(m_downloadController, &BootloaderDownloadController::finished, this,
+            &FirmwarePage::finishFirmwareDownload);
     connect(m_targetNodeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &FirmwarePage::selectNode);
     connect(m_nodeTable, &QTableWidget::cellClicked, this, &FirmwarePage::selectTableRow);
@@ -671,6 +742,31 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                 ++m_heartbeatCount;
                 m_serialStatus->setText(
                     connectionStatusText(true, QStringLiteral("下位机在线 · 心跳 %1").arg(m_heartbeatCount)));
+            });
+
+    // APP 收到 ENTER_BOOT 后不会回复，而是复位进入 Bootloader；进入后自动
+    // 补发一次 GET_VERSION，避免用户必须手动猜测复位是否完成。
+    m_bootProbeTimer = new QTimer(this);
+    m_bootProbeTimer->setSingleShot(true);
+    m_bootProbeTimer->setInterval(1000);
+    connect(m_bootProbeTimer, &QTimer::timeout, this,
+            [this]()
+            {
+                if (m_bootloader == nullptr || m_communication == nullptr
+                    || !m_communication->isOpen() || m_bootProbeTarget == 0)
+                    return;
+                if (!m_bootloader->sendHostCommand(m_bootProbeTarget, BootCommand::GetVersion))
+                {
+                    logRequest(QStringLiteral("自动读取版本失败：串口未连接或发送失败"));
+                    return;
+                }
+                const QByteArray raw = BootloaderProtocol::encodeHostControl(
+                                            m_bootProbeTarget, BootCommand::GetVersion)
+                                            .toHex(' ')
+                                            .toUpper();
+                logRequest(QStringLiteral("自动探测 Node%1 · 读取版本 · CAN=0x000 · DATA=%2")
+                               .arg(m_bootProbeTarget)
+                               .arg(QString(raw)));
             });
 
     refreshSerialDevices();
@@ -753,7 +849,7 @@ void FirmwarePage::setSnapshot(const FirmwareSnapshot &snapshot)
 void FirmwarePage::browseFirmwareFile()
 {
     const QString path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("选择固件文件"), QString(),
+        QApplication::activeWindow(), QStringLiteral("选择固件文件"), QString(),
         QStringLiteral("固件文件 (*.bin *.hex *.uf2);;BIN 文件 (*.bin);;HEX 文件 (*.hex);;UF2 文件 (*.uf2)"));
     if (!path.isEmpty())
         loadFirmwareFile(path);
@@ -799,7 +895,9 @@ bool FirmwarePage::loadFirmwareFile(const QString &path)
     m_snapshot.fileVersion = firmwareVersionFromName(fileInfo.completeBaseName());
     m_snapshot.fileSize = humanFileSize(fileInfo.size());
     m_snapshot.checksum = shortSha256(hash.result());
-    m_snapshot.fileDescription = QStringLiteral("已载入本地固件，可用于升级请求；当前不会自动刷写设备。\n路径：%1")
+    m_snapshot.fileDescription = QStringLiteral("已载入本地固件，可用于正式 Bootloader 下载。\n"
+                                                 "Legacy 流程支持 .bin；DATA 可手动选择 Classic CAN 或 CAN FD+BRS。\n"
+                                                 "路径：%1")
                                      .arg(m_firmwarePath);
     refreshView();
     if (m_dropTitle != nullptr)
@@ -893,6 +991,12 @@ void FirmwarePage::selectTableRow(int row, int column)
 void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, quint8 byte2,
                                      const QByteArray &params)
 {
+    if (command == BootCommand::Abort && m_downloadController != nullptr
+        && m_downloadController->isRunning())
+    {
+        cancelFirmwareDownload();
+        return;
+    }
     if (m_bootloader == nullptr || m_communication == nullptr || !m_communication->isOpen())
     {
         logRequest(QStringLiteral("%1：串口未连接").arg(label));
@@ -911,9 +1015,14 @@ void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, 
                                  .toHex(' ')
                                  .toUpper();
         if (command == BootCommand::EnterBoot)
-            logRequest(QStringLiteral("TX Node%1 · ENTER_BOOT · CAN=0x000 · DATA=%2 · APP 不回复 ACK，等待复位")
+        {
+            m_bootProbeTarget = target;
+            if (m_bootProbeTimer != nullptr)
+                m_bootProbeTimer->start();
+            logRequest(QStringLiteral("TX Node%1 · ENTER_BOOT · CAN=0x000 · DATA=%2 · APP 不回复 ACK，等待复位；1 秒后自动读取版本")
                            .arg(target)
                            .arg(raw));
+        }
         else
             logRequest(QStringLiteral("TX Node%1 · %2 · CAN=0x000 · DATA=%3")
                            .arg(target)
@@ -922,6 +1031,107 @@ void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, 
     }
     else
         logRequest(QStringLiteral("%1：发送失败").arg(label));
+}
+
+void FirmwarePage::startFirmwareDownload()
+{
+    if (m_downloadController == nullptr || m_communication == nullptr
+        || !m_communication->isOpen())
+    {
+        logRequest(QStringLiteral("下载失败：USB CDC 串口尚未连接，无法发送 Bootloader 命令"));
+        return;
+    }
+    const int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
+    if (index < 0 || index >= m_snapshot.nodes.size())
+    {
+        logRequest(QStringLiteral("下载失败：请先选择目标节点"));
+        return;
+    }
+    const QString path = m_firmwarePath;
+    if (path.isEmpty())
+    {
+        logRequest(QStringLiteral("下载失败：请先拖入或浏览选择 .bin 固件文件"));
+        return;
+    }
+
+    const quint8 target = nodeIdFromText(m_snapshot.nodes.at(index).nodeId);
+    const bool canFd = m_transferModeCombo != nullptr
+                       && m_transferModeCombo->currentData().toBool();
+    if (!m_downloadController->start(target, path, canFd))
+        return;
+
+    m_snapshot.nodes[index].state = FirmwareState::Programming;
+    m_snapshot.nodes[index].progressPercent = 0;
+    if (m_nodeTable != nullptr && m_nodeTable->item(index, 5) != nullptr)
+        m_nodeTable->item(index, 5)->setText(QStringLiteral("准备下载"));
+    if (m_programButton != nullptr)
+        m_programButton->setEnabled(false);
+    if (m_updateButton != nullptr)
+        m_updateButton->setEnabled(false);
+    logRequest(QStringLiteral("已启动 Node %1 的正式 Bootloader 下载 · 数据面：%2")
+                   .arg(target)
+                   .arg(canFd ? QStringLiteral("CAN FD+BRS") : QStringLiteral("Classic CAN")));
+}
+
+void FirmwarePage::cancelFirmwareDownload()
+{
+    if (m_downloadController != nullptr)
+        m_downloadController->cancel();
+}
+
+void FirmwarePage::updateDownloadProgress(const quint8 target, const int percent,
+                                          const quint16 sequence, const int totalPackets)
+{
+    for (int row = 0; row < m_snapshot.nodes.size(); ++row)
+    {
+        if (nodeIdFromText(m_snapshot.nodes.at(row).nodeId) != target)
+            continue;
+        m_snapshot.nodes[row].progressPercent = percent;
+        if (m_nodeTable != nullptr && m_nodeTable->item(row, 5) != nullptr)
+            m_nodeTable->item(row, 5)->setText(percent >= 100 ? QStringLiteral("成功")
+                                                               : QStringLiteral("下载中 %1%").arg(percent));
+        if (row < m_progressBars.size() && m_progressBars.at(row) != nullptr)
+            m_progressBars.at(row)->setValue(percent);
+        if (row < m_progressStates.size() && m_progressStates.at(row) != nullptr)
+        {
+            m_progressStates.at(row)->setText(percent >= 100 ? QStringLiteral("成功")
+                                                               : QStringLiteral("%1%").arg(percent));
+            m_progressStates.at(row)->setProperty("class",
+                                                  percent >= 100 ? QStringLiteral("statusGood")
+                                                                 : QStringLiteral("statusBusy"));
+        }
+        if (m_targetNodeCombo != nullptr && m_targetNodeCombo->currentIndex() == row
+            && m_stateProgress != nullptr)
+        {
+            m_stateProgress->setText(QStringLiteral("%1%（%2/%3 包）")
+                                         .arg(percent)
+                                         .arg(sequence)
+                                         .arg(totalPackets));
+        }
+        break;
+    }
+}
+
+void FirmwarePage::finishFirmwareDownload(const bool success, const QString &message)
+{
+    const int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
+    if (index >= 0 && index < m_snapshot.nodes.size())
+    {
+        m_snapshot.nodes[index].state = success ? FirmwareState::Completed : FirmwareState::Failed;
+        if (success)
+            m_snapshot.nodes[index].progressPercent = 100;
+        if (m_nodeTable != nullptr && m_nodeTable->item(index, 5) != nullptr)
+            m_nodeTable->item(index, 5)->setText(success ? QStringLiteral("成功")
+                                                         : QStringLiteral("失败"));
+        if (!success && index < m_progressStates.size() && m_progressStates.at(index) != nullptr)
+            m_progressStates.at(index)->setText(QStringLiteral("失败"));
+    }
+    if (m_programButton != nullptr)
+        m_programButton->setEnabled(true);
+    if (m_updateButton != nullptr)
+        m_updateButton->setEnabled(true);
+    if (m_stateProgress != nullptr)
+        m_stateProgress->setText(message);
 }
 
 void FirmwarePage::showCommandCenter()

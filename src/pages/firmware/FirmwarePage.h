@@ -24,6 +24,8 @@ namespace rov
 
 class BootloaderCommandDialog;
 class FirmwareHistoryDialog;
+class BootloaderDownloadController;
+class AppProgressBar;
 
 class FirmwarePage final : public QWidget
 {
@@ -63,6 +65,10 @@ class FirmwarePage final : public QWidget
     void showCommandCenter();
     void handleBootResponse(const BootResponse &response);
     void handlePeerMessage(const PeerControlMessage &message);
+    void startFirmwareDownload();
+    void cancelFirmwareDownload();
+    void updateDownloadProgress(quint8 target, int percent, quint16 sequence, int totalPackets);
+    void finishFirmwareDownload(bool success, const QString &message);
     void showHistory();
     void logRequest(const QString &message);
     void renderRuntimeLog();
@@ -81,17 +87,21 @@ class FirmwarePage final : public QWidget
     QFrame *m_connectionBar = nullptr;
     QTableWidget *m_nodeTable = nullptr;
     QComboBox *m_serialDeviceCombo = nullptr;
+    QComboBox *m_transferModeCombo = nullptr;
     QLabel *m_serialStatus = nullptr;
     QPushButton *m_serialConnectButton = nullptr;
     QVector<SerialDeviceInfo> m_serialDevices;
     BootloaderCommunicationService *m_communication = nullptr;
     BootloaderService *m_bootloader = nullptr;
+    BootloaderDownloadController *m_downloadController = nullptr;
     // 高级命令窗口关闭后自动清空，支持重复打开。
     QPointer<BootloaderCommandDialog> m_commandDialog;
     QStringList m_runtimeLog;
     QString m_firmwarePath;
     QTimer *m_heartbeatWatchdog = nullptr;
     QTimer *m_deviceScanTimer = nullptr;
+    QTimer *m_bootProbeTimer = nullptr;
+    quint8 m_bootProbeTarget = 0;
     quint64 m_heartbeatCount = 0;
     QString m_deviceSignature;
     FirmwareHistoryStore m_historyStore;
@@ -106,6 +116,10 @@ class FirmwarePage final : public QWidget
     QLabel *m_stateStatus = nullptr;
     QLabel *m_stateError = nullptr;
     QLabel *m_stateProgress = nullptr;
+    QVector<AppProgressBar *> m_progressBars;
+    QVector<QLabel *> m_progressStates;
+    QPushButton *m_programButton = nullptr;
+    QPushButton *m_updateButton = nullptr;
 };
 
 } // namespace rov

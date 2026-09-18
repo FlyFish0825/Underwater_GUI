@@ -29,6 +29,7 @@ QString commandNameZh(const QString &name)
         {QStringLiteral("JUMP_APP"), QStringLiteral("启动 APP")},
         {QStringLiteral("RESET"), QStringLiteral("复位节点")},
         {QStringLiteral("GET_STATUS"), QStringLiteral("读取运行状态")},
+        {QStringLiteral("WINDOW_STATUS"), QStringLiteral("窗口写入确认/状态")},
         {QStringLiteral("VERIFY_REQUEST"), QStringLiteral("请求校验")},
         {QStringLiteral("VERIFY_RESULT"), QStringLiteral("返回校验结果")},
         {QStringLiteral("MISSING_COUNT"), QStringLiteral("查询缺失块数量")},
@@ -175,6 +176,17 @@ QString responseResultZh(const QString &command, const QString &status, const QB
         return QStringLiteral("升级操作已中止");
     if (command == QStringLiteral("ERASE"))
         return QStringLiteral("APP 区域擦除完成");
+    if (command == QStringLiteral("WINDOW_STATUS") && data.size() == 4)
+        return QStringLiteral("下一待写序号：%1 · 窗口：%2 包 · 可用窗口：%3")
+            .arg(static_cast<quint8>(data.at(0)) | (static_cast<quint16>(static_cast<quint8>(data.at(1))) << 8U))
+            .arg(static_cast<quint8>(data.at(2))).arg(static_cast<quint8>(data.at(3)));
+    if (command == QStringLiteral("WRITE") && data.size() == 4)
+        return QStringLiteral("写入会话已建立 · 区域：%1 · 总包数：%2 · 窗口：%3 包")
+            .arg(static_cast<quint8>(data.at(0)))
+            .arg(static_cast<quint8>(data.at(1)) | (static_cast<quint16>(static_cast<quint8>(data.at(2))) << 8U))
+            .arg(static_cast<quint8>(data.at(3)));
+    if (command == QStringLiteral("WRITE_END") && status == QStringLiteral("WRITE"))
+        return QStringLiteral("设备仍在提交 Flash，等待窗口确认后重试结束写入");
     if (command == QStringLiteral("WRITE"))
         return QStringLiteral("数据块写入确认");
     if (command == QStringLiteral("VERIFY"))
@@ -217,46 +229,81 @@ QString formatFirmwareLogHtml(const QString &timestampedMessage)
     QString raw;
     QString color = QStringLiteral("#5b7390");
     const QStringList parts = body.split(QStringLiteral(" · "));
+    const QString command = parts.size() >= 2 ? parts.at(1).trimmed() : QString();
+    const QString status = parts.size() >= 3 ? parts.at(2).trimmed() : QString();
+    const bool textError = body.contains(QStringLiteral("错误"))
+                           || body.contains(QStringLiteral("失败"))
+                           || body.contains(QStringLiteral("超时"))
+                           || body.contains(QStringLiteral("未连接"))
+                           || body.contains(QStringLiteral("断开"))
+                           || body.contains(QStringLiteral("错误码"))
+                           || body.contains(QStringLiteral("非法"));
+    const bool textWarning = body.contains(QStringLiteral("等待"))
+                             || body.contains(QStringLiteral("重试"))
+                             || body.contains(QStringLiteral("缺少"))
+                             || body.contains(QStringLiteral("未响应"))
+                             || body.contains(QStringLiteral("未识别"))
+                             || body.contains(QStringLiteral("自动探测"))
+                             || command == QStringLiteral("ABORT")
+                             || command == QStringLiteral("ENTER_BOOT")
+                             || command == QStringLiteral("JUMP_APP")
+                             || status == QStringLiteral("REPAIR")
+                             || status == QStringLiteral("GUARD");
     if (body.startsWith(QStringLiteral("TX Node")) && parts.size() >= 2)
     {
         const QString node = parts.at(0).mid(QStringLiteral("TX Node").size());
         summary = QStringLiteral("发送 · 节点 %1 · %2").arg(node, commandNameZh(parts.at(1)));
-        color = QStringLiteral("#2369c8");
+        color = textError ? QStringLiteral("#d64545")
+                          : textWarning ? QStringLiteral("#b06a00") : QStringLiteral("#2369c8");
         raw = body;
     }
     else if (body.startsWith(QStringLiteral("TX Peer")) && parts.size() >= 2)
     {
         summary = QStringLiteral("发送 · Peer · %1").arg(commandNameZh(parts.at(1)));
-        color = QStringLiteral("#2369c8");
+        color = textError ? QStringLiteral("#d64545")
+                          : textWarning ? QStringLiteral("#b06a00") : QStringLiteral("#2369c8");
         raw = body;
     }
     else if (body.startsWith(QStringLiteral("RX ")) && parts.size() >= 3)
     {
-        const QString status = parts.at(2).trimmed();
         summary = QStringLiteral("接收 · 节点 %1 · %2 · 状态：%3 · %4")
                       .arg(parts.at(0).mid(3), commandNameZh(parts.at(1)), statusNameZh(status),
                            responseResultZh(parts.at(1), status, responseData(body)));
-        color = status == QStringLiteral("ERROR") ? QStringLiteral("#d64545")
-                                                    : QStringLiteral("#078d4a");
+        const bool responseError = status.compare(QStringLiteral("ERROR"), Qt::CaseInsensitive) == 0
+                                   || status.contains(QStringLiteral("错误"))
+                                   || status.contains(QStringLiteral("失败"))
+                                   || body.contains(QStringLiteral("错误码"));
+        color = responseError ? QStringLiteral("#d64545")
+                              : (textWarning ? QStringLiteral("#b06a00") : QStringLiteral("#078d4a"));
         raw = body;
     }
     else if (body.startsWith(QStringLiteral("Peer · ")) && parts.size() >= 2)
     {
         summary = QStringLiteral("接收 · Peer · %1").arg(commandNameZh(parts.at(1)));
-        color = QStringLiteral("#078d4a");
+        color = textError ? QStringLiteral("#d64545")
+                          : textWarning ? QStringLiteral("#b06a00") : QStringLiteral("#078d4a");
         raw = body;
     }
     else if (body.startsWith(QStringLiteral("解析到 CAN")))
     {
         summary = QStringLiteral("接收 · CAN 网关帧");
-        color = QStringLiteral("#078d4a");
+        const bool gatewayError = body.contains(QStringLiteral("CAN 0x000007FA"))
+                                  || body.contains(QStringLiteral("CAN 0x000007FB"))
+                                  || body.contains(QStringLiteral("CAN 0x000007FC"));
+        const bool gatewayWarning = body.contains(QStringLiteral("CAN 0x000007FD"))
+                                    || body.contains(QStringLiteral("CAN 0x000007FE"));
+        color = gatewayError ? QStringLiteral("#d64545")
+                             : gatewayWarning ? QStringLiteral("#b06a00")
+                                               : QStringLiteral("#078d4a");
         raw = body;
     }
-    else if (body.contains(QStringLiteral("错误")) || body.contains(QStringLiteral("失败"))
-             || body.contains(QStringLiteral("超时")) || body.contains(QStringLiteral("未连接"))
-             || body.contains(QStringLiteral("断开")))
+    else if (textError)
     {
         color = QStringLiteral("#d64545");
+    }
+    else if (textWarning)
+    {
+        color = QStringLiteral("#b06a00");
     }
 
     QString html = QStringLiteral("<div style=\"color:%1; margin:1px 0;\"><b>%2</b> %3")

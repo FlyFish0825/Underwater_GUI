@@ -2,6 +2,9 @@
 
 #include "data/store/FirmwareHistoryStore.h"
 #include "pages/firmware/FirmwareLogFormatter.h"
+#include "ui/common/AppComboBox.h"
+#include "ui/common/AppFluentButton.h"
+#include "ui/common/AppLineEdit.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QComboBox>
@@ -53,21 +56,21 @@ FirmwareHistoryDialog::FirmwareHistoryDialog(FirmwareHistoryStore *store, QWidge
     auto *root = new QVBoxLayout(this);
     auto *top = new QHBoxLayout;
     top->addWidget(new QLabel(QStringLiteral("历史事件（实时日志清理不会删除；升级会话按整块显示）")));
-    m_searchEdit = new QLineEdit;
+    m_searchEdit = new AppLineEdit;
     m_searchEdit->setPlaceholderText(QStringLiteral("搜索节点、命令、CAN ID 或关键字"));
     m_searchEdit->setMinimumWidth(260);
     top->addWidget(m_searchEdit, 1);
-    m_typeFilter = new QComboBox;
+    m_typeFilter = new AppComboBox;
     m_typeFilter->addItems({QStringLiteral("全部"), QStringLiteral("发送"), QStringLiteral("接收"),
                             QStringLiteral("错误")});
     top->addWidget(m_typeFilter);
-    m_pageSizeCombo = new QComboBox;
+    m_pageSizeCombo = new AppComboBox;
     m_pageSizeCombo->addItem(QStringLiteral("50 条/页"), 50);
     m_pageSizeCombo->addItem(QStringLiteral("100 条/页"), 100);
     m_pageSizeCombo->addItem(QStringLiteral("200 条/页"), 200);
     m_pageSizeCombo->setCurrentIndex(1);
     top->addWidget(m_pageSizeCombo);
-    auto *reloadButton = new QPushButton(QStringLiteral("刷新"));
+    auto *reloadButton = new AppFluentButton(QStringLiteral("刷新"));
     top->addWidget(reloadButton);
     root->addLayout(top);
     m_view = new QTextBrowser;
@@ -81,8 +84,8 @@ FirmwareHistoryDialog::FirmwareHistoryDialog(FirmwareHistoryStore *store, QWidge
     m_pageInfo = new QLabel;
     bottom->addWidget(m_pageInfo);
     bottom->addStretch();
-    m_previousButton = new QPushButton(QStringLiteral("上一页"));
-    m_nextButton = new QPushButton(QStringLiteral("下一页"));
+    m_previousButton = new AppFluentButton(QStringLiteral("上一页"));
+    m_nextButton = new AppFluentButton(QStringLiteral("下一页"));
     bottom->addWidget(m_previousButton);
     bottom->addWidget(m_nextButton);
     root->addLayout(bottom);

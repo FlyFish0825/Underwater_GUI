@@ -56,6 +56,7 @@ enum class BootCommand : quint8
     CommitAck = 0x2F,
     GetStatus = 0x30,
     CommitExecute = 0x31,
+    WindowStatus = 0x32,
 };
 
 enum class BootStatus : quint8

@@ -1,5 +1,9 @@
 #include "pages/firmware/BootloaderCommandDialog.h"
 #include "pages/firmware/FirmwareLogFormatter.h"
+#include "ui/common/AppCheckBox.h"
+#include "ui/common/AppComboBox.h"
+#include "ui/common/AppFluentButton.h"
+#include "ui/common/AppLineEdit.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QCheckBox>
@@ -49,6 +53,7 @@ const CommandItem kCommands[] = {
     {BootCommand::RollbackPrepared, "协同"},     {BootCommand::FullStream, "协同"},
     {BootCommand::CommitPrepare, "协同"},       {BootCommand::CommitAck, "协同"},
     {BootCommand::CommitExecute, "协同"},
+    {BootCommand::WindowStatus, "升级"},
 };
 
 QByteArray parseHexBytes(const QString &text)
@@ -83,7 +88,9 @@ QString commandDescription(BootCommand command)
     case BootCommand::Erase:
         return QStringLiteral("擦除目标 APP 区域。执行前请确认目标节点和升级文件，擦除后旧固件不可运行。");
     case BootCommand::Write:
-        return QStringLiteral("写入升级数据块。参数按协议携带地址、长度或数据分片，通常由升级流程自动调用。");
+        return QStringLiteral("建立写入会话：Byte2=0 为 APP，参数为固件字节数（32 位小端）。回复包含总包数和窗口包数；窗口非零时每窗口必须等待 0x32 确认。");
+    case BootCommand::WindowStatus:
+        return QStringLiteral("查询窗口写入状态（0x32），Byte2 和参数均为 0。回复 Data0~1 为下一待写序号，Data2 为窗口包数，Data3 为可用窗口数；全部包提交后才能结束写入。");
     case BootCommand::Read:
         return QStringLiteral("读取目标存储区数据，用于调试和校验，不建议在正常升级流程中手动使用。");
     case BootCommand::Verify:
@@ -143,19 +150,19 @@ BootloaderCommandDialog::BootloaderCommandDialog(QWidget *parent) : QDialog(pare
     auto *root = new QVBoxLayout(this);
     auto *top = new QHBoxLayout;
     top->addWidget(new QLabel(QStringLiteral("目标节点")));
-    m_target = new QComboBox;
+    m_target = new AppComboBox;
     m_target->addItem(QStringLiteral("广播 0xFF"), 0xFF);
     for (int node = 1; node <= 8; ++node)
         m_target->addItem(QStringLiteral("节点 %1").arg(node, 2, 10, QLatin1Char('0')), node);
     top->addWidget(m_target, 1);
     top->addWidget(new QLabel(QStringLiteral("来源")));
-    m_source = new QComboBox;
+    m_source = new AppComboBox;
     for (int node = 1; node <= 8; ++node)
         m_source->addItem(QStringLiteral("节点 %1").arg(node, 2, 10, QLatin1Char('0')), node);
     m_source->setEnabled(false);
     top->addWidget(m_source);
     top->addWidget(new QLabel(QStringLiteral("会话")));
-    m_session = new QLineEdit(QStringLiteral("0x0000"));
+    m_session = new AppLineEdit(QStringLiteral("0x0000"));
     m_session->setToolTip(QStringLiteral("16 位 Session ID，小端编码"));
     top->addWidget(m_session);
     root->addLayout(top);
@@ -176,20 +183,20 @@ BootloaderCommandDialog::BootloaderCommandDialog(QWidget *parent) : QDialog(pare
 
     auto *right = new QVBoxLayout;
     auto *form = new QFormLayout;
-    m_jumpMode = new QComboBox;
+    m_jumpMode = new AppComboBox;
     m_jumpMode->addItem(QStringLiteral("正常启动 · Byte2=0x00"), 0);
     m_jumpMode->addItem(QStringLiteral("试运行 Trial · Byte2=0x01"), 1);
     form->addRow(QStringLiteral("JUMP_APP 模式"), m_jumpMode);
-    m_commandCode = new QLineEdit;
+    m_commandCode = new AppLineEdit;
     m_commandCode->setReadOnly(true);
     m_commandCode->setToolTip(QStringLiteral("当前选中命令在 Bootloader 协议中的命令码"));
     form->addRow(QStringLiteral("命令码"), m_commandCode);
-    m_byte2 = new QLineEdit(QStringLiteral("0x00"));
+    m_byte2 = new AppLineEdit(QStringLiteral("0x00"));
     form->addRow(QStringLiteral("Byte2 / 语义参数"), m_byte2);
-    m_params = new QLineEdit(QStringLiteral("00 00 00 00"));
+    m_params = new AppLineEdit(QStringLiteral("00 00 00 00"));
     m_params->setToolTip(QStringLiteral("仅高级命令使用；最多 4 字节，小端序"));
     form->addRow(QStringLiteral("参数"), m_params);
-    m_value = new QLineEdit(QStringLiteral("0x0000"));
+    m_value = new AppLineEdit(QStringLiteral("0x0000"));
     m_value->setEnabled(false);
     form->addRow(QStringLiteral("协同值"), m_value);
     right->addLayout(form);
@@ -199,13 +206,14 @@ BootloaderCommandDialog::BootloaderCommandDialog(QWidget *parent) : QDialog(pare
     m_commandDescription->setMinimumHeight(64);
     m_commandDescription->setStyleSheet(QStringLiteral("color:#385b83; background:#f5f8fc; border:1px solid #d8e3ef; padding:6px;"));
     right->addWidget(m_commandDescription);
-    m_developerMode = new QCheckBox(QStringLiteral("协议开发模式（允许手工参数）"));
+    m_developerMode = new AppCheckBox(QStringLiteral("协议开发模式（允许手工参数）"));
     right->addWidget(m_developerMode);
     auto *warning = new QLabel(QStringLiteral("开发调试功能：可能改变当前升级 Session 状态。"));
     warning->setWordWrap(true);
     warning->setStyleSheet(QStringLiteral("color:#b06a00;"));
     right->addWidget(warning);
-    auto *send = new QPushButton(QStringLiteral("发送主机命令"));
+    auto *send = new AppFluentButton(QStringLiteral("发送主机命令"));
+    send->setFluentStyle(fluent::basicinput::Button::Accent);
     right->addWidget(send);
     right->addStretch();
     body->addLayout(right, 3);
