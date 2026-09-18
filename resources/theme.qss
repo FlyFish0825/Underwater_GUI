@@ -368,6 +368,41 @@ QScrollArea {
     background: transparent;
 }
 
+QScrollArea#motorDebugPageScroll QScrollBar:vertical,
+QScrollArea#firmwarePageScroll QScrollBar:vertical {
+    width: 10px;
+    margin: 2px 1px 2px 1px;
+    background: #edf2f7;
+    border: none;
+    border-radius: 5px;
+}
+
+QScrollArea#motorDebugPageScroll QScrollBar::handle:vertical,
+QScrollArea#firmwarePageScroll QScrollBar::handle:vertical {
+    min-height: 34px;
+    background: #a9bacb;
+    border-radius: 4px;
+}
+
+QScrollArea#motorDebugPageScroll QScrollBar::handle:vertical:hover,
+QScrollArea#firmwarePageScroll QScrollBar::handle:vertical:hover {
+    background: #7f97ae;
+}
+
+QScrollArea#motorDebugPageScroll QScrollBar::add-line:vertical,
+QScrollArea#motorDebugPageScroll QScrollBar::sub-line:vertical,
+QScrollArea#firmwarePageScroll QScrollBar::add-line:vertical,
+QScrollArea#firmwarePageScroll QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QScrollArea#motorDebugPageScroll QScrollBar::add-page:vertical,
+QScrollArea#motorDebugPageScroll QScrollBar::sub-page:vertical,
+QScrollArea#firmwarePageScroll QScrollBar::add-page:vertical,
+QScrollArea#firmwarePageScroll QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
 QGraphicsView#pageView {
     border: none;
     background: #f5f8fb;

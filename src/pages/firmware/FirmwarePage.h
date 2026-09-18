@@ -11,7 +11,9 @@
 
 class QLabel;
 class QComboBox;
+class QBoxLayout;
 class QFrame;
+class QResizeEvent;
 class QTextBrowser;
 class QPushButton;
 class QTimer;
@@ -45,6 +47,9 @@ class FirmwarePage final : public QWidget
     // 高级命令窗口订阅此信号，实时显示与主页面一致的调试日志。
     void debugLogAppended(const QString &message);
 
+  protected:
+    void resizeEvent(QResizeEvent *event) override;
+
   private:
     void refreshView();
     void refreshSerialDevices();
@@ -63,6 +68,7 @@ class FirmwarePage final : public QWidget
     void renderRuntimeLog();
 
     FirmwareSnapshot m_snapshot;
+    QBoxLayout *m_mainRowLayout = nullptr;
     QLabel *m_fileName = nullptr;
     QLabel *m_fileVersion = nullptr;
     QLabel *m_fileSize = nullptr;

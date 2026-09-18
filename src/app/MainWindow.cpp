@@ -20,6 +20,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QScreen>
+#include <QScrollArea>
 #include <QShowEvent>
 #include <QStackedWidget>
 #include <QTimer>
@@ -309,26 +310,50 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     m_pages = new QStackedWidget;
     m_pages->setObjectName(QStringLiteral("pageStack"));
-    m_pages->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    auto *dashboard = new DashboardPage(m_pages);
-    auto *motorDebug = new MotorDebugPage(m_pages);
-    auto *firmware = new FirmwarePage(m_pages);
-    auto *manipulator = new ManipulatorPage(m_pages);
-    auto *vision = new VisionPage(m_pages);
-    auto *settings = new SettingsPlaceholder(m_pages);
+    m_pages->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // 页面先无父级创建，再按导航顺序显式加入 QStackedWidget。
+    // 避免 QStackedWidget 在滚动容器重新挂载页面时自动改变索引。
+    auto *dashboard = new DashboardPage;
+    auto *motorDebug = new MotorDebugPage;
+    auto *firmware = new FirmwarePage;
+    auto *manipulator = new ManipulatorPage;
+    auto *vision = new VisionPage;
+    auto *settings = new SettingsPlaceholder;
+    const auto scrollablePage = [](QWidget *page, const QString &objectName)
+    {
+        auto *scroll = new QScrollArea;
+        scroll->setObjectName(objectName);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidgetResizable(true);
+        scroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        scroll->setWidget(page);
+        return scroll;
+    };
+    auto *motorDebugScroll =
+        scrollablePage(motorDebug, QStringLiteral("motorDebugPageScroll"));
+    auto *firmwareScroll = scrollablePage(firmware, QStringLiteral("firmwarePageScroll"));
     m_pages->addWidget(dashboard);
-    m_pages->addWidget(motorDebug);
-    m_pages->addWidget(firmware);
+    m_pages->addWidget(motorDebugScroll);
+    m_pages->addWidget(firmwareScroll);
     m_pages->addWidget(manipulator);
     m_pages->addWidget(vision);
     m_pages->addWidget(settings);
+    // 机械臂、视觉和设置页保留原有的小屏幕等比保护。
+    // 电机调试与固件升级页改由页面内部自适应，避免宽屏下整页缩小后两侧留白。
+    for (QWidget *page : {static_cast<QWidget *>(manipulator), static_cast<QWidget *>(vision),
+                          static_cast<QWidget *>(settings)})
+    {
+        page->setProperty("fitViewportScale", true);
+    }
     m_pageView = new QGraphicsView(body);
     m_pageView->setObjectName(QStringLiteral("pageView"));
     m_pageView->setFrameShape(QFrame::NoFrame);
     m_pageView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_pageView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     // 页面固定设计尺寸不再垂直居中，顶部与标题栏紧贴，避免窗口上方留下大块空白。
-    m_pageView->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    m_pageView->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     m_pageView->setInteractive(true);
     m_pageScene = new QGraphicsScene(m_pageView);
     m_pageScene->setBackgroundBrush(Qt::NoBrush);
@@ -439,7 +464,9 @@ void MainWindow::fitNormalGeometryToScreen()
         return;
     }
 
-    QRect available = screen->availableGeometry().adjusted(16, 16, -16, -16);
+    // 只受屏幕可用区域限制，不再额外扣除 16px 边距，避免窗口尚未铺满屏幕
+    // 就达到放大上限；宽高比仍由 WM_SIZING 严格保持。
+    QRect available = screen->availableGeometry();
     QSize fitted = frameGeometry().size();
     int width = qMax(kMinimumWindowWidth, fitted.width());
     int height = qRound(width / kWindowAspectRatio);
@@ -594,31 +621,26 @@ void MainWindow::updatePageViewport()
         return;
     }
 
-    // 底部预留安全区，确保页面缩放后不会贴到底栏或被底栏覆盖。
-    const int bottomInset = qMin(24, qMax(8, viewportSize.height() / 24));
-    const QSize fitViewport(viewportSize.width(),
-                            qMax(1, viewportSize.height() - bottomInset));
-    const QSize designSize(1500, 1000);
-    QSize pageSize = designSize;
-    if (QWidget *currentPage = m_pages->currentWidget())
+    // 总览页始终铺满视口；复杂页面只有在其真实最小高度超出小窗口时才等比缩放，
+    // 这样不会在正常尺寸下留下大块空白，也不会让底部表格/日志被裁切。
+    QSize pageSize = viewportSize;
+    qreal scale = 1.0;
+    if (QWidget *currentPage = m_pages->currentWidget(); currentPage != nullptr &&
+        currentPage->property("fitViewportScale").toBool())
     {
-        const QSize requiredSize =
-            currentPage->minimumSizeHint().expandedTo(currentPage->sizeHint());
-        const qreal contentScale =
-            qMax(1.0, qMax(static_cast<qreal>(requiredSize.width()) / designSize.width(),
-                           static_cast<qreal>(requiredSize.height()) / designSize.height()));
-        pageSize = QSize(qCeil(designSize.width() * contentScale),
-                         qCeil(designSize.height() * contentScale));
+        const QSize required = currentPage->minimumSizeHint();
+        if (required.width() > viewportSize.width() || required.height() > viewportSize.height())
+        {
+            pageSize = required.expandedTo(viewportSize);
+            scale = qMin(static_cast<qreal>(viewportSize.width()) / pageSize.width(),
+                         static_cast<qreal>(viewportSize.height()) / pageSize.height());
+        }
     }
-    pageSize = fitViewport.expandedTo(pageSize);
+    m_pages->setMinimumSize(pageSize);
     m_pages->resize(pageSize);
-    m_pageScene->setSceneRect(QRectF(QPointF(0, 0), QSizeF(viewportSize)));
-
-    const qreal scale =
-        qMin(1.0, qMin(static_cast<qreal>(fitViewport.width()) / pageSize.width(),
-                       static_cast<qreal>(fitViewport.height()) / pageSize.height()));
     m_pageProxy->setTransform(QTransform::fromScale(scale, scale));
     m_pageProxy->setPos((viewportSize.width() - pageSize.width() * scale) / 2.0, 0.0);
+    m_pageScene->setSceneRect(QRectF(QPointF(0, 0), QSizeF(viewportSize)));
 }
 
 void MainWindow::handleRequest(const QString &message)

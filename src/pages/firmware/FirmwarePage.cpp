@@ -23,6 +23,7 @@
 #include <QMimeData>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -346,18 +347,21 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
 {
     setObjectName(QStringLiteral("firmwarePage"));
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(14, 12, 14, 10);
-    root->setSpacing(10);
+    root->setContentsMargins(10, 8, 10, 8);
+    root->setSpacing(8);
     root->addWidget(makePageHeader(QStringLiteral("固件升级"),
                                    QStringLiteral("管理固件信息并发出未来升级请求。"),
                                    QStringLiteral("演示 · 仅界面与请求")));
 
     auto *mainRow = new QHBoxLayout;
-    mainRow->setSpacing(12);
+    m_mainRowLayout = mainRow;
+    mainRow->setSpacing(8);
     auto *fileCard = new CardWidget(QStringLiteral("固件文件"), IconKind::File);
+    fileCard->contentLayout()->setContentsMargins(10, 8, 10, 10);
+    fileCard->contentLayout()->setSpacing(6);
     auto *dropZone = new FirmwareDropZone;
     m_dropZone = dropZone;
-    dropZone->setMinimumHeight(78);
+    dropZone->setMinimumHeight(62);
     auto *dropLayout = new QHBoxLayout(dropZone);
     dropLayout->setContentsMargins(10, 6, 10, 6);
     dropLayout->setSpacing(8);
@@ -376,7 +380,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     dropLayout->addWidget(browse, 0, Qt::AlignVCenter);
     fileCard->contentLayout()->addWidget(dropZone);
     auto *info = new QGridLayout;
-    info->setVerticalSpacing(8);
+    info->setVerticalSpacing(4);
     info->addWidget(makeLabel(QStringLiteral("文件名"), QStringLiteral("mutedLabel")), 0, 0);
     m_fileName = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
     info->addWidget(m_fileName, 0, 1);
@@ -397,15 +401,22 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     fileCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
 
     auto *left = new QVBoxLayout;
-    left->setSpacing(12);
+    left->setSpacing(8);
     left->addWidget(fileCard);
     auto *nodeControl = new CardWidget(QStringLiteral("节点控制"), IconKind::Action);
+    nodeControl->contentLayout()->setContentsMargins(10, 8, 10, 10);
+    nodeControl->contentLayout()->setSpacing(6);
     auto *targetForm = new QGridLayout;
     targetForm->addWidget(makeLabel(QStringLiteral("当前目标"), QStringLiteral("mutedLabel")), 0, 0);
     m_targetNodeCombo = new QComboBox;
     targetForm->addWidget(m_targetNodeCombo, 0, 1);
     nodeControl->contentLayout()->addLayout(targetForm);
-    nodeControl->contentLayout()->addWidget(makeLabel(QStringLiteral("常用命令"), QStringLiteral("mutedLabel")));
+    auto *nodeBody = new QHBoxLayout;
+    nodeBody->setSpacing(10);
+    auto *commandColumn = new QVBoxLayout;
+    commandColumn->setSpacing(5);
+    commandColumn->addWidget(
+        makeLabel(QStringLiteral("常用命令"), QStringLiteral("mutedLabel")));
     auto *commonGrid = new QGridLayout;
     const auto addCommon = [this, commonGrid](const QString &text, BootCommand command, int row, int col)
     {
@@ -425,11 +436,20 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     commonGrid->addWidget(jump, 3, 1);
     connect(jump, &QPushButton::clicked, this,
             [this]() { sendCommonCommand(BootCommand::JumpApp, QStringLiteral("启动 APP")); });
-    nodeControl->contentLayout()->addLayout(commonGrid);
+    commonGrid->setHorizontalSpacing(5);
+    commonGrid->setVerticalSpacing(5);
+    commandColumn->addLayout(commonGrid);
     auto *advanced = makeButton(QStringLiteral("高级命令…"), QStringLiteral("softButton"));
-    nodeControl->contentLayout()->addWidget(advanced);
-    nodeControl->contentLayout()->addWidget(makeLabel(QStringLiteral("当前节点状态"), QStringLiteral("mutedLabel")));
+    commandColumn->addWidget(advanced);
+    commandColumn->addStretch();
+    nodeBody->addLayout(commandColumn, 1);
+    auto *stateColumn = new QVBoxLayout;
+    stateColumn->setSpacing(5);
+    stateColumn->addWidget(
+        makeLabel(QStringLiteral("当前节点状态"), QStringLiteral("mutedLabel")));
     auto *state = new QGridLayout;
+    state->setHorizontalSpacing(6);
+    state->setVerticalSpacing(2);
     const auto addState = [this, state](const QString &name, QLabel *&value, int row)
     {
         state->addWidget(makeLabel(name, QStringLiteral("mutedLabel")), row, 0);
@@ -444,13 +464,16 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     addState(QStringLiteral("Status"), m_stateStatus, 5);
     addState(QStringLiteral("Last Error"), m_stateError, 6);
     addState(QStringLiteral("Progress"), m_stateProgress, 7);
-    nodeControl->contentLayout()->addLayout(state);
+    stateColumn->addLayout(state);
+    stateColumn->addStretch();
+    nodeBody->addLayout(stateColumn, 1);
+    nodeControl->contentLayout()->addLayout(nodeBody);
     left->addWidget(nodeControl);
     left->addStretch();
     mainRow->addLayout(left, 3);
 
     auto *right = new QVBoxLayout;
-    right->setSpacing(12);
+    right->setSpacing(8);
     // USB CDC 只负责连接状态检查，控件由 MainWindow 放到全局连接栏。
     m_connectionBar = new QFrame;
     m_connectionBar->setObjectName(QStringLiteral("connectionBar"));
@@ -473,6 +496,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
 
     auto *targetCard =
         new CardWidget(QStringLiteral("目标节点与升级进度（8）"), IconKind::Firmware);
+    targetCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
+    targetCard->contentLayout()->setSpacing(5);
     m_nodeTable = new QTableWidget(0, 6);
     m_nodeTable->setHorizontalHeaderLabels(
         {QStringLiteral("节点 ID"), QStringLiteral("设备名称"), QStringLiteral("当前版本"),
@@ -497,8 +522,9 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     targetCard->contentLayout()->addWidget(m_nodeTable);
     auto *progressTitle = makeLabel(QStringLiteral("升级进度"), QStringLiteral("sectionTitle"));
     targetCard->contentLayout()->addWidget(progressTitle);
-    auto *progressLayout = new QVBoxLayout;
-    progressLayout->setSpacing(4);
+    auto *progressLayout = new QGridLayout;
+    progressLayout->setHorizontalSpacing(10);
+    progressLayout->setVerticalSpacing(3);
     for (int i = 0; i < 8; ++i)
     {
         auto *row = new QHBoxLayout;
@@ -515,7 +541,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
         row->addWidget(
             makeLabel(i == 0 ? QStringLiteral("成功") : QStringLiteral("空闲"),
                       i == 0 ? QStringLiteral("statusGood") : QStringLiteral("statusIdle")));
-        progressLayout->addLayout(row);
+        progressLayout->addLayout(row, i / 2, i % 2);
     }
     auto *actions = new QHBoxLayout;
     actions->addWidget(makeButton(QStringLiteral("进入 Boot"), QStringLiteral("softButton")));
@@ -526,7 +552,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     actions->addWidget(makeButton(QStringLiteral("重启"), QStringLiteral("softButton")));
     auto *update = makeButton(QStringLiteral("升级选中节点"), QStringLiteral("primaryButton"));
     actions->addWidget(update, 1);
-    progressLayout->addLayout(actions);
+    progressLayout->addLayout(actions, 4, 0, 1, 2);
     targetCard->contentLayout()->addLayout(progressLayout);
     right->addWidget(targetCard, 6);
 
@@ -658,6 +684,36 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             });
     m_deviceScanTimer->start();
     setSnapshot(firmwarePreview());
+}
+
+void FirmwarePage::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    if (m_mainRowLayout == nullptr)
+    {
+        return;
+    }
+
+    // QScrollArea 会在布局切换前暂时按页面的旧 minimumSizeHint 扩大子页，
+    // 因此这里以实际窗口宽度判断断点，避免窄屏仍被旧的横向最小宽度锁住。
+    const int availableWidth = window() != nullptr ? window()->width() : event->size().width();
+    const bool stacked = availableWidth < 1200;
+    const QBoxLayout::Direction direction =
+        stacked ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
+    if (m_mainRowLayout->direction() == direction)
+    {
+        return;
+    }
+
+    m_mainRowLayout->setDirection(direction);
+    m_mainRowLayout->setStretch(0, stacked ? 0 : 3);
+    m_mainRowLayout->setStretch(1, stacked ? 0 : 7);
+    m_mainRowLayout->invalidate();
+    if (layout() != nullptr)
+    {
+        layout()->activate();
+    }
+    updateGeometry();
 }
 
 void FirmwarePage::closeAuxiliaryWindows()

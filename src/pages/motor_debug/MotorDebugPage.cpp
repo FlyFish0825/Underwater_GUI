@@ -21,7 +21,7 @@ class WaveformWidget final : public QWidget
   public:
     explicit WaveformWidget(QWidget *parent = nullptr) : QWidget(parent)
     {
-        setMinimumSize(460, 270);
+        setMinimumSize(360, 210);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
 
@@ -113,15 +113,17 @@ namespace rov
 MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
 {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(14, 12, 14, 10);
-    root->setSpacing(10);
+    root->setContentsMargins(10, 8, 10, 8);
+    root->setSpacing(8);
     root->addWidget(makePageHeader(QStringLiteral("电机调试"),
                                    QStringLiteral("单电机调节与波形分析。"),
                                    QStringLiteral("演示 · 预览数据")));
 
     auto *topRow = new QHBoxLayout;
-    topRow->setSpacing(12);
+    topRow->setSpacing(8);
     auto *waveformCard = new CardWidget(QStringLiteral("实时波形"), IconKind::Waveform);
+    waveformCard->contentLayout()->setContentsMargins(10, 8, 10, 10);
+    waveformCard->contentLayout()->setSpacing(6);
     auto *controls = new QHBoxLayout;
     controls->addWidget(makeLabel(QStringLiteral("时间刻度"), QStringLiteral("mutedLabel")));
     auto *scale = new QComboBox;
@@ -153,10 +155,12 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     topRow->addWidget(waveformCard, 6);
 
     auto *side = new QVBoxLayout;
-    side->setSpacing(12);
+    side->setSpacing(8);
     auto *signalsCard = new CardWidget(QStringLiteral("信号选择"), IconKind::Settings);
+    signalsCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
+    signalsCard->contentLayout()->setSpacing(4);
     auto *signalGrid = new QGridLayout;
-    signalGrid->setSpacing(8);
+    signalGrid->setSpacing(4);
     const QStringList groups = {QStringLiteral("电流信号"), QStringLiteral("电压信号"),
                                 QStringLiteral("观测器信号"), QStringLiteral("控制信号")};
     const QStringList signalNames = {QStringLiteral("A 相电流"), QStringLiteral("母线电压"),
@@ -166,7 +170,8 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
         auto *group = new QFrame;
         group->setObjectName(QStringLiteral("card"));
         auto *groupLayout = new QVBoxLayout(group);
-        groupLayout->setContentsMargins(10, 8, 10, 8);
+        groupLayout->setContentsMargins(6, 4, 6, 4);
+        groupLayout->setSpacing(1);
         groupLayout->addWidget(makeLabel(groups.at(i), QStringLiteral("bodyValue")));
         for (int j = 0; j < 3; ++j)
         {
@@ -182,7 +187,11 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     side->addWidget(signalsCard);
 
     auto *statusCard = new CardWidget(QStringLiteral("电机状态与参数"), IconKind::Motor);
+    statusCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
+    statusCard->contentLayout()->setSpacing(4);
     auto *statusLayout = new QGridLayout;
+    statusLayout->setHorizontalSpacing(6);
+    statusLayout->setVerticalSpacing(3);
     statusLayout->setColumnStretch(1, 1);
     statusLayout->setColumnStretch(3, 1);
     statusLayout->addWidget(makeLabel(QStringLiteral("电机"), QStringLiteral("mutedLabel")), 0, 0);
@@ -231,7 +240,10 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     root->addLayout(topRow, 1);
 
     auto *bottomRow = new QHBoxLayout;
+    bottomRow->setSpacing(8);
     auto *captureCard = new CardWidget(QStringLiteral("采集与分析"), IconKind::File);
+    captureCard->setMaximumHeight(124);
+    captureCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
     auto *captureLayout = new QHBoxLayout;
     auto *sampleRate = new QComboBox;
     sampleRate->addItems(
@@ -249,6 +261,8 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     bottomRow->addWidget(captureCard, 3);
 
     auto *logCard = new CardWidget(QStringLiteral("最近数据 / 日志"), IconKind::List);
+    logCard->setMaximumHeight(124);
+    logCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
     m_requestLog = makeLabel(QStringLiteral("暂无请求。"), QStringLiteral("mutedLabel"));
     m_requestLog->setWordWrap(true);
     logCard->contentLayout()->addWidget(m_requestLog);
