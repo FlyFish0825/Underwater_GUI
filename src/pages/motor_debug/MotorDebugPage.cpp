@@ -1,35 +1,76 @@
 #include "pages/motor_debug/MotorDebugPage.h"
 
 #include "preview/PreviewData.h"
-#include "ui/common/AppCheckBox.h"
 #include "ui/common/AppComboBox.h"
 #include "ui/common/UiPrimitives.h"
 
-#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QLabel>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QSlider>
 #include <QVBoxLayout>
+#include <QWheelEvent>
+
+#include <cmath>
 
 namespace
 {
 
-class WaveformWidget final : public QWidget
+QString axisNumber(const double value)
+{
+    const int decimals = std::abs(value) >= 100.0 ? 0 : 2;
+    return QString::number(value, 'f', decimals);
+}
+
+class CurvePlotWidget final : public QWidget
 {
   public:
-    explicit WaveformWidget(QWidget *parent = nullptr) : QWidget(parent)
+    explicit CurvePlotWidget(QWidget *parent = nullptr) : QWidget(parent)
     {
-        setMinimumSize(360, 210);
+        setMinimumSize(420, 250);
+        setMouseTracking(true);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        setToolTip(QStringLiteral("在下方 X 轴或左侧 Y 轴滚轮缩放；点击自动适配恢复比例"));
     }
 
-    void setSeries(const QVector<rov::DebugSeries> &series)
+    void setSeries(const rov::DebugSeries &series, const bool autoFit)
     {
         m_series = series;
+        if (autoFit || !m_hasView)
+            fitToData();
+        update();
+    }
+
+    void fitToData()
+    {
+        if (m_series.samples.isEmpty())
+        {
+            m_yCenter = 0.0;
+            m_yHalfRange = 1.0;
+            m_hasView = true;
+            update();
+            return;
+        }
+
+        double minimum = m_series.samples.first();
+        double maximum = minimum;
+        for (const double sample : m_series.samples)
+        {
+            minimum = qMin(minimum, sample);
+            maximum = qMax(maximum, sample);
+        }
+        const double span = qMax(1.0, maximum - minimum);
+        m_yCenter = (maximum + minimum) / 2.0;
+        m_yHalfRange = qMax(0.5, span * 0.60);
+        m_xWindowSeconds = kDefaultWindowSeconds;
+        m_hasView = true;
         update();
     }
 
@@ -39,62 +80,232 @@ class WaveformWidget final : public QWidget
         Q_UNUSED(event)
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.fillRect(rect(), Qt::white);
-        const QRectF plot = QRectF(42, 12, width() - 60, height() - 46);
-        painter.setPen(QPen(QColor(QStringLiteral("#dce6ef")), 1));
-        for (int i = 0; i <= 6; ++i)
+        painter.fillRect(rect(), QColor(QStringLiteral("#fbfdff")));
+
+        const QRectF plot = plotRect();
+        painter.fillRect(plot, Qt::white);
+        painter.setPen(QPen(QColor(QStringLiteral("#e2eaf2")), 1));
+        for (int index = 0; index <= 6; ++index)
         {
-            const qreal y = plot.top() + plot.height() * i / 6.0;
+            const qreal y = plot.top() + plot.height() * index / 6.0;
             painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y));
         }
-        for (int i = 0; i <= 8; ++i)
+        for (int index = 0; index <= 10; ++index)
         {
-            const qreal x = plot.left() + plot.width() * i / 8.0;
+            const qreal x = plot.left() + plot.width() * index / 10.0;
             painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()));
         }
-        painter.setPen(QPen(QColor(QStringLiteral("#849ab1")), 1));
+
+        painter.setPen(QPen(QColor(QStringLiteral("#768ba1")), 1.2));
         painter.drawLine(plot.bottomLeft(), plot.bottomRight());
         painter.drawLine(plot.topLeft(), plot.bottomLeft());
-        painter.setFont(QFont(QStringLiteral("Segoe UI"), 9));
-        painter.drawText(QRectF(0, plot.top() - 8, 35, 18), Qt::AlignRight, QStringLiteral("60"));
-        painter.drawText(QRectF(0, plot.center().y() - 8, 35, 18), Qt::AlignRight,
-                         QStringLiteral("0"));
-        painter.drawText(QRectF(0, plot.bottom() - 8, 35, 18), Qt::AlignRight,
-                         QStringLiteral("-60"));
-        painter.drawText(QRectF(plot.left(), plot.bottom() + 9, plot.width(), 20), Qt::AlignCenter,
-                         QStringLiteral("时间（秒）"));
-        const QColor colors[] = {
-            QColor(QStringLiteral("#1687ee")), QColor(QStringLiteral("#ef4444")),
-            QColor(QStringLiteral("#16a05d")), QColor(QStringLiteral("#f39a18"))};
-        for (int s = 0; s < m_series.size(); ++s)
+        painter.setPen(QColor(QStringLiteral("#5d7186")));
+        painter.setFont(QFont(QStringLiteral("Segoe UI"), 8));
+        painter.drawText(QRectF(4, 2, width() - 8, 16), Qt::AlignLeft,
+                         QStringLiteral("%1  [%2]").arg(m_series.name, m_series.unit));
+
+        for (int index = 0; index <= 6; ++index)
         {
-            const auto &data = m_series.at(s).samples;
-            if (data.isEmpty())
-            {
-                continue;
-            }
+            const double value = m_yCenter + m_yHalfRange
+                                 - (2.0 * m_yHalfRange * index / 6.0);
+            const qreal y = plot.top() + plot.height() * index / 6.0;
+            painter.drawText(QRectF(0, y - 8, plot.left() - 7, 16), Qt::AlignRight,
+                             axisNumber(value));
+        }
+        painter.drawText(QRectF(plot.left() - 5, plot.bottom() + 7, 38, 16), Qt::AlignLeft,
+                         QStringLiteral("0"));
+        painter.drawText(QRectF(plot.center().x() - 20, plot.bottom() + 7, 48, 16),
+                         Qt::AlignCenter, axisNumber(m_xWindowSeconds / 2.0));
+        painter.drawText(QRectF(plot.right() - 36, plot.bottom() + 7, 40, 16), Qt::AlignRight,
+                         QStringLiteral("%1 s").arg(axisNumber(m_xWindowSeconds)));
+
+        if (!m_series.samples.isEmpty())
+        {
+            const int visibleCount = qBound(
+                2, qRound(static_cast<double>(m_series.samples.size())
+                          * m_xWindowSeconds / kDataWindowSeconds),
+                m_series.samples.size());
+            const int firstSample = m_series.samples.size() - visibleCount;
             QPainterPath path;
-            for (int i = 0; i < data.size(); ++i)
+            for (int index = 0; index < visibleCount; ++index)
             {
-                const qreal x = plot.left() + plot.width() * i / qMax(1, data.size() - 1);
-                const qreal normalized = qBound(-60.0, data.at(i), 60.0);
-                const qreal y = plot.center().y() - normalized / 120.0 * plot.height();
-                if (i == 0)
-                {
+                const double value = m_series.samples.at(firstSample + index);
+                const qreal x = plot.left() + plot.width() * index / qMax(1, visibleCount - 1);
+                const qreal y = plot.center().y()
+                                - (value - m_yCenter) / (2.0 * m_yHalfRange) * plot.height();
+                if (index == 0)
                     path.moveTo(x, y);
-                }
                 else
-                {
                     path.lineTo(x, y);
-                }
             }
-            painter.setPen(QPen(colors[s % 4], 1.6));
+            painter.setPen(QPen(QColor(QStringLiteral("#1687ee")), 2.0));
             painter.drawPath(path);
+        }
+
+        if (plot.contains(m_cursorPosition))
+        {
+            painter.setPen(QPen(QColor(QStringLiteral("#9eb3c7")), 1, Qt::DashLine));
+            painter.drawLine(QPointF(m_cursorPosition.x(), plot.top()),
+                             QPointF(m_cursorPosition.x(), plot.bottom()));
+            painter.drawLine(QPointF(plot.left(), m_cursorPosition.y()),
+                             QPointF(plot.right(), m_cursorPosition.y()));
+
+            const double value = m_yCenter
+                                 + (plot.center().y() - m_cursorPosition.y()) / plot.height()
+                                       * 2.0 * m_yHalfRange;
+            const double seconds = (m_cursorPosition.x() - plot.left()) / plot.width()
+                                   * m_xWindowSeconds;
+            painter.setPen(QColor(QStringLiteral("#34536f")));
+            painter.drawText(QRectF(plot.left() + 8, plot.top() + 6, plot.width() - 16, 18),
+                             Qt::AlignLeft,
+                             QStringLiteral("t=%1 s   y=%2 %3")
+                                 .arg(axisNumber(seconds), axisNumber(value), m_series.unit));
         }
     }
 
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        m_cursorPosition = event->pos();
+        update();
+        QWidget::mouseMoveEvent(event);
+    }
+
+    void leaveEvent(QEvent *event) override
+    {
+        m_cursorPosition = QPoint(-1, -1);
+        update();
+        QWidget::leaveEvent(event);
+    }
+
+    void wheelEvent(QWheelEvent *event) override
+    {
+        const QRectF plot = plotRect();
+        const QPoint position = event->position().toPoint();
+        const int steps = event->angleDelta().y() > 0 ? 1 : -1;
+        const double factor = steps > 0 ? 0.85 : 1.0 / 0.85;
+        if (position.x() < plot.left() && position.y() >= plot.top()
+            && position.y() <= plot.bottom())
+        {
+            const double cursorValue = m_yCenter
+                                        + (plot.center().y() - position.y()) / plot.height()
+                                              * 2.0 * m_yHalfRange;
+            m_yCenter = cursorValue + (m_yCenter - cursorValue) * factor;
+            m_yHalfRange = qBound(0.001, m_yHalfRange * factor, 1000000.0);
+            m_hasView = true;
+            update();
+            event->accept();
+            return;
+        }
+        if (position.y() > plot.bottom() && position.x() >= plot.left()
+            && position.x() <= plot.right())
+        {
+            m_xWindowSeconds = qBound(0.2, m_xWindowSeconds * factor, 60.0);
+            m_hasView = true;
+            update();
+            event->accept();
+            return;
+        }
+        event->ignore();
+    }
+
   private:
-    QVector<rov::DebugSeries> m_series;
+    QRectF plotRect() const
+    {
+        const qreal plotWidth = qMax<qreal>(80.0, width() - 76.0);
+        const qreal plotHeight = qMax<qreal>(80.0, height() - 55.0);
+        return QRectF(58.0, 18.0, plotWidth, plotHeight);
+    }
+
+    static constexpr double kDataWindowSeconds = 10.0;
+    static constexpr double kDefaultWindowSeconds = 10.0;
+    rov::DebugSeries m_series;
+    QPoint m_cursorPosition{-1, -1};
+    double m_xWindowSeconds = kDefaultWindowSeconds;
+    double m_yCenter = 0.0;
+    double m_yHalfRange = 1.0;
+    bool m_hasView = false;
+};
+
+class CurveWindowWidget final : public QFrame
+{
+  public:
+    explicit CurveWindowWidget(const int number, QWidget *parent = nullptr) : QFrame(parent)
+    {
+        setObjectName(QStringLiteral("card"));
+        setMinimumHeight(278);
+        auto *root = new QVBoxLayout(this);
+        root->setContentsMargins(10, 8, 10, 8);
+        root->setSpacing(6);
+
+        auto *toolbar = new QHBoxLayout;
+        toolbar->setSpacing(6);
+        m_title = rov::makeLabel(QStringLiteral("曲线窗口 %1").arg(number),
+                                 QStringLiteral("bodyValue"));
+        toolbar->addWidget(m_title);
+        m_variable = new QComboBox;
+        m_variable->setMinimumWidth(150);
+        toolbar->addWidget(m_variable, 1);
+        m_fit = rov::makeButton(QStringLiteral("自动适配"), QStringLiteral("softButton"));
+        toolbar->addWidget(m_fit);
+        m_remove = rov::makeButton(QStringLiteral("删除"), QStringLiteral("softButton"));
+        toolbar->addWidget(m_remove);
+        root->addLayout(toolbar);
+
+        m_plot = new CurvePlotWidget;
+        root->addWidget(m_plot, 1);
+        connect(m_fit, &QPushButton::clicked, m_plot, &CurvePlotWidget::fitToData);
+    }
+
+    QComboBox *variableCombo() const { return m_variable; }
+    QPushButton *removeButton() const { return m_remove; }
+    int selectedIndex() const { return m_selectedIndex; }
+
+    void setSeriesCatalog(const QVector<rov::DebugSeries> &series, const int preferredIndex)
+    {
+        const int oldIndex = m_selectedIndex;
+        m_catalog = series;
+        const int selected = m_catalog.isEmpty()
+                                 ? -1
+                                 : qBound(0, preferredIndex, m_catalog.size() - 1);
+        m_variable->blockSignals(true);
+        m_variable->clear();
+        for (const auto &item : m_catalog)
+            m_variable->addItem(QStringLiteral("%1  [%2]").arg(item.name, item.unit));
+        if (selected >= 0)
+            m_variable->setCurrentIndex(selected);
+        m_variable->blockSignals(false);
+        m_selectedIndex = selected;
+        if (selected >= 0)
+            m_plot->setSeries(m_catalog.at(selected), oldIndex != selected || !m_hasCatalog);
+        m_hasCatalog = true;
+    }
+
+    void selectSeries(const int index)
+    {
+        if (index < 0 || index >= m_catalog.size())
+            return;
+        m_selectedIndex = index;
+        m_plot->setSeries(m_catalog.at(index), true);
+    }
+
+    void updateSeries(const QVector<rov::DebugSeries> &series)
+    {
+        m_catalog = series;
+        if (m_selectedIndex >= 0 && m_selectedIndex < m_catalog.size())
+            m_plot->setSeries(m_catalog.at(m_selectedIndex), false);
+    }
+
+    void fitToData() { m_plot->fitToData(); }
+
+  private:
+    QLabel *m_title = nullptr;
+    QComboBox *m_variable = nullptr;
+    QPushButton *m_fit = nullptr;
+    QPushButton *m_remove = nullptr;
+    CurvePlotWidget *m_plot = nullptr;
+    QVector<rov::DebugSeries> m_catalog;
+    int m_selectedIndex = -1;
+    bool m_hasCatalog = false;
 };
 
 QDoubleSpinBox *parameterBox(const double value)
@@ -118,75 +329,33 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     root->setContentsMargins(10, 8, 10, 8);
     root->setSpacing(8);
     root->addWidget(makePageHeader(QStringLiteral("电机调试"),
-                                   QStringLiteral("单电机调节与波形分析。"),
+                                   QStringLiteral("多窗口曲线观察、转速控制与参数调节。"),
                                    QStringLiteral("演示 · 预览数据")));
 
-    auto *topRow = new QHBoxLayout;
-    topRow->setSpacing(8);
-    auto *waveformCard = new CardWidget(QStringLiteral("实时波形"), IconKind::Waveform);
-    waveformCard->contentLayout()->setContentsMargins(10, 8, 10, 10);
-    waveformCard->contentLayout()->setSpacing(6);
-    auto *controls = new QHBoxLayout;
-    controls->addWidget(makeLabel(QStringLiteral("时间刻度"), QStringLiteral("mutedLabel")));
-    auto *scale = new AppComboBox;
-    scale->addItems(
-        {QStringLiteral("1 秒/格"), QStringLiteral("500 毫秒/格"), QStringLiteral("100 毫秒/格")});
-    controls->addWidget(scale);
-    controls->addSpacing(8);
-    controls->addWidget(makeLabel(QStringLiteral("触发"), QStringLiteral("mutedLabel")));
-    auto *trigger = new AppComboBox;
-    trigger->addItems({QStringLiteral("关闭"), QStringLiteral("转速"), QStringLiteral("电流")});
-    controls->addWidget(trigger);
-    controls->addStretch();
-    controls->addWidget(makeButton(QStringLiteral("暂停"), QStringLiteral("softButton")));
-    controls->addWidget(makeButton(QStringLiteral("记录"), QStringLiteral("softButton")));
-    controls->addWidget(makeButton(QStringLiteral("导出"), QStringLiteral("softButton")));
-    waveformCard->contentLayout()->addLayout(controls);
-    auto *waveform = new WaveformWidget;
-    waveformCard->contentLayout()->addWidget(waveform, 1);
-    auto *legend = new QHBoxLayout;
-    const QStringList legendNames = {QStringLiteral("相电流（A）"), QStringLiteral("母线电压（V）"),
-                                     QStringLiteral("转速（×100）"), QStringLiteral("观测器误差")};
-    for (const QString &name : legendNames)
-    {
-        legend->addWidget(
-            makeLabel(QStringLiteral("□  %1").arg(name), QStringLiteral("mutedLabel")));
-    }
-    legend->addStretch();
-    waveformCard->contentLayout()->addLayout(legend);
-    topRow->addWidget(waveformCard, 6);
+    auto *curveCard = new CardWidget(QStringLiteral("实时曲线工作区"), IconKind::Waveform);
+    curveCard->contentLayout()->setContentsMargins(10, 8, 10, 10);
+    curveCard->contentLayout()->setSpacing(7);
+    auto *curveToolbar = new QHBoxLayout;
+    curveToolbar->setSpacing(7);
+    curveToolbar->addWidget(makeLabel(QStringLiteral("每个窗口独立选择变量和缩放比例"),
+                                      QStringLiteral("mutedLabel")));
+    curveToolbar->addStretch();
+    auto *fitAll = makeButton(QStringLiteral("全部自动适配"), QStringLiteral("softButton"));
+    curveToolbar->addWidget(fitAll);
+    auto *addCurve = makeButton(QStringLiteral("＋ 新增曲线"), QStringLiteral("primaryButton"));
+    curveToolbar->addWidget(addCurve);
+    curveCard->contentLayout()->addLayout(curveToolbar);
+    m_curveGrid = new QGridLayout;
+    m_curveGrid->setContentsMargins(0, 0, 0, 0);
+    m_curveGrid->setHorizontalSpacing(8);
+    m_curveGrid->setVerticalSpacing(8);
+    m_curveGrid->setColumnStretch(0, 1);
+    m_curveGrid->setColumnStretch(1, 1);
+    curveCard->contentLayout()->addLayout(m_curveGrid);
+    root->addWidget(curveCard, 1);
 
-    auto *side = new QVBoxLayout;
-    side->setSpacing(8);
-    auto *signalsCard = new CardWidget(QStringLiteral("信号选择"), IconKind::Settings);
-    signalsCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
-    signalsCard->contentLayout()->setSpacing(4);
-    auto *signalGrid = new QGridLayout;
-    signalGrid->setSpacing(4);
-    const QStringList groups = {QStringLiteral("电流信号"), QStringLiteral("电压信号"),
-                                QStringLiteral("观测器信号"), QStringLiteral("控制信号")};
-    const QStringList signalNames = {QStringLiteral("A 相电流"), QStringLiteral("母线电压"),
-                                     QStringLiteral("估计转速"), QStringLiteral("PWM 指令")};
-    for (int i = 0; i < groups.size(); ++i)
-    {
-        auto *group = new QFrame;
-        group->setObjectName(QStringLiteral("card"));
-        auto *groupLayout = new QVBoxLayout(group);
-        groupLayout->setContentsMargins(6, 4, 6, 4);
-        groupLayout->setSpacing(1);
-        groupLayout->addWidget(makeLabel(groups.at(i), QStringLiteral("bodyValue")));
-        for (int j = 0; j < 3; ++j)
-        {
-            auto *check = new AppCheckBox(
-                j == 0 ? signalNames.at(i)
-                       : QStringLiteral("%1 %2").arg(groups.at(i).left(7)).arg(j + 1));
-            check->setChecked(j == 0);
-            groupLayout->addWidget(check);
-        }
-        signalGrid->addWidget(group, i / 2, i % 2);
-    }
-    signalsCard->contentLayout()->addLayout(signalGrid);
-    side->addWidget(signalsCard);
+    auto *lowerRow = new QHBoxLayout;
+    lowerRow->setSpacing(8);
 
     auto *statusCard = new CardWidget(QStringLiteral("电机状态与参数"), IconKind::Motor);
     statusCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
@@ -197,10 +366,14 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     statusLayout->setColumnStretch(1, 1);
     statusLayout->setColumnStretch(3, 1);
     statusLayout->addWidget(makeLabel(QStringLiteral("电机"), QStringLiteral("mutedLabel")), 0, 0);
-    auto *motorSelect = new AppComboBox;
-    motorSelect->addItems({QStringLiteral("推进器 1（FL）"), QStringLiteral("推进器 2（FR）"),
-                           QStringLiteral("推进器 3（ML）"), QStringLiteral("推进器 4（MR）")});
-    statusLayout->addWidget(motorSelect, 0, 1, 1, 3);
+    m_motorSelect = new AppComboBox;
+    m_motorSelect->addItems({QStringLiteral("Node1 · 推进器 1（FL）"),
+                             QStringLiteral("Node2 · 推进器 2（FR）"),
+                             QStringLiteral("Node3 · 推进器 3（ML）"),
+                             QStringLiteral("Node4 · 推进器 4（MR）"),
+                             QStringLiteral("Node5 · 推进器 5"), QStringLiteral("Node6 · 推进器 6"),
+                             QStringLiteral("Node7 · 推进器 7"), QStringLiteral("Node8 · 推进器 8")});
+    statusLayout->addWidget(m_motorSelect, 0, 1, 1, 3);
     m_stateValue = makeStatusPill(QStringLiteral("运行中"), QStringLiteral("statusGood"));
     m_rpmValue = makeMetricValue(QStringLiteral("--"));
     m_currentValue = makeMetricValue(QStringLiteral("--"));
@@ -224,53 +397,113 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     m_observerGain = parameterBox(0.10);
     m_currentLimit = parameterBox(20.0);
     const QStringList parameterNames = {QStringLiteral("电流 Kp"), QStringLiteral("电流 Ki"),
-                                        QStringLiteral("观测器增益"),
-                                        QStringLiteral("电流限值（A）")};
+                                        QStringLiteral("观测器增益"), QStringLiteral("电流限值（A）")};
     QDoubleSpinBox *boxes[] = {m_kp, m_ki, m_observerGain, m_currentLimit};
-    for (int i = 0; i < 4; ++i)
+    for (int index = 0; index < 4; ++index)
     {
-        statusLayout->addWidget(makeMetricLabel(parameterNames.at(i)), i + 1, 2);
-        statusLayout->addWidget(boxes[i], i + 1, 3);
+        statusLayout->addWidget(makeMetricLabel(parameterNames.at(index)), index + 1, 2);
+        statusLayout->addWidget(boxes[index], index + 1, 3);
     }
     auto *apply = makeButton(QStringLiteral("应用参数"), QStringLiteral("primaryButton"));
     statusLayout->addWidget(apply, 5, 2, 1, 2);
     auto *reset = makeButton(QStringLiteral("恢复默认"), QStringLiteral("softButton"));
     statusLayout->addWidget(reset, 6, 2, 1, 2);
     statusCard->contentLayout()->addLayout(statusLayout);
-    side->addWidget(statusCard);
-    topRow->addLayout(side, 4);
-    root->addLayout(topRow, 1);
+    lowerRow->addWidget(statusCard, 5);
 
-    auto *bottomRow = new QHBoxLayout;
-    bottomRow->setSpacing(8);
+    auto *rightColumn = new QVBoxLayout;
+    rightColumn->setSpacing(8);
+    auto *speedCard = new CardWidget(QStringLiteral("基础转速控制"), IconKind::Settings);
+    speedCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
+    speedCard->contentLayout()->setSpacing(6);
+    auto *speedHeader = new QHBoxLayout;
+    speedHeader->addWidget(makeLabel(QStringLiteral("目标转速"), QStringLiteral("mutedLabel")));
+    m_speedValue = makeMetricValue(QStringLiteral("0 rpm"));
+    speedHeader->addWidget(m_speedValue);
+    speedHeader->addStretch();
+    speedCard->contentLayout()->addLayout(speedHeader);
+    m_speedSlider = new QSlider(Qt::Horizontal);
+    m_speedSlider->setRange(-10000, 10000);
+    m_speedSlider->setSingleStep(100);
+    m_speedSlider->setPageStep(1000);
+    m_speedSlider->setValue(0);
+    speedCard->contentLayout()->addWidget(m_speedSlider);
+    auto *speedScale = new QHBoxLayout;
+    speedScale->addWidget(makeLabel(QStringLiteral("-10000"), QStringLiteral("mutedLabel")));
+    speedScale->addStretch();
+    speedScale->addWidget(makeLabel(QStringLiteral("0"), QStringLiteral("mutedLabel")));
+    speedScale->addStretch();
+    speedScale->addWidget(makeLabel(QStringLiteral("+10000 rpm"), QStringLiteral("mutedLabel")));
+    speedCard->contentLayout()->addLayout(speedScale);
+    auto *speedButtons = new QHBoxLayout;
+    auto *applySpeed = makeButton(QStringLiteral("下发速度"), QStringLiteral("primaryButton"));
+    m_runButton = makeButton(QStringLiteral("启动"), QStringLiteral("softButton"));
+    speedButtons->addWidget(applySpeed);
+    speedButtons->addWidget(m_runButton);
+    speedCard->contentLayout()->addLayout(speedButtons);
+    rightColumn->addWidget(speedCard);
+
     auto *captureCard = new CardWidget(QStringLiteral("采集与分析"), IconKind::File);
-    captureCard->setMaximumHeight(124);
     captureCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
     auto *captureLayout = new QHBoxLayout;
     auto *sampleRate = new AppComboBox;
-    sampleRate->addItems(
-        {QStringLiteral("1 kHz"), QStringLiteral("5 kHz"), QStringLiteral("10 kHz")});
+    sampleRate->addItems({QStringLiteral("1 kHz"), QStringLiteral("5 kHz"), QStringLiteral("10 kHz")});
     auto *duration = new AppComboBox;
     duration->addItems({QStringLiteral("10 s"), QStringLiteral("30 s"), QStringLiteral("60 s")});
     captureLayout->addWidget(makeMetricLabel(QStringLiteral("采样率")));
     captureLayout->addWidget(sampleRate);
-    captureLayout->addWidget(makeMetricLabel(QStringLiteral("记录时长")));
+    captureLayout->addWidget(makeMetricLabel(QStringLiteral("时长")));
     captureLayout->addWidget(duration);
     captureLayout->addStretch();
     auto *capture = makeButton(QStringLiteral("立即采集"), QStringLiteral("softButton"));
     captureLayout->addWidget(capture);
     captureCard->contentLayout()->addLayout(captureLayout);
-    bottomRow->addWidget(captureCard, 3);
+    rightColumn->addWidget(captureCard);
 
     auto *logCard = new CardWidget(QStringLiteral("最近数据 / 日志"), IconKind::List);
-    logCard->setMaximumHeight(124);
     logCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
     m_requestLog = makeLabel(QStringLiteral("暂无请求。"), QStringLiteral("mutedLabel"));
     m_requestLog->setWordWrap(true);
     logCard->contentLayout()->addWidget(m_requestLog);
-    bottomRow->addWidget(logCard, 2);
-    root->addLayout(bottomRow);
+    rightColumn->addWidget(logCard, 1);
+    lowerRow->addLayout(rightColumn, 6);
+    root->addLayout(lowerRow);
 
+    connect(addCurve, &QPushButton::clicked, this, [this]() { addCurveWindow(); });
+    connect(fitAll, &QPushButton::clicked, this, &MotorDebugPage::autoFitAllCurves);
+    connect(m_motorSelect, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](const int index)
+            {
+                if (index < 0)
+                    return;
+                m_snapshot.selectedMotorId = QStringLiteral("thruster%1").arg(index + 1);
+                m_snapshot.selectedMotorLabel = m_motorSelect->currentText();
+                logRequest(QStringLiteral("已选择 %1").arg(m_motorSelect->currentText()));
+            });
+    connect(m_speedSlider, &QSlider::valueChanged, this,
+            [this](const int value) { m_speedValue->setText(QStringLiteral("%1 rpm").arg(value)); });
+    connect(applySpeed, &QPushButton::clicked, this,
+            [this]()
+            {
+                MotorSpeedControlRequest request;
+                request.motorId = m_snapshot.selectedMotorId;
+                request.targetRpm = m_speedSlider->value();
+                request.enabled = m_running;
+                emit speedControlRequested(request);
+                logRequest(QStringLiteral("下发目标转速：%1 rpm").arg(request.targetRpm));
+            });
+    connect(m_runButton, &QPushButton::clicked, this,
+            [this]()
+            {
+                m_running = !m_running;
+                m_runButton->setText(m_running ? QStringLiteral("停止") : QStringLiteral("启动"));
+                MotorSpeedControlRequest request;
+                request.motorId = m_snapshot.selectedMotorId;
+                request.targetRpm = m_speedSlider->value();
+                request.enabled = m_running;
+                emit speedControlRequested(request);
+                logRequest(m_running ? QStringLiteral("请求启动电机") : QStringLiteral("请求停止电机"));
+            });
     connect(apply, &QPushButton::clicked, this,
             [this]()
             {
@@ -290,7 +523,7 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                 m_ki->setValue(0.05);
                 m_observerGain->setValue(0.10);
                 m_currentLimit->setValue(20.0);
-                logRequest(QStringLiteral("已在演示模式恢复默认参数"));
+                logRequest(QStringLiteral("已恢复默认参数"));
             });
     connect(capture, &QPushButton::clicked, this,
             [this, sampleRate, duration]()
@@ -306,21 +539,70 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
             });
 
     setSnapshot(motorDebugPreview());
-    waveform->setSeries(m_snapshot.series);
+    addCurveWindow(0);
 }
 
 void MotorDebugPage::setSnapshot(const MotorDebugSnapshot &snapshot)
 {
     m_snapshot = snapshot;
+    m_availableSeries = snapshot.series;
     refreshView();
+    refreshCurveWindows();
+}
+
+void MotorDebugPage::addCurveWindow(const int seriesIndex)
+{
+    auto *curve = new CurveWindowWidget(m_curveWindows.size() + 1);
+    curve->setSeriesCatalog(m_availableSeries, seriesIndex);
+    m_curveWindows.append(curve);
+    connect(curve->variableCombo(), qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this, curve](const int index) { curve->selectSeries(index); });
+    connect(curve->removeButton(), &QPushButton::clicked, this,
+            [this, curve]() { removeCurveWindow(curve); });
+    relayoutCurveWindows();
+}
+
+void MotorDebugPage::removeCurveWindow(QWidget *window)
+{
+    if (m_curveWindows.size() <= 1)
+    {
+        logRequest(QStringLiteral("至少保留一个曲线窗口"));
+        return;
+    }
+    m_curveGrid->removeWidget(window);
+    m_curveWindows.removeOne(window);
+    window->deleteLater();
+    relayoutCurveWindows();
+}
+
+void MotorDebugPage::relayoutCurveWindows()
+{
+    if (m_curveWindows.size() == 1)
+    {
+        m_curveGrid->addWidget(m_curveWindows.first(), 0, 0, 1, 2);
+        return;
+    }
+    for (int index = 0; index < m_curveWindows.size(); ++index)
+        m_curveGrid->addWidget(m_curveWindows.at(index), index / 2, index % 2);
+}
+
+void MotorDebugPage::refreshCurveWindows()
+{
+    for (QWidget *widget : m_curveWindows)
+        static_cast<CurveWindowWidget *>(widget)->updateSeries(m_availableSeries);
+}
+
+void MotorDebugPage::autoFitAllCurves()
+{
+    for (QWidget *widget : m_curveWindows)
+        static_cast<CurveWindowWidget *>(widget)->fitToData();
+    logRequest(QStringLiteral("已自动适配全部曲线比例"));
 }
 
 void MotorDebugPage::refreshView()
 {
     if (m_stateValue == nullptr)
-    {
         return;
-    }
     m_stateValue->setText(m_snapshot.state);
     m_rpmValue->setText(QStringLiteral("%1 rpm").arg(m_snapshot.rpm, 0, 'f', 0));
     m_currentValue->setText(QStringLiteral("%1 A").arg(m_snapshot.currentA, 0, 'f', 1));
@@ -328,17 +610,13 @@ void MotorDebugPage::refreshView()
     m_temperatureValue->setText(QStringLiteral("%1 °C").arg(m_snapshot.temperatureC, 0, 'f', 1));
     m_faultValue->setText(m_snapshot.fault);
     if (!m_snapshot.recentLog.isEmpty() && m_requestLog != nullptr)
-    {
         m_requestLog->setText(m_snapshot.recentLog.join(QStringLiteral("\n")));
-    }
 }
 
 void MotorDebugPage::logRequest(const QString &message)
 {
     if (m_requestLog != nullptr)
-    {
-        m_requestLog->setText(QStringLiteral("最近请求：%1 · 未写入设备").arg(message));
-    }
+        m_requestLog->setText(QStringLiteral("最近请求：%1 · 演示模式未写入设备").arg(message));
 }
 
 } // namespace rov

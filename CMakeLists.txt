@@ -64,6 +64,8 @@ add_library(rov_communication STATIC
     src/communication/protocol/CanGatewayProtocol.h
     src/communication/protocol/CanFlowControlProtocol.cpp
     src/communication/protocol/CanFlowControlProtocol.h
+    src/communication/protocol/ObserverMotorProtocol.cpp
+    src/communication/protocol/ObserverMotorProtocol.h
     src/communication/protocol/SystemHeartbeatProtocol.cpp
     src/communication/protocol/SystemHeartbeatProtocol.h
     src/communication/service/BootloaderCommunicationService.cpp
@@ -75,6 +77,12 @@ add_library(rov_communication STATIC
 add_library(rov_firmware_history STATIC
     src/data/store/FirmwareHistoryStore.cpp
     src/data/store/FirmwareHistoryStore.h
+)
+
+add_library(rov_motor_data STATIC
+    src/contracts/motor/ObserverMotorContract.h
+    src/data/services/ObserverMotorDataService.cpp
+    src/data/services/ObserverMotorDataService.h
 )
 
 add_library(rov_page_dashboard STATIC
@@ -135,6 +143,7 @@ set(ROV_UI_TARGETS
     rov_ui_common
     rov_preview
     rov_communication
+    rov_motor_data
     rov_firmware_history
     rov_page_dashboard
     rov_page_motor_debug
@@ -151,6 +160,7 @@ endforeach()
 
 target_link_libraries(rov_page_firmware PUBLIC rov_communication)
 target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history)
+target_link_libraries(rov_motor_data PUBLIC rov_communication)
 target_link_libraries(rov_ui_common PUBLIC FluentQt::FluentQt)
 target_link_libraries(rov_page_dashboard PUBLIC rov_ui_common)
 target_link_libraries(rov_page_motor_debug PUBLIC rov_ui_common)
@@ -173,6 +183,7 @@ target_link_libraries(rov_ui PRIVATE
     rov_preview
     rov_ui_common
     rov_communication
+    rov_motor_data
 )
 
 if (WIN32)
@@ -191,4 +202,11 @@ if (BUILD_TESTING)
     target_include_directories(rov_can_flow_protocol_test PRIVATE src)
     target_link_libraries(rov_can_flow_protocol_test PRIVATE Qt5::Core rov_communication)
     add_test(NAME rov_can_flow_protocol_test COMMAND rov_can_flow_protocol_test)
+
+    add_executable(rov_observer_motor_protocol_test
+        tests/ObserverMotorProtocolTest.cpp
+    )
+    target_include_directories(rov_observer_motor_protocol_test PRIVATE src)
+    target_link_libraries(rov_observer_motor_protocol_test PRIVATE Qt5::Core rov_communication)
+    add_test(NAME rov_observer_motor_protocol_test COMMAND rov_observer_motor_protocol_test)
 endif()

@@ -4,6 +4,7 @@
 #include "pages/firmware/FirmwarePage.h"
 #include "pages/manipulator/ManipulatorPage.h"
 #include "pages/motor_debug/MotorDebugPage.h"
+#include "data/services/ObserverMotorDataService.h"
 #include "pages/settings/SettingsPlaceholder.h"
 #include "pages/vision/VisionPage.h"
 #include "ui/common/AnimatedNavButton.h"
@@ -338,6 +339,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_pages->addWidget(manipulator);
     m_pages->addWidget(vision);
     m_pages->addWidget(settings);
+
+    // 组合根把同一条网关 CAN 帧流交给数据服务；UI 页面只订阅快照，
+    // 不直接接触 USB CDC、AA55 或 CAN ID。
+    m_motorData = new ObserverMotorDataService(this);
+    connect(firmware->communicationService(), &BootloaderCommunicationService::frameReceived,
+            this,
+            [this](const CanGatewayFrame &frame)
+            {
+                if (m_motorData != nullptr)
+                    m_motorData->handleCanFrame(frame);
+            });
+    connect(firmware->communicationService(), &BootloaderCommunicationService::closed,
+            m_motorData, &ObserverMotorDataService::reset);
     // 机械臂、视觉和设置页保留原有的小屏幕等比保护。
     // 电机调试与固件升级页改由页面内部自适应，避免宽屏下整页缩小后两侧留白。
     for (QWidget *page : {static_cast<QWidget *>(manipulator), static_cast<QWidget *>(vision),
@@ -399,6 +413,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(motorDebug, &MotorDebugPage::captureRequested, this,
             [this](const MotorCaptureRequest &)
             { handleRequest(QStringLiteral("电机调试：请求采集数据")); });
+    connect(motorDebug, &MotorDebugPage::speedControlRequested, this,
+            [this](const MotorSpeedControlRequest &request)
+            {
+                handleRequest(QStringLiteral("电机调试：%1 Node %2 · %3 rpm")
+                                  .arg(request.enabled ? QStringLiteral("启动")
+                                                       : QStringLiteral("停止"))
+                                  .arg(request.motorId)
+                                  .arg(request.targetRpm));
+            });
     connect(firmware, &FirmwarePage::upgradeRequested, this,
             [this](const FirmwareUpgradeRequest &)
             { handleRequest(QStringLiteral("固件升级：已记录升级请求；未连接 Bootloader")); });

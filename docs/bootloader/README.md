@@ -104,7 +104,7 @@ CAN ID: 0x000
 DATA:   01 04 00 00 00 00 00 7B
 ```
 
-该帧仍然要求标准数据帧、Classic CAN、DLC 8、500 kbit/s；上位机不切换
+该帧仍然要求标准数据帧、Classic CAN、DLC 8、1 Mbit/s；上位机不切换
 CAN 速率，也不能等待 APP 的 ACK。GUI 发送后应记录“已发送，等待复位”，
 而不是把没有 ACK 当成发送失败。
 
@@ -179,7 +179,7 @@ F:\file\BaiduSyncdisk\Project\Observer_Motor\build\Boot-Release\Observer_boot.bi
 - Bootloader 命令中心与 Peer 监视；
 - 固件页节点选择和结构化节点状态。
 - Legacy 单节点正式下载：`ENTER_BOOT → ERASE → WRITE → DATA → WRITE_END → VERIFY → JUMP_APP`；
-- 64 字节逻辑 DATA 包、56 字节有效载荷，支持手动选择 Classic CAN `0x100~0x107` 八片分片或 CAN FD+BRS `0x100` 单帧；
+- 64 字节逻辑 DATA 包、56 字节有效载荷；正式下载固定由 H750 拆成 Classic CAN `0x100~0x107` 八片分片；
 - APP DATA 通过 AA59 Credit/ACK 发送，不再依赖固定毫秒延时；
 - CRC-32/MPEG-2 计算、下载阶段、数据包进度和设备错误码显示。
 
@@ -191,8 +191,8 @@ F:\file\BaiduSyncdisk\Project\Observer_Motor\build\Boot-Release\Observer_boot.bi
 - Jetson Nano/TCP Transport。
 
 “编程”和“下载到选中节点”按钮现在执行真实的 Legacy 单节点下载。固件页上方的“升级总线”
-下拉框可手动选择 `Classic CAN（8 分片）` 或 `CAN FD+BRS（64 字节）`：控制帧始终是标准
-Classic CAN 8 字节，只有 DATA 数据面按选择切换。正式下载只接受 `.bin` 镜像；`.hex`、`.uf2`
+固定显示 `Classic CAN（1M，8 分片）`：控制帧和 DATA 数据面均使用标准 Classic CAN 8 字节，
+不启用 CAN FD 数据阶段。正式下载只接受 `.bin` 镜像；`.hex`、`.uf2`
 仍可用于查看文件信息，但需要先转换成 BIN。目标节点必须已经进入 Bootloader，或由下载流程先
 发送 `ENTER_BOOT` 后等待复位。
 
@@ -203,7 +203,7 @@ Classic CAN 8 字节，只有 DATA 数据面按选择切换。正式下载只接
 3. 确认状态显示绿色“下位机在线”和递增心跳计数。
 4. 选择 Node，点击“读取版本”“设备信息”“运行状态”。
 5. 拖入 Boot-Release 的 `.bin` 文件，确认文件大小、SHA-256 和 CRC32 日志。
-6. 在页面上方“升级总线”选择 Classic CAN 或 CAN FD+BRS，再点击“下载到选中节点”（或“编程”），
+6. 确认页面上方“升级总线”为 Classic CAN，再点击“下载到选中节点”（或“编程”），
    观察擦除、写入进度、校验和启动 APP。
 7. 对照底层 `COMMAND_TEST_GUIDE.md` 检查 CAN ID、payload 和响应状态；如果设备报告缺包或错误码，
    页面会停止流程并保留中文错误与原始帧，确认总线和供电后再重试。

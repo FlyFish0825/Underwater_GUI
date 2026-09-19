@@ -356,7 +356,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     root->setSpacing(8);
     root->addWidget(makePageHeader(QStringLiteral("固件升级"),
                                    QStringLiteral("按底层 Bootloader 协议下载固件并校验后启动 APP。"),
-                                   QStringLiteral("手动选择 Classic CAN / CAN FD+BRS")));
+                                   QStringLiteral("正式下载固定使用 Classic CAN")));
 
     auto *mainRow = new QHBoxLayout;
     m_mainRowLayout = mainRow;
@@ -517,9 +517,9 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     connectionRow->addWidget(m_serialConnectButton);
     connectionRow->addWidget(makeLabel(QStringLiteral("升级总线"), QStringLiteral("mutedLabel")));
     m_transferModeCombo = new QComboBox;
-    m_transferModeCombo->setToolTip(QStringLiteral("手动选择固件 DATA 使用 Classic CAN 分片或 CAN FD+BRS"));
-    m_transferModeCombo->addItem(QStringLiteral("Classic CAN（8 分片）"), false);
-    m_transferModeCombo->addItem(QStringLiteral("CAN FD+BRS（64 字节）"), true);
+    m_transferModeCombo->setToolTip(
+        QStringLiteral("正式下载固定使用 Classic CAN；仲裁速率 1 Mbit/s，每个逻辑块由 H750 拆成 8 帧"));
+    m_transferModeCombo->addItem(QStringLiteral("Classic CAN（1M，8 分片）"), false);
     m_transferModeCombo->setCurrentIndex(0);
     m_transferModeCombo->setMinimumWidth(150);
     connectionRow->addWidget(m_transferModeCombo);
@@ -857,6 +857,11 @@ QWidget *FirmwarePage::connectionBar() const
     return m_connectionBar;
 }
 
+BootloaderCommunicationService *FirmwarePage::communicationService() const
+{
+    return m_communication;
+}
+
 void FirmwarePage::setSnapshot(const FirmwareSnapshot &snapshot)
 {
     m_snapshot = snapshot;
@@ -916,7 +921,7 @@ bool FirmwarePage::loadFirmwareFile(const QString &path)
     m_snapshot.fileSize = humanFileSize(fileInfo.size());
     m_snapshot.checksum = shortSha256(hash.result());
     m_snapshot.fileDescription = QStringLiteral("已载入本地固件，可用于正式 Bootloader 下载。\n"
-                                                 "Legacy 流程支持 .bin；DATA 可手动选择 Classic CAN 或 CAN FD+BRS。\n"
+                                                 "Legacy 流程支持 .bin；正式下载全程使用 Classic CAN（1 Mbit/s）。\n"
                                                  "路径：%1")
                                      .arg(m_firmwarePath);
     refreshView();
@@ -1075,8 +1080,11 @@ void FirmwarePage::startFirmwareDownload()
     }
 
     const quint8 target = nodeIdFromText(m_snapshot.nodes.at(index).nodeId);
-    const bool canFd = m_transferModeCombo != nullptr
-                       && m_transferModeCombo->currentData().toBool();
+    /*
+     * 正式固件下载固定走 Classic CAN。后端仍保留 CAN FD 能力，便于以后
+     * 硬件时钟和总线验证完成后恢复，但当前页面不允许误选 FD 数据面。
+     */
+    constexpr bool canFd = false;
     if (!m_downloadController->start(target, path, canFd))
         return;
 

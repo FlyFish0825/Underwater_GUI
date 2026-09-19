@@ -1,6 +1,6 @@
 # ROV Qt 上位机
 
-这是水下机器人 ROV 的 Qt Widgets 上位机工程。当前已在固件升级页接入 **Windows USB CDC 虚拟串口发现、VID/PID 筛选、串口接管、心跳监视、CAN 网关 AA55 增量拆包、Bootloader 命令中心和可选择 Classic CAN/CAN FD 的 Legacy 单节点正式下载**；其他设备驱动仍按任务卡逐步实现。
+这是水下机器人 ROV 的 Qt Widgets 上位机工程。当前已在固件升级页接入 **Windows USB CDC 虚拟串口发现、VID/PID 筛选、串口接管、心跳监视、CAN 网关 AA55 增量拆包、Bootloader 命令中心和固定使用 Classic CAN 的 Legacy 单节点正式下载**；其他设备驱动仍按任务卡逐步实现。
 
 ## 开始开发前必须阅读
 
@@ -20,7 +20,7 @@ src/app/             主窗口和应用入口
 src/pages/           Dashboard、Motor Debug、Firmware、Manipulator、Vision、Settings
 src/contracts/       页面快照和请求契约
 src/communication/   USB CDC 传输与 CAN 网关协议解析
-src/data/            Service/Data 层占位
+src/data/            Service/Data 层与电机快照
 src/ui/              公共控件和主题
 resources/           Qt 资源和统一 QSS
 docs/                框架、工具链、契约文档
@@ -32,6 +32,10 @@ agent/               Agent 提示词、通信规范和参考图
 ```text
 UI → Service/Data → Protocol → Transport
 ```
+
+Observer_Motor 的实际链路为：USB CDC 虚拟串口 → AA55 CAN 网关帧 →
+ObserverMotorProtocol → ObserverMotorDataService → UI 快照。UI 不直接解析
+CAN ID、DLC、字节偏移或心跳 CRC8。
 
 页面不得自行实现串口或协议细节；固件页仅通过通信层提供的设备枚举、连接状态和解析结果接收数据。
 
@@ -65,7 +69,7 @@ UI → Service/Data → Protocol → Transport
 
 ## Bootloader
 
-固件升级页的 Bootloader 功能、命令列表、Classic CAN/CAN FD 选择、真实下载流程、限制和测试步骤见 [Bootloader 功能说明](docs/bootloader/README.md)。
+固件升级页的 Bootloader 功能、命令列表、Classic CAN 真实下载流程、限制和测试步骤见 [Bootloader 功能说明](docs/bootloader/README.md)。
 
 多人协作请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。所有开发者和 Agent 都必须先阅读 `agent/` 目录中的统一提示词及通信分层规范，从 `main` 创建功能分支，通过 Pull Request 合并；不要直接向 `main` 推送。
 

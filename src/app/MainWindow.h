@@ -20,6 +20,7 @@ class MotorDebugPage;
 class FirmwarePage;
 class ManipulatorPage;
 class VisionPage;
+class ObserverMotorDataService;
 
 class MainWindow final : public QMainWindow
 {
@@ -47,6 +48,7 @@ class MainWindow final : public QMainWindow
     QButtonGroup *m_navGroup = nullptr;
     QLabel *m_footerStatus = nullptr;
     QLabel *m_footerLog = nullptr;
+    ObserverMotorDataService *m_motorData = nullptr;
     bool m_screenSignalConnected = false;
 };
 

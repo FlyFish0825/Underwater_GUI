@@ -40,6 +40,9 @@ class FirmwarePage final : public QWidget
     // 连接栏由主窗口统一放置，避免把“仅连接检查”混在 Bootloader 页面内容中。
     QWidget *connectionBar() const;
 
+    // 供主窗口的数据服务订阅同一条 USB CDC → AA55 CAN 网关帧流。
+    BootloaderCommunicationService *communicationService() const;
+
     // 主窗口退出前调用，销毁脱离页面布局显示的独立窗口。
     void closeAuxiliaryWindows();
 

@@ -55,8 +55,16 @@ struct MotorCaptureRequest
     int durationSeconds = 10;
 };
 
+struct MotorSpeedControlRequest
+{
+    QString motorId;
+    int targetRpm = 0;
+    bool enabled = false;
+};
+
 } // namespace rov
 
 Q_DECLARE_METATYPE(rov::MotorDebugSnapshot)
 Q_DECLARE_METATYPE(rov::MotorParameterRequest)
 Q_DECLARE_METATYPE(rov::MotorCaptureRequest)
+Q_DECLARE_METATYPE(rov::MotorSpeedControlRequest)
