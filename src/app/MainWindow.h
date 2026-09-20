@@ -50,6 +50,7 @@ class MainWindow final : public QMainWindow
     QLabel *m_footerLog = nullptr;
     QLabel *m_gatewayStatus = nullptr;
     ObserverMotorDataService *m_motorData = nullptr;
+    quint16 m_motorControlSequence = 0;
     bool m_screenSignalConnected = false;
 };
 

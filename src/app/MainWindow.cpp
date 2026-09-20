@@ -4,6 +4,7 @@
 #include "pages/firmware/FirmwarePage.h"
 #include "pages/manipulator/ManipulatorPage.h"
 #include "pages/motor_debug/MotorDebugPage.h"
+#include "communication/protocol/ObserverMotorProtocol.h"
 #include "data/services/ObserverMotorDataService.h"
 #include "pages/settings/SettingsPlaceholder.h"
 #include "pages/vision/VisionPage.h"
@@ -387,7 +388,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             this,
             [this](const CanGatewayFrame &frame)
             {
-                if (m_motorData != nullptr)
+                // 只有电机调试页真正可见时才解析高频反馈；不绘制时直接丢弃，
+                // 避免 100/1000 Hz 数据进入无用的快照和 UI 更新链。
+                if (m_motorData != nullptr && m_pages != nullptr && m_pages->currentIndex() == 1)
                     m_motorData->handleCanFrame(frame);
             });
     connect(firmware->communicationService(), &BootloaderCommunicationService::closed,
@@ -456,13 +459,52 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             [this](const MotorCaptureRequest &)
             { handleRequest(QStringLiteral("电机调试：请求采集数据")); });
     connect(motorDebug, &MotorDebugPage::speedControlRequested, this,
-            [this](const MotorSpeedControlRequest &request)
+            [this, communication](const MotorSpeedControlRequest &request)
             {
-                handleRequest(QStringLiteral("电机调试：%1 Node %2 · %3 rpm")
-                                  .arg(request.enabled ? QStringLiteral("启动")
-                                                       : QStringLiteral("停止"))
-                                  .arg(request.motorId)
-                                  .arg(request.targetRpm));
+                if (request.nodeId < ObserverMotorProtocol::kFirstNodeId
+                    || request.nodeId > ObserverMotorProtocol::kLastNodeId)
+                {
+                    handleRequest(QStringLiteral("电机控制失败：无效节点 Node%1").arg(request.nodeId));
+                    return;
+                }
+                if (!request.runCommand
+                    && (request.targetRpm < -10000 || request.targetRpm > 10000))
+                {
+                    handleRequest(QStringLiteral("电机控制失败：目标转速必须在 -10000～10000 rpm"));
+                    return;
+                }
+
+                ObserverMotorProtocol::ControlFrame control;
+                control.command = request.runCommand
+                                      ? ObserverMotorProtocol::Command::RunVector
+                                      : ObserverMotorProtocol::Command::SpeedVector;
+                control.nodeMask = static_cast<quint8>(1U << (request.nodeId - 1U));
+                control.runMask = request.enabled ? control.nodeMask : 0U;
+                control.sequence = ++m_motorControlSequence;
+                if (!request.runCommand)
+                {
+                    control.speedsRpm[static_cast<size_t>(request.nodeId - 1U)] =
+                        static_cast<qint16>(request.targetRpm);
+                }
+
+                QString error;
+                if (communication == nullptr
+                    || !communication->sendObserverMotorControl(control, &error))
+                {
+                    if (error.isEmpty())
+                        error = QStringLiteral("网关未连接或串口发送失败");
+                    handleRequest(QStringLiteral("电机控制发送失败：%1").arg(error));
+                    return;
+                }
+                handleRequest(QStringLiteral("已发送 0x100 控制帧：Node%1，%2 rpm，%3")
+                                  .arg(request.nodeId)
+                                  .arg(request.targetRpm)
+                                  .arg(request.runCommand
+                                           ? (request.enabled ? QStringLiteral("启动")
+                                                              : QStringLiteral("停止"))
+                                           : (request.enabled
+                                                  ? QStringLiteral("设置速度并启动")
+                                                  : QStringLiteral("设置速度"))));
             });
     connect(firmware, &FirmwarePage::upgradeRequested, this,
             [this](const FirmwareUpgradeRequest &)

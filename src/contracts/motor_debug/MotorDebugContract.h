@@ -16,6 +16,10 @@ struct DebugSeries
     QString name;
     QString unit;
     QVector<double> samples;
+    // Sample rate used to build the X axis. Real debug streams will replace
+    // this with explicit timestamps when samples are not evenly spaced.
+    double sampleRateHz = 1000.0;
+    quint32 firstTimestampUs = 0;
     DataStamp stamp;
 };
 
@@ -58,8 +62,10 @@ struct MotorCaptureRequest
 struct MotorSpeedControlRequest
 {
     QString motorId;
+    quint8 nodeId = 1;
     int targetRpm = 0;
     bool enabled = false;
+    bool runCommand = false;
 };
 
 } // namespace rov
