@@ -10,7 +10,11 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets Concurrent PrintSupport)
+
+# Qwt 6.3.x supplies the reusable QWidget plotting primitives. Its wrapper
+# disables optional modules unavailable in the locked Qt SDK (SVG/OpenGL).
+add_subdirectory(third_party/qwt-6.3 EXCLUDE_FROM_ALL)
 
 # Fluent-Qt 作为可选的第三方控件库接入：只构建库本身，不构建它的示例、画廊、
 # 测试和 Python 绑定，避免把与上位机无关的目标带入现有工程。
@@ -95,6 +99,8 @@ add_library(rov_page_dashboard STATIC
 add_library(rov_page_motor_debug STATIC
     src/pages/motor_debug/MotorDebugPage.cpp
     src/pages/motor_debug/MotorDebugPage.h
+    src/widgets/plot/QwtCurvePlotWidget.cpp
+    src/widgets/plot/QwtCurvePlotWidget.h
 )
 
 add_library(rov_page_firmware STATIC
@@ -166,6 +172,7 @@ target_link_libraries(rov_motor_data PUBLIC rov_communication)
 target_link_libraries(rov_ui_common PUBLIC FluentQt::FluentQt)
 target_link_libraries(rov_page_dashboard PUBLIC rov_ui_common)
 target_link_libraries(rov_page_motor_debug PUBLIC rov_ui_common)
+target_link_libraries(rov_page_motor_debug PUBLIC rov_third_party_qwt)
 target_link_libraries(rov_page_firmware PUBLIC rov_ui_common)
 target_link_libraries(rov_page_manipulator PUBLIC rov_ui_common)
 target_link_libraries(rov_page_settings PUBLIC rov_ui_common)
