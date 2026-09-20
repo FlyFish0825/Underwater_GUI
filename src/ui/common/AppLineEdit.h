@@ -1,12 +1,12 @@
 #pragma once
 
-#include <FluentQt/TextFields.h>
+#include <QLineEdit>
 
 namespace rov
 {
 
 // 单行输入框适配器：保持 QLineEdit 的文本、校验和编辑信号契约。
-class AppLineEdit final : public fluent::textfields::LineEdit
+class AppLineEdit final : public QLineEdit
 {
     Q_OBJECT
 
