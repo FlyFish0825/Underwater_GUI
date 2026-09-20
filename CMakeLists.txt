@@ -60,6 +60,8 @@ add_library(rov_communication STATIC
     src/communication/bootloader/BootloaderService.cpp
     src/communication/bootloader/BootloaderService.h
     src/communication/bootloader/BootloaderTypes.h
+    src/communication/protocol/CanGatewayConfigProtocol.cpp
+    src/communication/protocol/CanGatewayConfigProtocol.h
     src/communication/protocol/CanGatewayProtocol.cpp
     src/communication/protocol/CanGatewayProtocol.h
     src/communication/protocol/CanFlowControlProtocol.cpp
@@ -196,6 +198,9 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(rov_can_bitrate_settings_test tests/CanBitrateSettingsTest.cpp)
+    target_link_libraries(rov_can_bitrate_settings_test PRIVATE rov_page_settings rov_firmware_history)
+    add_test(NAME rov_can_bitrate_settings_test COMMAND rov_can_bitrate_settings_test -platform offscreen)
     add_executable(rov_can_flow_protocol_test
         tests/CanFlowControlProtocolTest.cpp
     )
@@ -209,4 +214,18 @@ if (BUILD_TESTING)
     target_include_directories(rov_observer_motor_protocol_test PRIVATE src)
     target_link_libraries(rov_observer_motor_protocol_test PRIVATE Qt5::Core rov_communication)
     add_test(NAME rov_observer_motor_protocol_test COMMAND rov_observer_motor_protocol_test)
+
+    add_executable(rov_system_heartbeat_protocol_test
+        tests/SystemHeartbeatProtocolTest.cpp
+    )
+    target_include_directories(rov_system_heartbeat_protocol_test PRIVATE src)
+    target_link_libraries(rov_system_heartbeat_protocol_test PRIVATE Qt5::Core rov_communication)
+    add_test(NAME rov_system_heartbeat_protocol_test COMMAND rov_system_heartbeat_protocol_test)
+
+    add_executable(rov_can_gateway_config_protocol_test
+        tests/CanGatewayConfigProtocolTest.cpp
+    )
+    target_include_directories(rov_can_gateway_config_protocol_test PRIVATE src)
+    target_link_libraries(rov_can_gateway_config_protocol_test PRIVATE Qt5::Core rov_communication)
+    add_test(NAME rov_can_gateway_config_protocol_test COMMAND rov_can_gateway_config_protocol_test)
 endif()

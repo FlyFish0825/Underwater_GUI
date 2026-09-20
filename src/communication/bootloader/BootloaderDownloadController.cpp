@@ -29,6 +29,16 @@ QString hex32(const quint32 value)
     return QStringLiteral("0x%1").arg(value, 8, 16, QLatin1Char('0')).toUpper();
 }
 
+// 与 Bootloader 的 Trial 设计配套：Bootloader 在跳 APP 前开启约 3 秒的
+// IWDG。上位机先给 APP 留出 CAN 初始化时间，再连续发送 ENTER_BOOT，最后
+// 轮询 Bootloader 的 GET_INFO 确认 app_valid 已由 Trial 返回路径恢复。
+constexpr int kTrialAppBootDelayMs = 500;
+constexpr int kTrialReturnRepeatCount = 3;
+constexpr int kTrialReturnRepeatIntervalMs = 120;
+constexpr int kTrialBootloaderSettleMs = 650;
+constexpr int kTrialProbeIntervalMs = 500;
+constexpr int kTrialMaxProbeAttempts = 6;
+
 } // namespace
 
 BootloaderDownloadController::BootloaderDownloadController(BootloaderService *service,
@@ -43,6 +53,15 @@ BootloaderDownloadController::BootloaderDownloadController(BootloaderService *se
             [this]() {
                 if (m_phase == Phase::WaitingWindow)
                     queryWindow();
+                else if (m_phase == Phase::TrialChecking)
+                {
+                    // APP 未返回时，Bootloader 的 IWDG 会在约 3 秒后复位 MCU。
+                    // 轮询期间不发送新的跳转命令，也不把短暂的复位窗口误判为失败。
+                    if (m_trialProbeAttempts >= kTrialMaxProbeAttempts)
+                        fail(QStringLiteral("Trial 试运行未确认返回 Bootloader；已等待看门狗复位窗口，APP 保持未验证状态"));
+                    else
+                        m_stepTimer.start(kTrialProbeIntervalMs);
+                }
                 else
                     fail(QStringLiteral("等待设备回复超时，下载已停止"));
             });
@@ -107,6 +126,8 @@ bool BootloaderDownloadController::start(const quint8 target, const QString &fir
     m_windowQueried = false;
     m_pendingWindowStart = m_pendingWindowEnd = 0;
     m_hasDeferredWindowResponse = false;
+    m_trialEnterBootAttempts = 0;
+    m_trialProbeAttempts = 0;
     m_totalPackets = (m_firmware.size() + BootloaderProtocol::dataPayloadSize - 1)
                      / BootloaderProtocol::dataPayloadSize;
     m_phase = Phase::WaitingBoot;
@@ -158,6 +179,10 @@ void BootloaderDownloadController::step()
         sendErase();
     else if (m_phase == Phase::Streaming)
         pumpData();
+    else if (m_phase == Phase::TrialBooting || m_phase == Phase::TrialReturning)
+        sendTrialEnterBoot();
+    else if (m_phase == Phase::TrialChecking)
+        queryTrialResult();
 }
 
 bool BootloaderDownloadController::sendControl(const BootCommand command, const quint8 byte2,
@@ -386,16 +411,66 @@ void BootloaderDownloadController::sendVerify()
     armResponseTimeout(8000, QStringLiteral("校验固件"));
 }
 
-void BootloaderDownloadController::sendJumpApp()
+void BootloaderDownloadController::sendTrialJump()
 {
-    m_phase = Phase::Jumping;
-    emit phaseChanged(QStringLiteral("校验通过，正在启动 APP"));
-    if (!sendControl(BootCommand::JumpApp))
+    m_phase = Phase::TrialBooting;
+    m_trialEnterBootAttempts = 0;
+    m_trialProbeAttempts = 0;
+    emit phaseChanged(QStringLiteral("校验通过，安全试运行 APP"));
+    // Byte2=0x01 是 Bootloader 的 Trial Jump：先将 app_valid 置为 0，
+    // 开启 Bootloader IWDG，再跳入 APP。禁止使用 Byte2=0x00 的直接跳转。
+    if (!sendControl(BootCommand::JumpApp, 0x01U))
     {
-        fail(QStringLiteral("发送 JUMP_APP 失败"));
+        fail(QStringLiteral("发送 Trial JUMP_APP 失败"));
         return;
     }
-    armResponseTimeout(2000, QStringLiteral("启动 APP"));
+    emit logMessage(QStringLiteral("已发送 Trial JUMP_APP（Byte2=0x01）；Bootloader 已开启看门狗保护，等待 APP 初始化"));
+    // Trial 的成功条件不是 JUMP_APP 的 READY，而是 APP 收到 ENTER_BOOT 后
+    // 自行软件复位回 Bootloader；因此不能因跳转 ACK 丢失而结束这个安全闭环。
+    m_stepTimer.start(kTrialAppBootDelayMs);
+}
+
+void BootloaderDownloadController::sendTrialEnterBoot()
+{
+    if (!sendControl(BootCommand::EnterBoot))
+    {
+        fail(QStringLiteral("试运行后发送 ENTER_BOOT 失败"));
+        return;
+    }
+
+    ++m_trialEnterBootAttempts;
+    emit logMessage(QStringLiteral("Trial 返回请求 %1/%2：已向 APP 发送 ENTER_BOOT，等待其软件复位回 Bootloader")
+                        .arg(m_trialEnterBootAttempts)
+                        .arg(kTrialReturnRepeatCount));
+    if (m_trialEnterBootAttempts < kTrialReturnRepeatCount)
+    {
+        m_phase = Phase::TrialReturning;
+        m_stepTimer.start(kTrialReturnRepeatIntervalMs);
+        return;
+    }
+
+    m_phase = Phase::TrialChecking;
+    emit phaseChanged(QStringLiteral("等待 Trial 返回并验证 APP"));
+    m_stepTimer.start(kTrialBootloaderSettleMs);
+}
+
+void BootloaderDownloadController::queryTrialResult()
+{
+    if (m_trialProbeAttempts >= kTrialMaxProbeAttempts)
+    {
+        fail(QStringLiteral("Trial 试运行未确认返回 Bootloader；APP 仍未标记为可用"));
+        return;
+    }
+    ++m_trialProbeAttempts;
+    if (!sendControl(BootCommand::GetInfo))
+    {
+        fail(QStringLiteral("无法读取 Trial 结果"));
+        return;
+    }
+    emit logMessage(QStringLiteral("Trial 结果探测 %1/%2：读取 Bootloader APP 有效标记")
+                        .arg(m_trialProbeAttempts)
+                        .arg(kTrialMaxProbeAttempts));
+    armResponseTimeout(kTrialProbeIntervalMs, QStringLiteral("读取 Trial 结果"));
 }
 
 void BootloaderDownloadController::armResponseTimeout(const int milliseconds,
@@ -420,7 +495,8 @@ void BootloaderDownloadController::handleResponse(const BootResponse &response)
             && (response.command == BootCommand::WriteEnd
                 || response.command == BootCommand::MissingCount))
         || (m_phase == Phase::Verifying && response.command == BootCommand::Verify)
-        || (m_phase == Phase::Jumping && response.command == BootCommand::JumpApp);
+        || (m_phase == Phase::TrialBooting && response.command == BootCommand::JumpApp)
+        || (m_phase == Phase::TrialChecking && response.command == BootCommand::GetInfo);
     const bool windowResponse = m_windowPackets > 0
         && (m_phase == Phase::Streaming || m_phase == Phase::WaitingGatewayFlow
             || m_phase == Phase::WaitingWindow)
@@ -533,15 +609,28 @@ void BootloaderDownloadController::handleResponse(const BootResponse &response)
         if (response.status == BootStatus::Ready)
         {
             m_responseTimer.stop();
-            sendJumpApp();
+            sendTrialJump();
         }
         return;
     }
-    if (m_phase == Phase::Jumping && response.command == BootCommand::JumpApp
+    if (m_phase == Phase::TrialBooting && response.command == BootCommand::JumpApp)
+    {
+        // Trial Jump 的 READY 只能说明命令已被接收；后续仍必须等待 APP
+        // 接收 ENTER_BOOT 并返回，不能在这里把下载判为成功。
+        return;
+    }
+    if (m_phase == Phase::TrialChecking && response.command == BootCommand::GetInfo
         && response.status == BootStatus::Ready)
     {
         m_responseTimer.stop();
-        complete(QStringLiteral("下载成功，设备已跳转到 APP"));
+        const bool appValid = response.data.size() >= 3
+                              && static_cast<quint8>(response.data.at(2)) != 0U;
+        if (!appValid)
+        {
+            fail(QStringLiteral("Trial 已回到 Bootloader，但 APP 仍未标记为可用；看门狗保护已阻止直接启动"));
+            return;
+        }
+        complete(QStringLiteral("下载成功：Trial 返回验证通过，Bootloader 已标记 APP 可用；当前安全停留 Bootloader，下次复位或上电将自动启动 APP"));
     }
 }
 

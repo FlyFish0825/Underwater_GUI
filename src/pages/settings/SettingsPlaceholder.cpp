@@ -6,22 +6,107 @@
 #include "ui/common/UiPrimitives.h"
 
 #include <QHBoxLayout>
+#include <QComboBox>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSettings>
 #include <QVBoxLayout>
 
 namespace rov
 {
 
-SettingsPlaceholder::SettingsPlaceholder(QWidget *parent) : QWidget(parent)
+namespace
+{
+
+constexpr quint32 kDefaultCanNominalBitrate = 1000000U;
+constexpr quint32 kDefaultCanDataBitrate = 8000000U;
+constexpr auto kCanNominalBitrateKey = "communication/canNominalBitrate";
+constexpr auto kCanDataBitrateKey = "communication/canDataBitrate";
+
+struct CanBitrateOption
+{
+    const char *label;
+    quint32 value;
+};
+
+QString bitrateText(const quint32 bitrate)
+{
+    if (bitrate >= 1000000U)
+        return QStringLiteral("%1 Mbit/s").arg(bitrate / 1000000U);
+    return QStringLiteral("%1 kbit/s").arg(bitrate / 1000U);
+}
+
+constexpr CanBitrateOption kCanBitrateOptions[] = {
+    {"50 kbit/s", 50000U},     {"100 kbit/s", 100000U},  {"125 kbit/s", 125000U},
+    {"250 kbit/s", 250000U},   {"500 kbit/s", 500000U},  {"800 kbit/s", 800000U},
+    {"1 Mbit/s", kDefaultCanNominalBitrate},
+};
+
+constexpr CanBitrateOption kCanDataBitrateOptions[] = {
+    {"500 kbit/s", 500000U}, {"1 Mbit/s", 1000000U}, {"2 Mbit/s", 2000000U},
+    {"4 Mbit/s", 4000000U}, {"5 Mbit/s", 5000000U}, {"8 Mbit/s", 8000000U},
+};
+
+} // namespace
+
+SettingsPlaceholder::SettingsPlaceholder(QWidget *connectionBar, QWidget *parent) : QWidget(parent)
 {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(14, 12, 14, 10);
     root->setSpacing(10);
-    root->addWidget(makePageHeader(QStringLiteral("设置"), QStringLiteral("配置界面预留。"),
-                                   QStringLiteral("占位页面")));
-    auto *card = new CardWidget(QStringLiteral("设置"), IconKind::Settings);
+    if (connectionBar != nullptr)
+        root->addWidget(connectionBar);
+    root->addWidget(makePageHeader(QStringLiteral("设置"),
+                                   QStringLiteral("配置 USB-CAN 网关通信参数。"),
+                                   QStringLiteral("通信配置")));
+    auto *communicationCard = new CardWidget(QStringLiteral("通信配置"), IconKind::Settings);
+    auto *communicationRow = new QHBoxLayout;
+    communicationRow->setContentsMargins(0, 0, 0, 0);
+    communicationRow->setSpacing(12);
+    communicationRow->addWidget(makeLabel(QStringLiteral("CAN 仲裁速率")));
+    m_canBitrateCombo = new QComboBox(communicationCard);
+    m_canBitrateCombo->setObjectName(QStringLiteral("canNominalBitrateCombo"));
+    for (const auto &option : kCanBitrateOptions)
+        m_canBitrateCombo->addItem(QString::fromUtf8(option.label), option.value);
+    const QSettings settings;
+    const quint32 savedNominal = settings.value(kCanNominalBitrateKey,
+                                                kDefaultCanNominalBitrate)
+                                     .toUInt();
+    const int savedIndex = m_canBitrateCombo->findData(savedNominal);
+    m_canBitrateCombo->setCurrentIndex(savedIndex >= 0 ? savedIndex
+                                                       : m_canBitrateCombo->findData(
+                                                             kDefaultCanNominalBitrate));
+    m_canBitrateCombo->setMinimumWidth(150);
+    communicationRow->addWidget(m_canBitrateCombo);
+    communicationRow->addWidget(makeLabel(QStringLiteral("CAN 数据段速率")));
+    m_canDataBitrateCombo = new QComboBox(communicationCard);
+    m_canDataBitrateCombo->setObjectName(QStringLiteral("canDataBitrateCombo"));
+    for (const auto &option : kCanDataBitrateOptions)
+        m_canDataBitrateCombo->addItem(QString::fromUtf8(option.label), option.value);
+    const quint32 savedData = settings.value(kCanDataBitrateKey, kDefaultCanDataBitrate).toUInt();
+    const int savedDataIndex = m_canDataBitrateCombo->findData(savedData);
+    m_canDataBitrateCombo->setCurrentIndex(
+        savedDataIndex >= 0 ? savedDataIndex
+                            : m_canDataBitrateCombo->findData(kDefaultCanDataBitrate));
+    m_canDataBitrateCombo->setMinimumWidth(150);
+    communicationRow->addWidget(m_canDataBitrateCombo);
+    auto *applyCanBitrate = makeButton(QStringLiteral("应用到网关"), QStringLiteral("primaryButton"));
+    m_applyCanBitrateButton = applyCanBitrate;
+    m_canBitrateCombo->setEnabled(false);
+    m_canDataBitrateCombo->setEnabled(false);
+    applyCanBitrate->setEnabled(false);
+    communicationRow->addWidget(applyCanBitrate);
+    communicationRow->addStretch();
+    communicationCard->contentLayout()->addLayout(communicationRow);
+    m_canBitrateStatus = makeLabel(QStringLiteral("未连接网关；保存值仅在收到成功回复后更新"),
+                                   QStringLiteral("mutedLabel"));
+    communicationCard->contentLayout()->addWidget(m_canBitrateStatus);
+    QObject::connect(applyCanBitrate, &QPushButton::clicked, this,
+                     &SettingsPlaceholder::requestSelectedCanBitrate);
+    root->addWidget(communicationCard);
+
+    auto *card = new CardWidget(QStringLiteral("控件演示"), IconKind::Settings);
 
     // 仅在低风险的设置占位页验证成熟控件库的视觉和交互；不触碰导航、业务状态或通信逻辑。
     auto *intro = makeLabel(QStringLiteral("控件库接入验证（不影响现有功能）"),
@@ -82,6 +167,94 @@ SettingsPlaceholder::SettingsPlaceholder(QWidget *parent) : QWidget(parent)
     card->contentLayout()->addStretch();
     root->addWidget(card, 1);
     root->addWidget(historyCard);
+}
+
+void SettingsPlaceholder::setGatewayConnected(const bool connected)
+{
+    m_gatewayConnected = connected;
+    const bool controlsEnabled = connected && !m_canBitrateRequestPending;
+    if (m_canBitrateCombo != nullptr)
+        m_canBitrateCombo->setEnabled(controlsEnabled);
+    if (m_canDataBitrateCombo != nullptr)
+        m_canDataBitrateCombo->setEnabled(controlsEnabled);
+
+    if (m_canBitrateStatus != nullptr)
+        m_canBitrateStatus->setText(connected ? QStringLiteral("网关已连接")
+                                              : QStringLiteral("未连接网关"));
+
+    if (m_applyCanBitrateButton != nullptr)
+        m_applyCanBitrateButton->setEnabled(controlsEnabled);
+}
+
+void SettingsPlaceholder::onCanBitrateConfigured(const quint16 sequence, const quint8 status,
+                                                  const quint32 nominalBps,
+                                                  const quint32 dataBps)
+{
+    Q_UNUSED(sequence)
+    if (status != 0U)
+    {
+        onCanBitrateError(QStringLiteral("网关拒绝 CAN 速率配置（状态码 %1）").arg(status));
+        return;
+    }
+
+    QSettings settings;
+    settings.setValue(kCanNominalBitrateKey, nominalBps);
+    settings.setValue(kCanDataBitrateKey, dataBps);
+    settings.sync();
+    if (m_canBitrateCombo != nullptr)
+    {
+        const int index = m_canBitrateCombo->findData(nominalBps);
+        if (index >= 0)
+            m_canBitrateCombo->setCurrentIndex(index);
+    }
+    if (m_canDataBitrateCombo != nullptr)
+    {
+        const int index = m_canDataBitrateCombo->findData(dataBps);
+        if (index >= 0)
+            m_canDataBitrateCombo->setCurrentIndex(index);
+    }
+    if (m_canBitrateStatus != nullptr)
+        m_canBitrateStatus->setText(QStringLiteral("已应用：仲裁 %1 · 数据段 %2")
+                                        .arg(bitrateText(nominalBps), bitrateText(dataBps)));
+    m_canBitrateRequestPending = false;
+    if (m_canBitrateCombo != nullptr)
+        m_canBitrateCombo->setEnabled(m_gatewayConnected);
+    if (m_canDataBitrateCombo != nullptr)
+        m_canDataBitrateCombo->setEnabled(m_gatewayConnected);
+    if (m_applyCanBitrateButton != nullptr)
+        m_applyCanBitrateButton->setEnabled(m_gatewayConnected);
+}
+
+void SettingsPlaceholder::onCanBitrateError(const QString &message)
+{
+    if (m_canBitrateStatus != nullptr)
+        m_canBitrateStatus->setText(QStringLiteral("应用失败：%1").arg(message));
+    m_canBitrateRequestPending = false;
+    if (m_canBitrateCombo != nullptr)
+        m_canBitrateCombo->setEnabled(m_gatewayConnected);
+    if (m_canDataBitrateCombo != nullptr)
+        m_canDataBitrateCombo->setEnabled(m_gatewayConnected);
+    if (m_applyCanBitrateButton != nullptr)
+        m_applyCanBitrateButton->setEnabled(m_gatewayConnected);
+}
+
+void SettingsPlaceholder::requestSelectedCanBitrate()
+{
+    if (!m_gatewayConnected || m_canBitrateRequestPending || m_canBitrateCombo == nullptr ||
+        m_canDataBitrateCombo == nullptr)
+        return;
+    const quint32 nominalBps = m_canBitrateCombo->currentData().toUInt();
+    const quint32 dataBps = m_canDataBitrateCombo->currentData().toUInt();
+    if (nominalBps == 0U || dataBps == 0U)
+        return;
+    m_canBitrateRequestPending = true;
+    if (m_canBitrateStatus != nullptr)
+        m_canBitrateStatus->setText(QStringLiteral("正在应用 CAN 速率…"));
+    if (m_applyCanBitrateButton != nullptr)
+        m_applyCanBitrateButton->setEnabled(false);
+    m_canBitrateCombo->setEnabled(false);
+    m_canDataBitrateCombo->setEnabled(false);
+    emit canBitrateApplyRequested(nominalBps, dataBps);
 }
 
 void SettingsPlaceholder::clearHistoryWithConfirmation()

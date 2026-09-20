@@ -2,6 +2,8 @@
 
 #include <QByteArray>
 #include <QHash>
+#include <QRegularExpression>
+#include <QStringList>
 
 namespace rov
 {
@@ -26,7 +28,7 @@ QString commandNameZh(const QString &name)
         {QStringLiteral("VERIFY"), QStringLiteral("校验固件")},
         {QStringLiteral("WRITE_END"), QStringLiteral("结束写入")},
         {QStringLiteral("ABORT"), QStringLiteral("中止操作")},
-        {QStringLiteral("JUMP_APP"), QStringLiteral("启动 APP")},
+        {QStringLiteral("JUMP_APP"), QStringLiteral("安全试运行 APP")},
         {QStringLiteral("RESET"), QStringLiteral("复位节点")},
         {QStringLiteral("GET_STATUS"), QStringLiteral("读取运行状态")},
         {QStringLiteral("WINDOW_STATUS"), QStringLiteral("窗口写入确认/状态")},
@@ -169,7 +171,7 @@ QString responseResultZh(const QString &command, const QString &status, const QB
     if (command == QStringLiteral("ENTER_BOOT"))
         return QStringLiteral("已接受，等待设备复位进入 Bootloader");
     if (command == QStringLiteral("JUMP_APP"))
-        return QStringLiteral("已接受，设备正在跳转到 APP");
+        return QStringLiteral("已接受，正在安全试运行 APP，等待 ENTER_BOOT 返回验证");
     if (command == QStringLiteral("RESET"))
         return QStringLiteral("已接受，设备正在复位");
     if (command == QStringLiteral("ABORT"))
@@ -225,9 +227,36 @@ QString formatFirmwareLogHtml(const QString &timestampedMessage)
         }
     }
 
-    QString summary = body;
-    QString raw;
-    QString color = QStringLiteral("#5b7390");
+    const auto tag = [](const QString &text, const QString &foreground, const QString &background)
+    {
+        return QStringLiteral("<span style=\"color:%1;background:%2;border:1px solid %2;"
+                              "border-radius:3px;padding:0 3px;margin-right:2px;font-size:11px;\">%3</span>")
+            .arg(foreground, background, text.toHtmlEscaped());
+    };
+    const auto rawLine = [](const QString &raw)
+    {
+        return QStringLiteral("<div style=\"color:#7b91aa;font-family:Consolas,'Courier New',monospace;"
+                              "font-size:11px;line-height:1.15;white-space:pre-wrap;margin:0 0 0 6px;\">原始：%1</div>")
+            .arg(raw.toHtmlEscaped());
+    };
+    const auto bytesFromData = [](const QString &data)
+    {
+        const QByteArray bytes = QByteArray::fromHex(data.simplified().toLatin1());
+        return bytes;
+    };
+    const auto byteLength = [&bytesFromData](const QString &data)
+    {
+        const QByteArray bytes = bytesFromData(data);
+        return bytes.isEmpty() && !data.trimmed().isEmpty() ? data.simplified().split(' ').size()
+                                                            : bytes.size();
+    };
+    const auto baseLine = [&time](const QString &tags, const QString &title)
+    {
+        return QStringLiteral("<div style=\"color:#304f70;margin:1px 0;line-height:1.15;\">%1 "
+                              "<span style=\"color:#365d85;\">%2</span>")
+            .arg(time.toHtmlEscaped(), tags + title.toHtmlEscaped());
+    };
+
     const QStringList parts = body.split(QStringLiteral(" · "));
     const QString command = parts.size() >= 2 ? parts.at(1).trimmed() : QString();
     const QString status = parts.size() >= 3 ? parts.at(2).trimmed() : QString();
@@ -249,70 +278,134 @@ QString formatFirmwareLogHtml(const QString &timestampedMessage)
                              || command == QStringLiteral("JUMP_APP")
                              || status == QStringLiteral("REPAIR")
                              || status == QStringLiteral("GUARD");
-    if (body.startsWith(QStringLiteral("TX Node")) && parts.size() >= 2)
+
+    // 网关帧日志包含完整的 CAN ID、长度、序号、标志位和数据，单独拆成结构化标签，
+    // 但原始文本仍然保留，便于现场排查和历史记录复核。
+    static const QRegularExpression gatewayPattern(
+        QStringLiteral("^解析到\\s+CAN\\s+(0x[0-9A-Fa-f]+)\\s+(\\d+)\\s+字节\\s+SEQ=(\\d+)\\s+"
+                       "FLAGS=0x([0-9A-Fa-f]+)\\s+DATA=(.*)$"));
+    // 兼容旧历史记录中可能附带的“信息”前缀，只要包含有效 CAN 网关帧文本就结构化显示。
+    const int gatewayOffset = body.indexOf(QStringLiteral("解析到 CAN"));
+    const QString gatewayText = gatewayOffset >= 0 ? body.mid(gatewayOffset) : body;
+    const QRegularExpressionMatch gateway = gatewayPattern.match(gatewayText);
+    if (gateway.hasMatch())
     {
-        const QString node = parts.at(0).mid(QStringLiteral("TX Node").size());
-        summary = QStringLiteral("发送 · 节点 %1 · %2").arg(node, commandNameZh(parts.at(1)));
-        color = textError ? QStringLiteral("#d64545")
-                          : textWarning ? QStringLiteral("#b06a00") : QStringLiteral("#2369c8");
-        raw = body;
+        bool flagsOk = false;
+        const uint flags = gateway.captured(4).toUInt(&flagsOk, 16);
+        const bool isFd = flagsOk && (flags & 0x02U) != 0U;
+        const bool isBrs = flagsOk && (flags & 0x04U) != 0U;
+        const bool isExtended = flagsOk && (flags & 0x01U) != 0U;
+        const QString frameKind = isFd ? QStringLiteral("CAN FD") : QStringLiteral("Classic CAN");
+        const QString lengthLabel = isFd ? QStringLiteral("LEN %1").arg(gateway.captured(2))
+                                         : QStringLiteral("DLC %1").arg(gateway.captured(2));
+        const QString idLabel = QStringLiteral("ID %1").arg(gateway.captured(1).toUpper());
+        const QString gatewayTagColor = QStringLiteral("#087f5b");
+        const QString gatewayBg = QStringLiteral("#e9f8ef");
+        const bool gatewayError = gateway.captured(1).compare(QStringLiteral("0x000007FA"), Qt::CaseInsensitive) == 0
+                                  || gateway.captured(1).compare(QStringLiteral("0x000007FB"), Qt::CaseInsensitive) == 0
+                                  || gateway.captured(1).compare(QStringLiteral("0x000007FC"), Qt::CaseInsensitive) == 0;
+        const bool gatewayWarning = gateway.captured(1).compare(QStringLiteral("0x000007FD"), Qt::CaseInsensitive) == 0
+                                    || gateway.captured(1).compare(QStringLiteral("0x000007FE"), Qt::CaseInsensitive) == 0;
+        const QString stateColor = gatewayError ? QStringLiteral("#cf3030")
+                                                : gatewayWarning ? QStringLiteral("#a46300")
+                                                                  : gatewayTagColor;
+        QString html = baseLine(
+            tag(QStringLiteral("接收 RX"), stateColor,
+                gatewayError ? QStringLiteral("#fff0f0")
+                             : gatewayWarning ? QStringLiteral("#fff7e5") : gatewayBg)
+                + tag(frameKind, isFd ? QStringLiteral("#2167b2") : QStringLiteral("#5b6f83"),
+                      isFd ? QStringLiteral("#eaf3ff") : QStringLiteral("#f1f4f7"))
+                + tag(isExtended ? QStringLiteral("EXT") : QStringLiteral("STD"),
+                      isFd ? QStringLiteral("#2167b2") : QStringLiteral("#5b6f83"),
+                      isFd ? QStringLiteral("#eaf3ff") : QStringLiteral("#f1f4f7"))
+                + tag(idLabel, QStringLiteral("#304f70"), QStringLiteral("#eef4fa"))
+                + tag(lengthLabel, QStringLiteral("#304f70"), QStringLiteral("#eef4fa"))
+                + (isBrs ? tag(QStringLiteral("BRS"), QStringLiteral("#2167b2"), QStringLiteral("#eaf3ff"))
+                         : QString()),
+            QStringLiteral("网关帧 · %1 · %2")
+                .arg(isExtended ? QStringLiteral("扩展帧") : QStringLiteral("标准帧"),
+                     QStringLiteral("SEQ=%1").arg(gateway.captured(3))));
+        html += rawLine(body);
+        return html + QStringLiteral("</div>");
     }
-    else if (body.startsWith(QStringLiteral("TX Peer")) && parts.size() >= 2)
+
+    static const QRegularExpression txPattern(
+        QStringLiteral("^TX Node\\s*(\\d+)\\s+·\\s+([^·]+)\\s+·\\s+CAN=(0x[0-9A-Fa-f]+)\\s+"
+                       "·\\s+DATA=(.*)$"));
+    const QRegularExpressionMatch tx = txPattern.match(body);
+    if (tx.hasMatch())
     {
-        summary = QStringLiteral("发送 · Peer · %1").arg(commandNameZh(parts.at(1)));
-        color = textError ? QStringLiteral("#d64545")
-                          : textWarning ? QStringLiteral("#b06a00") : QStringLiteral("#2369c8");
-        raw = body;
+        const QString commandName = tx.captured(2).trimmed();
+        const QString data = tx.captured(4).trimmed();
+        const QString stateColor = textError ? QStringLiteral("#cf3030")
+                                             : textWarning ? QStringLiteral("#a46300")
+                                                           : QStringLiteral("#2167b2");
+        QString html = baseLine(
+            tag(QStringLiteral("发送 TX"), stateColor,
+                textError ? QStringLiteral("#fff0f0")
+                          : textWarning ? QStringLiteral("#fff7e5") : QStringLiteral("#eaf3ff"))
+                + tag(QStringLiteral("STD"), QStringLiteral("#5b6f83"), QStringLiteral("#f1f4f7"))
+                + tag(QStringLiteral("DLC %1").arg(byteLength(data)), QStringLiteral("#304f70"), QStringLiteral("#eef4fa"))
+                + tag(QStringLiteral("ID %1").arg(tx.captured(3).toUpper()), QStringLiteral("#304f70"), QStringLiteral("#eef4fa")),
+            QStringLiteral("节点 %1 · %2").arg(tx.captured(1), commandNameZh(commandName)));
+        html += rawLine(body);
+        return html + QStringLiteral("</div>");
     }
-    else if (body.startsWith(QStringLiteral("RX ")) && parts.size() >= 3)
+
+    if (body.startsWith(QStringLiteral("TX Peer")) && parts.size() >= 2)
     {
-        summary = QStringLiteral("接收 · 节点 %1 · %2 · 状态：%3 · %4")
-                      .arg(parts.at(0).mid(3), commandNameZh(parts.at(1)), statusNameZh(status),
-                           responseResultZh(parts.at(1), status, responseData(body)));
+        const QString color = textError ? QStringLiteral("#cf3030")
+                                        : textWarning ? QStringLiteral("#a46300")
+                                                      : QStringLiteral("#2167b2");
+        QString html = baseLine(tag(QStringLiteral("发送 TX"), color,
+                                    textError ? QStringLiteral("#fff0f0")
+                                              : textWarning ? QStringLiteral("#fff7e5") : QStringLiteral("#eaf3ff")),
+                                QStringLiteral("Peer · %1").arg(commandNameZh(parts.at(1))));
+        html += rawLine(body);
+        return html + QStringLiteral("</div>");
+    }
+
+    if (body.startsWith(QStringLiteral("RX ")) && parts.size() >= 3)
+    {
+        const QString result = responseResultZh(parts.at(1), status, responseData(body));
         const bool responseError = status.compare(QStringLiteral("ERROR"), Qt::CaseInsensitive) == 0
                                    || status.contains(QStringLiteral("错误"))
                                    || status.contains(QStringLiteral("失败"))
                                    || body.contains(QStringLiteral("错误码"));
-        color = responseError ? QStringLiteral("#d64545")
-                              : (textWarning ? QStringLiteral("#b06a00") : QStringLiteral("#078d4a"));
-        raw = body;
-    }
-    else if (body.startsWith(QStringLiteral("Peer · ")) && parts.size() >= 2)
-    {
-        summary = QStringLiteral("接收 · Peer · %1").arg(commandNameZh(parts.at(1)));
-        color = textError ? QStringLiteral("#d64545")
-                          : textWarning ? QStringLiteral("#b06a00") : QStringLiteral("#078d4a");
-        raw = body;
-    }
-    else if (body.startsWith(QStringLiteral("解析到 CAN")))
-    {
-        summary = QStringLiteral("接收 · CAN 网关帧");
-        const bool gatewayError = body.contains(QStringLiteral("CAN 0x000007FA"))
-                                  || body.contains(QStringLiteral("CAN 0x000007FB"))
-                                  || body.contains(QStringLiteral("CAN 0x000007FC"));
-        const bool gatewayWarning = body.contains(QStringLiteral("CAN 0x000007FD"))
-                                    || body.contains(QStringLiteral("CAN 0x000007FE"));
-        color = gatewayError ? QStringLiteral("#d64545")
-                             : gatewayWarning ? QStringLiteral("#b06a00")
-                                               : QStringLiteral("#078d4a");
-        raw = body;
-    }
-    else if (textError)
-    {
-        color = QStringLiteral("#d64545");
-    }
-    else if (textWarning)
-    {
-        color = QStringLiteral("#b06a00");
+        const QString color = responseError ? QStringLiteral("#cf3030")
+                                            : (textWarning ? QStringLiteral("#a46300") : QStringLiteral("#087f5b"));
+        QString html = baseLine(tag(QStringLiteral("接收 RX"), color,
+                                    responseError ? QStringLiteral("#fff0f0")
+                                                  : textWarning ? QStringLiteral("#fff7e5") : QStringLiteral("#e9f8ef"))
+                                      + tag(QStringLiteral("STD"), QStringLiteral("#5b6f83"), QStringLiteral("#f1f4f7")),
+                                QStringLiteral("节点 %1 · %2 · 状态：%3 · %4")
+                                    .arg(parts.at(0).mid(3), commandNameZh(parts.at(1)), statusNameZh(status), result));
+        html += rawLine(body);
+        return html + QStringLiteral("</div>");
     }
 
-    QString html = QStringLiteral("<div style=\"color:%1; margin:1px 0;\"><b>%2</b> %3")
-                       .arg(color, time.toHtmlEscaped(), summary.toHtmlEscaped());
-    if (!raw.isEmpty())
+    if (body.startsWith(QStringLiteral("Peer · ")) && parts.size() >= 2)
     {
-        html += QStringLiteral("<br/><span style=\"color:#8798aa;\">原始：%1</span>")
-                    .arg(raw.toHtmlEscaped());
+        const QString color = textError ? QStringLiteral("#cf3030")
+                                        : textWarning ? QStringLiteral("#a46300")
+                                                      : QStringLiteral("#087f4a");
+        QString html = baseLine(tag(QStringLiteral("接收 RX"), color,
+                                    textError ? QStringLiteral("#fff0f0")
+                                              : textWarning ? QStringLiteral("#fff7e5") : QStringLiteral("#e9f8ef")),
+                                QStringLiteral("Peer · %1").arg(commandNameZh(parts.at(1))));
+        html += rawLine(body);
+        return html + QStringLiteral("</div>");
     }
+
+    const QString color = textError ? QStringLiteral("#cf3030")
+                                    : textWarning ? QStringLiteral("#a46300")
+                                                  : QStringLiteral("#5b7390");
+    const QString background = textError ? QStringLiteral("#fff0f0")
+                                         : textWarning ? QStringLiteral("#fff7e5") : QStringLiteral("#f1f4f7");
+    QString html = baseLine(tag(textError ? QStringLiteral("错误") : textWarning ? QStringLiteral("警告")
+                                                                        : QStringLiteral("信息"),
+                              color, background),
+                            body);
     return html + QStringLiteral("</div>");
 }
 

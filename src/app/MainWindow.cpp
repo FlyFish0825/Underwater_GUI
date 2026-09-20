@@ -18,6 +18,7 @@
 #include <QGraphicsView>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QScreen>
@@ -198,6 +199,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setWindowTitle(QStringLiteral("水下机器人上位机"));
+    setWindowIcon(QIcon(QStringLiteral(":/icons/project_logo.png")));
     setContentsMargins(1, 1, 1, 1);
     setMinimumSize(kMinimumWindowWidth, kMinimumWindowHeight);
     resize(initialWindowSize(QGuiApplication::primaryScreen()));
@@ -216,7 +218,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     auto *topLayout = new QHBoxLayout(topBar);
     topLayout->setContentsMargins(20, 0, 18, 0);
     topLayout->setSpacing(10);
-    auto *brandIcon = new IconWidget(IconKind::Brand, topBar);
+    auto *brandIcon = new QLabel(topBar);
+    brandIcon->setPixmap(QIcon(QStringLiteral(":/icons/project_logo.png")).pixmap(28, 28));
+    brandIcon->setScaledContents(true);
     brandIcon->setFixedSize(28, 28);
     topLayout->addWidget(brandIcon);
     topLayout->addWidget(
@@ -317,7 +321,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     auto *firmware = new FirmwarePage;
     auto *manipulator = new ManipulatorPage;
     auto *vision = new VisionPage;
-    auto *settings = new SettingsPlaceholder;
+    auto *settings = new SettingsPlaceholder(firmware->connectionBar());
     const auto scrollablePage = [](QWidget *page, const QString &objectName)
     {
         auto *scroll = new QScrollArea;
@@ -343,6 +347,42 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     // 组合根把同一条网关 CAN 帧流交给数据服务；UI 页面只订阅快照，
     // 不直接接触 USB CDC、AA55 或 CAN ID。
     m_motorData = new ObserverMotorDataService(this);
+    auto *communication = firmware->communicationService();
+    connect(settings, &SettingsPlaceholder::canBitrateApplyRequested, this,
+            [settings, communication](const quint32 nominalBps, const quint32 dataBps)
+            {
+                if (communication == nullptr || !communication->setCanBitrate(nominalBps, dataBps))
+                    settings->onCanBitrateError(QStringLiteral("无法提交 CAN 速率配置"));
+            });
+    connect(communication, &BootloaderCommunicationService::canBitrateConfigured, settings,
+            &SettingsPlaceholder::onCanBitrateConfigured);
+    connect(communication, &BootloaderCommunicationService::canBitrateError, settings,
+            &SettingsPlaceholder::onCanBitrateError);
+    connect(communication, &BootloaderCommunicationService::opened, settings,
+            [settings](const QString &) { settings->setGatewayConnected(true); });
+    connect(communication, &BootloaderCommunicationService::closed, settings,
+            [settings]() { settings->setGatewayConnected(false); });
+    connect(communication, &BootloaderCommunicationService::opened, this,
+            [this](const QString &)
+            {
+                if (m_gatewayStatus != nullptr)
+                {
+                    m_gatewayStatus->setText(QStringLiteral("●  CAN 网关在线"));
+                    m_gatewayStatus->setStyleSheet(QStringLiteral("color: #078d4a; font-weight: 600;"));
+                }
+            });
+    connect(communication, &BootloaderCommunicationService::closed, this,
+            [this]()
+            {
+                if (m_gatewayStatus != nullptr)
+                {
+                    m_gatewayStatus->setText(QStringLiteral("●  CAN 网关离线"));
+                    m_gatewayStatus->setStyleSheet(QStringLiteral("color: #8a8f98; font-weight: 600;"));
+                }
+            });
+    // FirmwarePage may auto-connect in its constructor, before these signals
+    // are subscribed. Seed settings from the live service as well.
+    settings->setGatewayConnected(communication->isOpen());
     connect(firmware->communicationService(), &BootloaderCommunicationService::frameReceived,
             this,
             [this](const CanGatewayFrame &frame)
@@ -372,11 +412,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_pageProxy = m_pageScene->addWidget(m_pages);
     m_pageView->setScene(m_pageScene);
     bodyLayout->addWidget(m_pageView, 1);
-    // USB CDC 连接检查属于全局状态，不放在 Bootloader 页面内部。
-    if (QWidget *connectionBar = firmware->connectionBar())
-    {
-        rootLayout->insertWidget(1, connectionBar, 0);
-    }
     rootLayout->addWidget(body, 1);
 
     auto *footer = new QFrame(root);
@@ -390,10 +425,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     footerLayout->addWidget(
         makeLabel(QStringLiteral("2026-09-16 18:21:04"), QStringLiteral("mutedLabel")));
     footerLayout->addStretch();
+    m_gatewayStatus = statusDotLabel(QStringLiteral("CAN 网关离线"), QStringLiteral("#8a8f98"));
+    footerLayout->addWidget(m_gatewayStatus);
     m_footerLog =
         makeLabel(QStringLiteral("日志：信息   |   设备：未连接"), QStringLiteral("mutedLabel"));
     footerLayout->addWidget(m_footerLog);
     rootLayout->addWidget(footer);
+    if (communication->isOpen())
+    {
+        m_gatewayStatus->setText(QStringLiteral("●  CAN 网关在线"));
+        m_gatewayStatus->setStyleSheet(QStringLiteral("color: #078d4a; font-weight: 600;"));
+    }
 
     connect(m_navGroup, &QButtonGroup::idClicked, this, &MainWindow::selectPage);
     buttons.at(0)->setChecked(true);

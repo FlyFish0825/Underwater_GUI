@@ -12,8 +12,10 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QTextBrowser>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QTextEdit>
 #include <QVBoxLayout>
 
@@ -38,6 +40,37 @@ bool isUpgradeMessage(const QString &message)
     return false;
 }
 
+bool isReceiveMessage(const QString &message)
+{
+    return message.startsWith(QStringLiteral("RX ")) || message.startsWith(QStringLiteral("Peer "))
+           || message.contains(QStringLiteral("解析到 CAN"));
+}
+
+bool isErrorMessage(const QString &message)
+{
+    return message.contains(QStringLiteral("错误")) || message.contains(QStringLiteral("失败"))
+           || message.contains(QStringLiteral("超时")) || message.contains(QStringLiteral("未连接"))
+           || message.contains(QStringLiteral("断开")) || message.contains(QStringLiteral("非法"));
+}
+
+bool isWarningMessage(const QString &message)
+{
+    const QString upper = message.toUpper();
+    return message.contains(QStringLiteral("等待")) || message.contains(QStringLiteral("重试"))
+           || message.contains(QStringLiteral("未响应")) || message.contains(QStringLiteral("自动探测"))
+           || upper.contains(QStringLiteral("ABORT")) || upper.contains(QStringLiteral("ENTER_BOOT"))
+           || upper.contains(QStringLiteral("JUMP_APP"));
+}
+
+bool isFdMessage(const QString &message)
+{
+    if (message.contains(QStringLiteral("CAN FD"), Qt::CaseInsensitive))
+        return true;
+    const QRegularExpression flagsPattern(QStringLiteral("FLAGS=0x([0-9A-Fa-f]+)"));
+    const QRegularExpressionMatch match = flagsPattern.match(message);
+    return match.hasMatch() && (match.captured(1).toUInt(nullptr, 16) & 0x02U) != 0U;
+}
+
 } // namespace
 
 namespace rov
@@ -54,16 +87,29 @@ FirmwareHistoryDialog::FirmwareHistoryDialog(FirmwareHistoryStore *store, QWidge
     // 这里保留一个足够大的默认值，避免在窗口尚未完成布局时出现极小窗口。
     resize(900, 600);
     auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(8, 6, 8, 6);
+    root->setSpacing(4);
     auto *top = new QHBoxLayout;
+    top->setSpacing(3);
     top->addWidget(new QLabel(QStringLiteral("历史事件（实时日志清理不会删除；升级会话按整块显示）")));
     m_searchEdit = new AppLineEdit;
     m_searchEdit->setPlaceholderText(QStringLiteral("搜索节点、命令、CAN ID 或关键字"));
     m_searchEdit->setMinimumWidth(260);
     top->addWidget(m_searchEdit, 1);
     m_typeFilter = new AppComboBox;
-    m_typeFilter->addItems({QStringLiteral("全部"), QStringLiteral("发送"), QStringLiteral("接收"),
-                            QStringLiteral("错误")});
+    m_typeFilter->addItems({QStringLiteral("全部"), QStringLiteral("升级"), QStringLiteral("接收 RX"),
+                            QStringLiteral("发送 TX"), QStringLiteral("警告"), QStringLiteral("错误"),
+                            QStringLiteral("Classic CAN"), QStringLiteral("CAN FD")});
     top->addWidget(m_typeFilter);
+    m_nodeFilter = new AppComboBox;
+    m_nodeFilter->addItem(QStringLiteral("全部节点"), 0);
+    for (int node = 1; node <= 8; ++node)
+        m_nodeFilter->addItem(QStringLiteral("节点 %1").arg(node), node);
+    top->addWidget(m_nodeFilter);
+    m_canIdEdit = new AppLineEdit;
+    m_canIdEdit->setPlaceholderText(QStringLiteral("CAN ID"));
+    m_canIdEdit->setMaximumWidth(100);
+    top->addWidget(m_canIdEdit);
     m_pageSizeCombo = new AppComboBox;
     m_pageSizeCombo->addItem(QStringLiteral("50 条/页"), 50);
     m_pageSizeCombo->addItem(QStringLiteral("100 条/页"), 100);
@@ -75,7 +121,8 @@ FirmwareHistoryDialog::FirmwareHistoryDialog(FirmwareHistoryStore *store, QWidge
     root->addLayout(top);
     m_view = new QTextBrowser;
     m_view->setReadOnly(true);
-    m_view->setLineWrapMode(QTextEdit::NoWrap);
+    m_view->setLineWrapMode(QTextEdit::WidgetWidth);
+    m_view->document()->setDocumentMargin(3);
     m_view->setOpenLinks(false);
     m_view->setOpenExternalLinks(false);
     root->addWidget(m_view);
@@ -98,6 +145,18 @@ FirmwareHistoryDialog::FirmwareHistoryDialog(FirmwareHistoryStore *store, QWidge
                 rebuildIndex();
             });
     connect(m_typeFilter, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this]()
+            {
+                m_page = 0;
+                rebuildIndex();
+            });
+    connect(m_nodeFilter, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this]()
+            {
+                m_page = 0;
+                rebuildIndex();
+            });
+    connect(m_canIdEdit, &QLineEdit::textChanged, this,
             [this]()
             {
                 m_page = 0;
@@ -149,15 +208,44 @@ bool FirmwareHistoryDialog::matchesFilter(const FirmwareHistoryEntry &entry) con
 
     const QString filter = m_typeFilter == nullptr ? QStringLiteral("全部")
                                                     : m_typeFilter->currentText();
-    if (filter == QStringLiteral("发送"))
-        return message.startsWith(QStringLiteral("TX "));
-    if (filter == QStringLiteral("接收"))
-        return message.startsWith(QStringLiteral("RX ")) || message.startsWith(QStringLiteral("Peer "))
-               || message.startsWith(QStringLiteral("解析到 CAN"));
-    if (filter == QStringLiteral("错误"))
-        return message.contains(QStringLiteral("错误")) || message.contains(QStringLiteral("失败"))
-               || message.contains(QStringLiteral("超时")) || message.contains(QStringLiteral("未连接"))
-               || message.contains(QStringLiteral("断开"));
+    if (filter == QStringLiteral("升级") && !isUpgradeMessage(message))
+        return false;
+    if (filter == QStringLiteral("发送 TX") && !message.startsWith(QStringLiteral("TX ")))
+        return false;
+    if (filter == QStringLiteral("接收 RX") && !isReceiveMessage(message))
+        return false;
+    if (filter == QStringLiteral("警告") && !isWarningMessage(message))
+        return false;
+    if (filter == QStringLiteral("错误") && !isErrorMessage(message))
+        return false;
+    if (filter == QStringLiteral("Classic CAN") && isFdMessage(message))
+        return false;
+    if (filter == QStringLiteral("CAN FD") && !isFdMessage(message))
+        return false;
+
+    const int node = m_nodeFilter == nullptr ? 0 : m_nodeFilter->currentData().toInt();
+    if (node > 0)
+    {
+        const QRegularExpression nodePattern(
+            QStringLiteral("(?:Node\\s*%1\\b|节点\\s*0x?%1\\b|RX\\s+0x0*%1\\b|"
+                           "(?:Source|Target)=0x?0*%1\\b)")
+                .arg(node));
+        if (!nodePattern.match(message).hasMatch())
+            return false;
+    }
+
+    const QString canId = m_canIdEdit == nullptr ? QString() : m_canIdEdit->text().trimmed();
+    if (!canId.isEmpty())
+    {
+        QString normalized = canId;
+        if (normalized.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive))
+            normalized = normalized.mid(2);
+        const QRegularExpression idPattern(
+            QStringLiteral("(?:CAN[ =]|ID\\s+)0x?%1\\b").arg(QRegularExpression::escape(normalized)),
+            QRegularExpression::CaseInsensitiveOption);
+        if (!idPattern.match(message).hasMatch())
+            return false;
+    }
     return true;
 }
 
@@ -224,7 +312,8 @@ void FirmwareHistoryDialog::renderPage()
     }
     if (lines.isEmpty())
         lines.append(QStringLiteral("<span style=\"color:#8798aa;\">暂无匹配的历史记录</span>"));
-    m_view->setHtml(lines.join(QStringLiteral("<br/>")));
+    // 每条格式化日志已经是独立 div，直接连接可避免人为插入的空白行。
+    m_view->setHtml(lines.join(QString()));
     m_view->moveCursor(QTextCursor::Start);
     updatePageControls();
 }

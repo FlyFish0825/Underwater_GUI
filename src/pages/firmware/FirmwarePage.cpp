@@ -24,16 +24,19 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QLineEdit>
 #include <QLocale>
 #include <QMimeData>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTextBrowser>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QTextEdit>
 #include <QRegularExpression>
 #include <QTimer>
@@ -229,7 +232,7 @@ QString commandNameZh(const QString &name)
         {QStringLiteral("VERIFY"), QStringLiteral("校验固件")},
         {QStringLiteral("WRITE_END"), QStringLiteral("结束写入")},
         {QStringLiteral("ABORT"), QStringLiteral("中止操作")},
-        {QStringLiteral("JUMP_APP"), QStringLiteral("启动 APP")},
+        {QStringLiteral("JUMP_APP"), QStringLiteral("安全试运行 APP")},
         {QStringLiteral("RESET"), QStringLiteral("复位节点")},
         {QStringLiteral("GET_STATUS"), QStringLiteral("读取运行状态")},
         {QStringLiteral("VERIFY_REQUEST"), QStringLiteral("请求校验")},
@@ -458,10 +461,10 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     addCommon(QStringLiteral("进入 Boot"), BootCommand::EnterBoot, 2, 0);
     addCommon(QStringLiteral("复位节点"), BootCommand::Reset, 2, 1);
     addCommon(QStringLiteral("中止操作"), BootCommand::Abort, 3, 0);
-    auto *jump = makeButton(QStringLiteral("启动 APP"), QStringLiteral("softButton"));
+    auto *jump = makeButton(QStringLiteral("试运行 APP"), QStringLiteral("softButton"));
     commonGrid->addWidget(jump, 3, 1);
     connect(jump, &QPushButton::clicked, this,
-            [this]() { sendCommonCommand(BootCommand::JumpApp, QStringLiteral("启动 APP")); });
+            [this]() { sendCommonCommand(BootCommand::JumpApp, QStringLiteral("试运行 APP"), 0x01U); });
     commonGrid->setHorizontalSpacing(5);
     commonGrid->setVerticalSpacing(5);
     commandColumn->addLayout(commonGrid);
@@ -490,6 +493,12 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     addState(QStringLiteral("Status"), m_stateStatus, 5);
     addState(QStringLiteral("Last Error"), m_stateError, 6);
     addState(QStringLiteral("Progress"), m_stateProgress, 7);
+    // 完成消息可能包含较长的验证结果，必须让值列吸收可用宽度并在卡片内换行，
+    // 避免 QLabel 的单行 sizeHint 把“节点控制”卡片和整页横向撑宽。
+    state->setColumnStretch(1, 1);
+    m_stateProgress->setWordWrap(true);
+    m_stateProgress->setMinimumWidth(0);
+    m_stateProgress->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     stateColumn->addLayout(state);
     stateColumn->addStretch();
     nodeBody->addLayout(stateColumn, 1);
@@ -602,8 +611,9 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     right->addWidget(targetCard, 0);
 
     auto *logCard = new CardWidget(QStringLiteral("升级日志"), IconKind::List);
-    logCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
-    logCard->contentLayout()->setSpacing(5);
+    // 日志本身会持续增长，局部压缩卡片边距，给有效日志内容更多可见高度。
+    logCard->contentLayout()->setContentsMargins(6, 3, 6, 4);
+    logCard->contentLayout()->setSpacing(2);
     auto *clearLog = makeButton(QStringLiteral("清屏"), QStringLiteral("softButton"));
     auto *history = makeButton(QStringLiteral("历史记录"), QStringLiteral("softButton"));
     m_logRecordButton = makeButton(QStringLiteral("开始记录"), QStringLiteral("softButton"));
@@ -616,15 +626,65 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
         qobject_cast<QHBoxLayout *>(logCard->titleLabel()->parentWidget()->layout());
     if (logHeaderLayout != nullptr)
     {
+        // 只压缩这张日志卡片的标题栏，不改变其他页面的 CardWidget 外观。
+        logHeaderLayout->setContentsMargins(8, 4, 8, 4);
+        logHeaderLayout->setSpacing(4);
         logHeaderLayout->addWidget(m_logRecordButton);
         logHeaderLayout->addWidget(m_viewRecordedButton);
         logHeaderLayout->addWidget(m_exportRecordedButton);
         logHeaderLayout->addWidget(clearLog);
         logHeaderLayout->addWidget(history);
     }
+    for (QPushButton *button : {m_logRecordButton, m_viewRecordedButton, m_exportRecordedButton,
+                                clearLog, history})
+        button->setMaximumHeight(26);
+
+    // 日志筛选只影响当前卡片的显示，不会删除、修改或过滤底层通信数据。
+    auto *logFilterLayout = new QHBoxLayout;
+    logFilterLayout->setContentsMargins(0, 0, 0, 0);
+    logFilterLayout->setSpacing(3);
+    m_logFilter = new QComboBox;
+    m_logFilter->addItems({QStringLiteral("全部"), QStringLiteral("升级"), QStringLiteral("接收 RX"),
+                           QStringLiteral("发送 TX"), QStringLiteral("警告"), QStringLiteral("错误"),
+                           QStringLiteral("Classic CAN"), QStringLiteral("CAN FD")});
+    m_logFilter->setToolTip(QStringLiteral("仅筛选日志卡片中显示的内容"));
+    m_logFilter->setFixedHeight(26);
+    logFilterLayout->addWidget(m_logFilter);
+    m_logNodeFilter = new QComboBox;
+    m_logNodeFilter->addItem(QStringLiteral("全部节点"), 0);
+    for (int node = 1; node <= 8; ++node)
+        m_logNodeFilter->addItem(QStringLiteral("节点 %1").arg(node), node);
+    m_logNodeFilter->setToolTip(QStringLiteral("按节点筛选显示日志"));
+    m_logNodeFilter->setFixedHeight(26);
+    logFilterLayout->addWidget(m_logNodeFilter);
+    m_logCanIdFilter = new QLineEdit;
+    m_logCanIdFilter->setPlaceholderText(QStringLiteral("CAN ID"));
+    m_logCanIdFilter->setMaximumWidth(100);
+    m_logCanIdFilter->setToolTip(QStringLiteral("例如 0x501 或 501"));
+    m_logCanIdFilter->setFixedHeight(26);
+    logFilterLayout->addWidget(m_logCanIdFilter);
+    m_logSearchFilter = new QLineEdit;
+    m_logSearchFilter->setPlaceholderText(QStringLiteral("搜索日志"));
+    m_logSearchFilter->setMinimumWidth(120);
+    m_logSearchFilter->setFixedHeight(26);
+    logFilterLayout->addWidget(m_logSearchFilter, 1);
+    m_logFollowButton = makeButton(QStringLiteral("跟随最新"), QStringLiteral("softButton"));
+    m_logFollowButton->setCheckable(true);
+    m_logFollowButton->setChecked(true);
+    m_logFollowButton->setToolTip(QStringLiteral("滚动到日志底部后自动显示最新记录"));
+    m_logFollowButton->setFixedHeight(26);
+    logFilterLayout->addWidget(m_logFollowButton);
+    m_logPauseButton = makeButton(QStringLiteral("暂停显示"), QStringLiteral("softButton"));
+    m_logPauseButton->setCheckable(true);
+    m_logPauseButton->setToolTip(QStringLiteral("暂停界面刷新，不影响后台接收和历史记录保存"));
+    m_logPauseButton->setFixedHeight(26);
+    logFilterLayout->addWidget(m_logPauseButton);
+    logCard->contentLayout()->addLayout(logFilterLayout);
+
     m_requestLog = new QTextBrowser;
     m_requestLog->setReadOnly(true);
-    m_requestLog->setLineWrapMode(QTextEdit::NoWrap);
+    m_requestLog->setLineWrapMode(QTextEdit::WidgetWidth);
+    m_requestLog->document()->setDocumentMargin(3);
     m_requestLog->setMinimumHeight(100);
     m_requestLog->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_requestLog->setOpenLinks(false);
@@ -679,6 +739,43 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     connect(m_logRecordButton, &QPushButton::clicked, this, &FirmwarePage::toggleLogRecording);
     connect(m_viewRecordedButton, &QPushButton::clicked, this, &FirmwarePage::showRecordedLogs);
     connect(m_exportRecordedButton, &QPushButton::clicked, this, &FirmwarePage::exportRecordedLogs);
+    const auto rerenderLog = [this]()
+    {
+        if (!m_logPaused)
+            renderRuntimeLog();
+    };
+    connect(m_logFilter, qOverload<int>(&QComboBox::currentIndexChanged), this, rerenderLog);
+    connect(m_logNodeFilter, qOverload<int>(&QComboBox::currentIndexChanged), this, rerenderLog);
+    connect(m_logCanIdFilter, &QLineEdit::textChanged, this, rerenderLog);
+    connect(m_logSearchFilter, &QLineEdit::textChanged, this, rerenderLog);
+    connect(m_logFollowButton, &QPushButton::toggled, this,
+            [this](const bool follow)
+            {
+                m_logFollowing = follow;
+                if (follow && m_requestLog != nullptr)
+                    m_requestLog->moveCursor(QTextCursor::End);
+            });
+    connect(m_logPauseButton, &QPushButton::toggled, this,
+            [this](const bool paused)
+            {
+                m_logPaused = paused;
+                m_logPauseButton->setText(paused ? QStringLiteral("继续显示") : QStringLiteral("暂停显示"));
+                if (!paused)
+                    renderRuntimeLog();
+            });
+    connect(m_requestLog->verticalScrollBar(), &QScrollBar::valueChanged, this,
+            [this](const int value)
+            {
+                if (m_requestLog == nullptr || m_logFollowButton == nullptr)
+                    return;
+                const QScrollBar *bar = m_requestLog->verticalScrollBar();
+                const bool atBottom = value >= bar->maximum() - 2;
+                if (atBottom == m_logFollowing)
+                    return;
+                m_logFollowing = atBottom;
+                QSignalBlocker blocker(m_logFollowButton);
+                m_logFollowButton->setChecked(atBottom);
+            });
 
     m_communication = new BootloaderCommunicationService(this);
     m_bootloader = new BootloaderService(m_communication, this);
@@ -1016,6 +1113,10 @@ void FirmwarePage::selectTableRow(int row, int column)
 void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, quint8 byte2,
                                      const QByteArray &params)
 {
+    // 统一安全边界：页面上任何 JUMP_APP 都只能走 Trial 模式。不能让普通
+    // Byte2=0x00 跳转绕过 Bootloader 看门狗和 APP 返回 Boot 的验证。
+    if (command == BootCommand::JumpApp)
+        byte2 = 0x01U;
     if (command == BootCommand::Abort && m_downloadController != nullptr
         && m_downloadController->isRunning())
     {
@@ -1048,6 +1149,10 @@ void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, 
                            .arg(target)
                            .arg(raw));
         }
+        else if (command == BootCommand::JumpApp)
+            logRequest(QStringLiteral("TX Node%1 · JUMP_APP · CAN=0x000 · DATA=%2 · 安全 Trial 跳转：Bootloader 看门狗已接管，请随后发送 ENTER_BOOT 验证返回")
+                           .arg(target)
+                           .arg(raw));
         else
             logRequest(QStringLiteral("TX Node%1 · %2 · CAN=0x000 · DATA=%3")
                            .arg(target)
@@ -1200,6 +1305,10 @@ void FirmwarePage::showCommandCenter()
     connect(m_commandDialog, &BootloaderCommandDialog::commandRequested, this,
             [this](quint8 target, BootCommand command, quint8 byte2, const QByteArray &params)
             {
+                // 命令中心也不能绕过页面的 Trial 保护，即使在协议开发模式下
+                // 手动输入了 Byte2=0x00，也强制改为 Trial Jump。
+                if (command == BootCommand::JumpApp)
+                    byte2 = 0x01U;
                 if (m_bootloader != nullptr && m_communication != nullptr && m_communication->isOpen()
                     && m_bootloader->sendHostCommand(target, command, byte2, params))
                 {
@@ -1210,8 +1319,8 @@ void FirmwarePage::showCommandCenter()
                         logRequest(QStringLiteral("TX Node%1 · ENTER_BOOT · CAN=0x000 · DATA=%2 · APP 不回复 ACK，等待复位")
                                        .arg(target)
                                        .arg(raw));
-                    else if (command == BootCommand::JumpApp && byte2 == 1)
-                        logRequest(QStringLiteral("TX Node%1 · JUMP_APP · CAN=0x000 · DATA=%2 · Trial Jump，等待 APP 回传 ENTER_BOOT")
+                    else if (command == BootCommand::JumpApp)
+                        logRequest(QStringLiteral("TX Node%1 · JUMP_APP · CAN=0x000 · DATA=%2 · 安全 Trial Jump：Bootloader 看门狗保护，需由上位机发送 ENTER_BOOT 验证返回")
                                        .arg(target)
                                        .arg(raw));
                     else
@@ -1461,14 +1570,93 @@ void FirmwarePage::toggleSerialConnection()
     m_communication->open(m_serialDevices.at(index));
 }
 
+bool FirmwarePage::matchesRuntimeLogFilter(const QString &message) const
+{
+    const QString filter = m_logFilter == nullptr ? QStringLiteral("全部") : m_logFilter->currentText();
+    const QString upper = message.toUpper();
+    const bool isReceive = message.startsWith(QStringLiteral("RX "))
+                           || message.startsWith(QStringLiteral("Peer "))
+                           || message.contains(QStringLiteral("解析到 CAN"));
+    const bool isSend = message.startsWith(QStringLiteral("TX "));
+    const bool isError = message.contains(QStringLiteral("错误")) || message.contains(QStringLiteral("失败"))
+                         || message.contains(QStringLiteral("超时")) || message.contains(QStringLiteral("未连接"))
+                         || message.contains(QStringLiteral("断开")) || message.contains(QStringLiteral("非法"));
+    const bool isWarning = message.contains(QStringLiteral("等待")) || message.contains(QStringLiteral("重试"))
+                           || message.contains(QStringLiteral("未响应")) || message.contains(QStringLiteral("自动探测"))
+                           || upper.contains(QStringLiteral("ABORT")) || upper.contains(QStringLiteral("ENTER_BOOT"))
+                           || upper.contains(QStringLiteral("JUMP_APP"));
+    const bool isUpgrade = upper.contains(QStringLiteral("SESSION_")) || upper.contains(QStringLiteral("ERASE"))
+                           || upper.contains(QStringLiteral("WRITE")) || upper.contains(QStringLiteral("VERIFY"))
+                           || upper.contains(QStringLiteral("COMMIT")) || upper.contains(QStringLiteral("MISSING_"))
+                           || upper.contains(QStringLiteral("FULL_STREAM")) || upper.contains(QStringLiteral("ROLLBACK"));
+    bool isFd = upper.contains(QStringLiteral("CAN FD"));
+    const QRegularExpression flagsPattern(QStringLiteral("FLAGS=0x([0-9A-F]+)"));
+    const QRegularExpressionMatch flagsMatch = flagsPattern.match(upper);
+    if (flagsMatch.hasMatch())
+        isFd = (flagsMatch.captured(1).toUInt(nullptr, 16) & 0x02U) != 0U;
+
+    if (filter == QStringLiteral("升级") && !isUpgrade)
+        return false;
+    if (filter == QStringLiteral("接收 RX") && !isReceive)
+        return false;
+    if (filter == QStringLiteral("发送 TX") && !isSend)
+        return false;
+    if (filter == QStringLiteral("警告") && !isWarning)
+        return false;
+    if (filter == QStringLiteral("错误") && !isError)
+        return false;
+    if (filter == QStringLiteral("Classic CAN") && isFd)
+        return false;
+    if (filter == QStringLiteral("CAN FD") && !isFd)
+        return false;
+
+    const int node = m_logNodeFilter == nullptr ? 0 : m_logNodeFilter->currentData().toInt();
+    if (node > 0)
+    {
+        const QRegularExpression nodePattern(
+            QStringLiteral("(?:Node\\s*%1\\b|节点\\s*0x?%1\\b|RX\\s+0x0*%1\\b|"
+                           "(?:Source|Target)=0x?0*%1\\b)")
+                .arg(node));
+        if (!nodePattern.match(message).hasMatch())
+            return false;
+    }
+
+    const QString canId = m_logCanIdFilter == nullptr ? QString() : m_logCanIdFilter->text().trimmed();
+    if (!canId.isEmpty())
+    {
+        QString normalized = canId;
+        if (normalized.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive))
+            normalized = normalized.mid(2);
+        const QRegularExpression idPattern(
+            QStringLiteral("(?:CAN[ =]|ID\\s+)0x?%1\\b").arg(QRegularExpression::escape(normalized)),
+            QRegularExpression::CaseInsensitiveOption);
+        if (!idPattern.match(message).hasMatch())
+            return false;
+    }
+
+    const QString search = m_logSearchFilter == nullptr ? QString() : m_logSearchFilter->text().trimmed();
+    return search.isEmpty() || message.contains(search, Qt::CaseInsensitive);
+}
+
 void FirmwarePage::renderRuntimeLog()
 {
-    if (m_requestLog == nullptr)
+    if (m_requestLog == nullptr || m_logPaused)
         return;
-    m_requestLog->clear();
+    const int oldScrollValue = m_requestLog->verticalScrollBar()->value();
+    QStringList lines;
     for (const QString &line : m_runtimeLog)
-        m_requestLog->append(formatFirmwareLogHtml(line));
-    m_requestLog->moveCursor(QTextCursor::End);
+    {
+        if (matchesRuntimeLogFilter(line))
+            lines.append(formatFirmwareLogHtml(line));
+    }
+    if (lines.isEmpty())
+        lines.append(QStringLiteral("<span style=\"color:#8798aa;\">暂无匹配的日志</span>"));
+    // formatFirmwareLogHtml() 本身已返回块级 div；额外 br 会制造一整行空白。
+    m_requestLog->setHtml(lines.join(QString()));
+    if (m_logFollowing)
+        m_requestLog->moveCursor(QTextCursor::End);
+    else
+        m_requestLog->verticalScrollBar()->setValue(oldScrollValue);
 }
 
 void FirmwarePage::logRequest(const QString &message)

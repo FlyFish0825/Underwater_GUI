@@ -46,7 +46,8 @@ AA58 和 AA59 解码器，避免固件数据内部出现 `AA55` 时被误认为�
 - 启动后每秒扫描一次匹配设备。
 - 找到设备后自动连接第一个匹配串口。
 - 设备拔出、串口错误或心跳超时后自动重新搜索。
-- `AA 58` 20 字节 System PING 独立解析，使用 CRC16-CCITT。
+- `AA 58` System PING 独立解析，当前为 25 字节（携带 5 个缓冲区占用率），
+  同时兼容旧版 20 字节格式，使用 CRC16-CCITT。
 - 心跳不显示原始数据，只更新在线状态和心跳计数。
 - 心跳约 2.5 秒未到时显示红色离线状态。
 
@@ -114,12 +115,16 @@ Trial 使用同一个 `JUMP_APP` 命令（`0x20`）的 Byte2，不新增命令�
 
 ```text
 1. 发送 Trial Jump：01 20 01 00 00 00 00 86
-2. APP 启动后发送：01 04 00 00 00 00 00 7B
+2. APP 完成 CAN 初始化后，上位机发送：01 04 00 00 00 00 00 7B
 ```
 
 Bootloader 识别第二步为 Trial 成功，恢复 `app_valid=1`，但仍停留在
-Bootloader 等待后续命令。命令中心已提供“正常启动”和“试运行 Trial”两种
-Byte2 选择；如果目标 Bootloader 尚未启用 Trial，界面不得模拟成功。
+Bootloader 等待后续命令。上位机不提供 Byte2=0x00 的直接跳转：任何从
+Bootloader 启动 APP 的操作都固定使用 Trial（Byte2=0x01）。Bootloader 会在
+Trial 前开启自身 IWDG；上位机在 APP 完成 CAN 初始化后连续发送 ENTER_BOOT，
+只有 APP 主动复位回 Bootloader 且 `app_valid` 恢复为 1 才算成功。成功后本次仍
+停留 Bootloader；下一次复位或上电由 Bootloader 自动启动已验证的 APP。如果 APP
+无法返回，IWDG 会把 MCU 拉回 Bootloader，APP 保持未验证，避免软变砖。
 
 ### 固件前置条件
 
@@ -178,7 +183,7 @@ F:\file\BaiduSyncdisk\Project\Observer_Motor\build\Boot-Release\Observer_boot.bi
 - 常用命令发送和响应解析；
 - Bootloader 命令中心与 Peer 监视；
 - 固件页节点选择和结构化节点状态。
-- Legacy 单节点正式下载：`ENTER_BOOT → ERASE → WRITE → DATA → WRITE_END → VERIFY → JUMP_APP`；
+- Legacy 单节点正式下载：`ENTER_BOOT → ERASE → WRITE → DATA → WRITE_END → VERIFY → Trial JUMP_APP → ENTER_BOOT 返回验证`；
 - 64 字节逻辑 DATA 包、56 字节有效载荷；正式下载固定由 H750 拆成 Classic CAN `0x100~0x107` 八片分片；
 - APP DATA 通过 AA59 Credit/ACK 发送，不再依赖固定毫秒延时；
 - CRC-32/MPEG-2 计算、下载阶段、数据包进度和设备错误码显示。

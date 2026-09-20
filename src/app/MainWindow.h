@@ -48,6 +48,7 @@ class MainWindow final : public QMainWindow
     QButtonGroup *m_navGroup = nullptr;
     QLabel *m_footerStatus = nullptr;
     QLabel *m_footerLog = nullptr;
+    QLabel *m_gatewayStatus = nullptr;
     ObserverMotorDataService *m_motorData = nullptr;
     bool m_screenSignalConnected = false;
 };

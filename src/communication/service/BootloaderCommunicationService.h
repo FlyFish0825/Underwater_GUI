@@ -1,6 +1,7 @@
 #pragma once
 
 #include "communication/protocol/CanFlowControlProtocol.h"
+#include "communication/protocol/CanGatewayConfigProtocol.h"
 #include "communication/protocol/CanGatewayProtocol.h"
 #include "communication/protocol/SystemHeartbeatProtocol.h"
 #include "communication/transport/SerialTransport.h"
@@ -24,6 +25,7 @@ class BootloaderCommunicationService final : public QObject
     void close();
     bool isOpen() const;
     bool sendCanFrame(const CanGatewayFrame &frame);
+    bool setCanBitrate(quint32 nominalBps, quint32 dataBps);
     /**
      * @brief 使用 AA59 Credit/ACK 状态机发送一批连续 CAN 逻辑块。
      *
@@ -41,6 +43,11 @@ class BootloaderCommunicationService final : public QObject
     void opened(const QString &portName);
     void closed();
     void errorOccurred(const QString &message);
+    void canBitrateConfigured(quint16 sequence,
+                              quint8 status,
+                              quint32 nominalBps,
+                              quint32 dataBps);
+    void canBitrateError(const QString &message);
     void flowTransferProgress(int completedBlocks, int totalBlocks);
     void flowTransferFinished(bool success, const QString &message);
 
@@ -61,9 +68,18 @@ class BootloaderCommunicationService final : public QObject
     void finishFlowTransfer(bool success, const QString &message);
     bool validateFlowBlock(const CanGatewayFrame &block, QString &error) const;
     void processReceivedBytes(const QByteArray &bytes);
+    void finishCanBitrateConfig(CanGatewayConfigStatus status,
+                                quint32 nominalBitrate,
+                                quint32 dataBitrate,
+                                const QString &message);
+    void handleCanBitrateConfigResponse(const QByteArray &packet);
 
     SerialTransport *m_transport = nullptr;
     CanGatewayDecoder m_decoder;
+    bool m_canBitratePending = false;
+    quint16 m_canBitrateSequence = 0;
+    CanGatewayConfigRequest m_pendingCanBitrate;
+    QTimer m_canBitrateTimeout;
     CanFlowDecoder m_flowDecoder;
     SystemHeartbeatDecoder m_heartbeatDecoder;
     QByteArray m_receiveBuffer;

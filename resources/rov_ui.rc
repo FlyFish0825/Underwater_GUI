@@ -1,3 +1,4 @@
 #define RT_MANIFEST 24
 
+IDI_ICON1 ICON "rov_ui.ico"
 1 RT_MANIFEST "rov_ui.manifest"

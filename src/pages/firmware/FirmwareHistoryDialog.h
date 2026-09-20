@@ -33,6 +33,8 @@ class FirmwareHistoryDialog final : public QDialog
     QTextBrowser *m_view = nullptr;
     QLineEdit *m_searchEdit = nullptr;
     QComboBox *m_typeFilter = nullptr;
+    QComboBox *m_nodeFilter = nullptr;
+    QLineEdit *m_canIdEdit = nullptr;
     QComboBox *m_pageSizeCombo = nullptr;
     QLabel *m_pageInfo = nullptr;
     QPushButton *m_previousButton = nullptr;

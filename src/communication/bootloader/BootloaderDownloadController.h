@@ -13,7 +13,10 @@ namespace rov
  * @brief Legacy 单节点固件下载状态机。
  *
  * 严格按照底层协议文档执行：ENTER_BOOT（无 ACK 等待）→ ERASE → WRITE →
- * DATA → WRITE_END → VERIFY → JUMP_APP。数据面固定使用 Session=0，并由
+ * DATA → WRITE_END → VERIFY → Trial JUMP_APP → APP ENTER_BOOT 返回验证。
+ * 试运行期间由下位机 Bootloader 开启 IWDG；只有 APP 能主动复位回
+ * Bootloader 后，Bootloader 才会恢复 app_valid。上位机不发送普通 JUMP_APP
+ * 直接切换新 APP，避免异常镜像使节点无法回到 Bootloader。数据面固定使用 Session=0，并由
  * BootloaderService 根据用户选择，将每个 64 字节 DATA 包通过 AA59 交给
  * H750：Classic CAN 由网关拆成 0x100~0x107，CAN FD+BRS 发送为一帧。
  */
@@ -48,7 +51,9 @@ class BootloaderDownloadController final : public QObject
         WaitingWindow,
         Ending,
         Verifying,
-        Jumping,
+        TrialBooting,
+        TrialReturning,
+        TrialChecking,
     };
 
     void step();
@@ -57,7 +62,9 @@ class BootloaderDownloadController final : public QObject
     void sendWrite();
     void sendWriteEnd();
     void sendVerify();
-    void sendJumpApp();
+    void sendTrialJump();
+    void sendTrialEnterBoot();
+    void queryTrialResult();
     void pumpData();
     void queryWindow();
     void handleWindow(const BootResponse &response);
@@ -90,6 +97,8 @@ class BootloaderDownloadController final : public QObject
     quint16 m_pendingWindowEnd = 0;
     bool m_hasDeferredWindowResponse = false;
     BootResponse m_deferredWindowResponse;
+    int m_trialEnterBootAttempts = 0;
+    int m_trialProbeAttempts = 0;
 };
 
 } // namespace rov
