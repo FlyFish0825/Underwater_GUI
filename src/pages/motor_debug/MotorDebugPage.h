@@ -2,6 +2,7 @@
 
 #include "contracts/motor_debug/MotorDebugContract.h"
 
+#include <QStringList>
 #include <QWidget>
 
 class QLabel;
@@ -30,6 +31,7 @@ class MotorDebugPage final : public QWidget
 
   private:
     void addCurveWindow(int seriesIndex = 0);
+    void addPresetWindow(const QStringList &seriesIds);
     void removeCurveWindow(QWidget *window);
     void relayoutCurveWindows();
     void refreshCurveWindows();
