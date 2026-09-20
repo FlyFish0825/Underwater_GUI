@@ -17,6 +17,9 @@
 
 - Source: https://sourceforge.net/projects/qwt/files/qwt/6.3.0/
 - Resolved source branch: `qwt-6.3` (QWT_VERSION_STR `6.3.1`)
+- Resolved source commit: `92dc4d1065751cbebcb92231e18359ec28437af9`
 - License: Qwt License 1.0（随附 `qwt-6.3/COPYING`）
 - Integration: `third_party/qwt-6.3/CMakeLists.txt`，构建 `rov_third_party_qwt`
 - Enabled scope: QWidget plot/curve/picker/zoomer/direct painter；SVG、OpenGL canvas、Polar、Designer、示例和测试不参与本工程目标。
+- Qwt 以静态库链接到 `rov_page_motor_debug`，因此运行目录不需要额外的 Qwt DLL；
+  重新配置工程即可从已提交的上游源码复现构建。

@@ -1,6 +1,6 @@
 # ROV Qt 上位机
 
-这是水下机器人 ROV 的 Qt Widgets 上位机工程。当前已在固件升级页接入 **Windows USB CDC 虚拟串口发现、VID/PID 筛选、串口接管、心跳监视、CAN 网关 AA55 增量拆包、Bootloader 命令中心和固定使用 Classic CAN 的 Legacy 单节点正式下载**；其他设备驱动仍按任务卡逐步实现。
+这是水下机器人 ROV 的 Qt Widgets 上位机工程。当前已在固件升级页接入 **Windows USB CDC 虚拟串口发现、VID/PID 筛选、串口接管、心跳监视、CAN 网关 AA55 增量拆包、Bootloader 命令中心和固定使用 Classic CAN 的 Legacy 单节点正式下载**；电机调试页已接入 Observer Motor 控制帧、Qwt 多窗口曲线和预览变量目录；其他设备驱动仍按任务卡逐步实现。
 
 ## 开始开发前必须阅读
 
@@ -21,6 +21,8 @@ src/contracts/       页面快照和请求契约
 src/communication/   USB CDC 传输与 CAN 网关协议解析
 src/data/            Service/Data 层与电机快照
 src/ui/              公共控件和主题
+src/widgets/plot/    Qwt 曲线控件适配层
+third_party/qwt-6.3/ 可追溯的 Qwt 6.3.1 上游源码和许可证
 resources/           Qt 资源和统一 QSS
 docs/                框架、工具链、契约文档
 agent/               Agent 提示词、通信规范和参考图
@@ -37,6 +39,22 @@ ObserverMotorProtocol → ObserverMotorDataService → UI 快照。UI 不直接�
 CAN ID、DLC、字节偏移或心跳 CRC8。
 
 页面不得自行实现串口或协议细节；固件页仅通过通信层提供的设备枚举、连接状态和解析结果接收数据。
+
+## 当前已实现的电机调试能力
+
+- 通过 `MotorDebugPage → MainWindow → BootloaderCommunicationService` 发送
+  `0x100`、24 字节 CAN FD 控制帧，当前网关标志为 `FLAGS=0x02`（BRS 关闭）；
+- 支持 Node1~Node8 目标选择、目标转速下发和启动/停止请求；
+- 使用 Qwt 显示多个独立曲线窗口，每个窗口可叠加变量并单独自动适配、框选缩放、
+  中键平移和查看图例；
+- 默认曲线组合为 `IABC`（U/V/W 三相电流）和 `Speed`（转速/PLL 电速度），也可
+  新建自定义窗口从变量目录叠加曲线；
+- 高频 `解析到 CAN` 文本不进入固件页实时日志、历史记录或保存文件；Motor Debug
+  页面不可见时，绘图入口直接丢弃高频电机帧。
+
+当前 Qwt 曲线使用预览样本和约 50 ms 的数据服务快照；真实设备原始 1000 Hz 样本环、
+窗口布局持久化和压力测试仍需单独完成，不能把预览截图视为实机联调结果。详细边界见
+[`docs/plotting.md`](docs/plotting.md)。
 
 ## 编译与运行
 
@@ -57,6 +75,21 @@ CAN ID、DLC、字节偏移或心跳 CRC8。
 ```
 
 页面索引：0 Dashboard，1 Motor Debug，2 Firmware，3 Manipulator，4 Vision，5 Settings。
+
+构建后可运行协议测试：
+
+```powershell
+ctest --test-dir build/gui --output-on-failure
+```
+
+VSCode/clangd 使用 `build/gui/compile_commands.json`。需要手工确认跳转时，可执行：
+
+```powershell
+& 'toolchain/llvm/14.0.6/bin/clangd.exe' `
+  --check=src/pages/motor_debug/MotorDebugPage.cpp `
+  --compile-commands-dir=build/gui `
+  --query-driver='toolchain/mingw/8.1.0/Tools/mingw810_64/bin/*' --log=error
+```
 
 ## Git 约定
 

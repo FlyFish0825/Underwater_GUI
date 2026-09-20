@@ -35,14 +35,14 @@ Qwt 官方文档明确提供 OpenGL 画布和 DirectPainter：前者直接使用
 
 当前实现边界：
 
-- `MotorDebugPage` 支持多个曲线窗口，每个窗口可叠加多个 `DebugSeries`并独立缩放；
-- 已提供 `IABC`、`Speed`和自定义窗口，变量下拉框可继续向当前窗口叠加曲线；
+- `MotorDebugPage` 支持多个曲线窗口，每个窗口可叠加多个 `DebugSeries` 并独立缩放；
+- 已提供 `IABC`、`Speed` 和自定义窗口，变量下拉框可继续向当前窗口叠加曲线；
 - Qwt 后端已提供图例、自动适配、框选缩放、中键平移和坐标跟踪；
 - `ObserverMotorDataService` 当前发布约 50 ms 的节点快照，高频 debug 样本环尚未
-  接入；
+  接入曲线链路；
 - 窗口布局保存、原始高速样本 ring buffer 和 1 kHz 压力测试仍属于后续实现。
 
-第一阶段不直接用 Qwt 接收串口线程数据，而是保持以下边界：
+当前实现不直接用 Qwt 接收串口线程数据，而是保持以下边界：
 
 ```text
 ObserverMotorDataService
@@ -57,7 +57,7 @@ QwtPlot / QwtPlotCurve
 ## 窗口与默认预设
 
 每个 `CurveWindow` 保存自己的曲线选择和缩放状态。已落地的预设是
-`IABC`和 `Speed`；其他预设在对应协议字段确认后补入：
+`IABC` 和 `Speed`；其他预设在对应协议字段确认后补入：
 
 | 预设 | 默认变量 | 典型用途 |
 | --- | --- | --- |
@@ -68,7 +68,7 @@ QwtPlot / QwtPlotCurve
 | `Temperature` | `mos_temperature`, `board_temperature` | 观察热状态 |
 | `Custom` | 用户从变量目录选择 | 临时研究和故障复现 |
 
-窗口至少应提供：
+后续窗口增强项：
 
 - 新建、关闭、复制窗口；
 - 选择预设或切换为自定义；

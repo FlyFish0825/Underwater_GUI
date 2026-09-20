@@ -12,12 +12,13 @@ JetPack, MCU and device-side toolchains are intentionally out of scope.
 | C++ compiler | MinGW-w64 GCC/G++ 8.1.0 POSIX SEH x64 | `toolchain/mingw/8.1.0/Tools/mingw810_64` |
 | CMake | 3.28.6 | `toolchain/cmake/3.28.6/cmake-3.28.6-windows-x86_64` |
 | Ninja | 1.11.1 | `toolchain/ninja/1.11.1` |
-| clang-format | 14.0.6 | `toolchain/llvm/14.0.6` |
+| clangd/clang-format | 14.0.6 | `toolchain/llvm/14.0.6` |
 | Qt Creator | Not installed by request | — |
 
 Build-time utilities installed on Windows are 7-Zip and Strawberry Perl.
-The application has no third-party runtime dependency; the project uses only
-Qt Core, Gui and Widgets and Qt's Windows platform plugin.
+Qwt is statically linked into the plotting page; there is no separate Qwt DLL
+to deploy. The project uses Qt Core, Gui, Widgets, Concurrent, PrintSupport and
+Qt's Windows platform plugin.
 
 ## Activation
 
@@ -47,10 +48,16 @@ ninja --version
 gcc --version
 g++ --version
 clang-format --version
+clangd --version
 ```
 
 Expected project versions are Qt 5.15.19, CMake 3.28.6, Ninja 1.11.1,
-GCC/G++ 8.1.0 and clang-format 14.0.6.
+GCC/G++ 8.1.0, clangd 14.0.6 and clang-format 14.0.6.
+
+The project also requires clangd 14.0.6 for the configured VSCode language
+server. CMake exports `build/gui/compile_commands.json`; the query driver must
+point at the project MinGW 8.1.0 bin directory so clangd does not select MSVC
+headers.
 
 ## Qt build record
 
