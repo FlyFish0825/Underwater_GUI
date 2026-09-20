@@ -6,10 +6,9 @@
 
 后续所有开发者、Agent 和协作者，开始任务前必须先阅读 `agent` 目录中的统一规范：
 
-1. `agent/agent.md`：当前任务执行规则和检查要求；
-2. `agent/ROV Qt 上位机集成版统一规范与Agent提示词 v2.1-integrated.md`：集成后的总规范、集成人提示词和各页面 Agent 提示词；
-3. `agent/ROV上位机通信协议与分层架构规范_v1.0.md`：Transport、Protocol、Service/Data、UI 的分层边界；
-4. `agent/示意图/`：Dashboard、电机调试、Bootloader、机械臂和双目视觉参考图。
+1. `agent/agent.md`：唯一的当前任务执行规则、分层边界、日志策略和验收要求；
+2. `agent/ROV上位机通信协议与分层架构规范_v1.0.md`：Transport、Protocol、Service/Data、UI 的协议分层细节；
+3. `agent/示意图/`：Dashboard、电机调试、Bootloader、机械臂和双目视觉参考图。
 
 不得跳过上述文档自行建立另一套工程结构、主题、页面接口或通信方式。任务卡与规范冲突时，必须先报告冲突和影响范围。
 
@@ -76,6 +75,8 @@ CAN ID、DLC、字节偏移或心跳 CRC8。
 ## 相关文档
 
 - `docs/framework.md`：工程框架和分层边界；
+- `docs/architecture.md`：按总览、局部、细节组织的项目架构图；
+- `docs/plotting.md`：高速多窗口曲线组件调研、许可证和接入方案；
 - `docs/ui-contract.md`：页面输入快照与输出请求契约；
 - `docs/toolchain.md`：精确工具链和构建记录；
 - `agent/`：后续开发必须遵守的统一 Agent 提示词、通信规范和参考图。

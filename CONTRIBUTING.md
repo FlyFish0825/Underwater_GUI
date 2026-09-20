@@ -4,7 +4,7 @@
 
 1. `README.md`；
 2. `agent/agent.md`；
-3. `agent/ROV Qt 上位机集成版统一规范与Agent提示词 v2.1-integrated.md`；
+3. `agent/agent.md`（唯一的 Agent 统一规范）；
 4. `agent/ROV上位机通信协议与分层架构规范_v1.0.md`；
 5. 对应页面的参考图。
 

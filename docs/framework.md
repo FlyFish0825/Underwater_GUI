@@ -1,4 +1,7 @@
-# ROV UI framework delivery
+# ROV UI framework
+
+分层架构图请先阅读 [`architecture.md`](architecture.md)；本文只保留页面骨架和
+契约边界，避免把通信、数据和绘图细节重复画在同一张图里。
 
 ## Public skeleton
 
@@ -17,14 +20,14 @@ business requests. The Settings item is an intentionally minimal placeholder.
 ## Layer boundaries
 
 ```text
-future Transport → future Protocol → future Service/Data → contracts → pages
-                                                               ↑
-                                                            MainWindow
+Transport → Protocol → Service/Data → MainWindow → Pages
+                                      ↑            ↓
+                                  Requests ← Contracts/Snapshots
 ```
 
-This delivery contains only the UI, contracts, deterministic preview data,
-and request logging. `src/communication/README.md` and `src/data/README.md`
-mark the future boundaries without inventing device code.
+当前工程已经包含 USB CDC、AA55 网关、Observer Motor 和 Bootloader 服务；页面仍然
+通过快照和类型化请求与这些服务交互，不直接读取原始帧。高速曲线的组件选择和
+多窗口设计单独记录在 [`plotting.md`](plotting.md)。
 
 ## Reference alignment
 
