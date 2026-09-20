@@ -29,6 +29,7 @@ Transport → Protocol → Service/Data → MainWindow → Pages
 通过快照和类型化请求与这些服务交互，不直接读取原始帧。Motor Debug 的控制请求由
 `MainWindow` 校验后交给通信服务编码，曲线由 `QwtCurvePlotWidget` 负责显示；高速曲线
 的组件选择、窗口预设和尚未接入的原始样本环单独记录在 [`plotting.md`](plotting.md)。
+Qt、Fluent-Qt、Qwt 的版本和许可证边界见 [`dependencies.md`](dependencies.md)。
 
 ## Reference alignment
 

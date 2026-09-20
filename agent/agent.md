@@ -50,9 +50,10 @@ CAN ID、DLC、字节偏移或 CRC。
 
 1. 本文件；
 2. `README.md`、`docs/toolchain.md`、`docs/ui-contract.md`；
-3. 与任务相关的 `docs/bootloader/README.md`、`docs/framework.md` 或页面 README；
-4. `agent/ROV上位机通信协议与分层架构规范_v1.0.md`；
-5. 当前源码、CMake 文件、公共主题、参考图和任务卡。
+3. `docs/dependencies.md`，确认实际使用的第三方库和许可证边界；
+4. 与任务相关的 `docs/bootloader/README.md`、`docs/framework.md` 或页面 README；
+5. `agent/ROV上位机通信协议与分层架构规范_v1.0.md`；
+6. 当前源码、CMake 文件、公共主题、参考图和任务卡。
 
 架构阅读入口是 `docs/architecture.md`：先看系统总览，再看通信/UI 局部，最后看
 `0x100`、高频反馈和 Bootloader 细节。曲线组件选择和默认预设见

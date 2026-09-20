@@ -3,6 +3,9 @@
 This is the Windows upper-computer environment only. Nano, Ubuntu, ARM64,
 JetPack, MCU and device-side toolchains are intentionally out of scope.
 
+第三方库清单（Qt、Fluent-Qt、Qwt 的版本、许可证和源码位置）见
+[`dependencies.md`](dependencies.md)；本文只记录编译器、构建工具和 Qt SDK。
+
 ## Locked versions
 
 | Component | Version | Installed location |

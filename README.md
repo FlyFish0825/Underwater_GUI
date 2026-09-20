@@ -110,6 +110,7 @@ VSCode/clangd 使用 `build/gui/compile_commands.json`。需要手工确认跳�
 - `docs/framework.md`：工程框架和分层边界；
 - `docs/architecture.md`：按总览、局部、细节组织的项目架构图；
 - `docs/plotting.md`：高速多窗口曲线组件调研、许可证和接入方案；
+- `docs/dependencies.md`：实际使用的第三方库、版本、许可证和构建范围；
 - `docs/ui-contract.md`：页面输入快照与输出请求契约；
 - `docs/toolchain.md`：精确工具链和构建记录；
 - `agent/`：后续开发必须遵守的统一 Agent 提示词、通信规范和参考图。

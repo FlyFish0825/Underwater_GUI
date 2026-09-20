@@ -1,4 +1,8 @@
-# Third-party UI dependencies
+# Third-party dependencies
+
+项目实际使用的完整依赖清单见 [`../docs/dependencies.md`](../docs/dependencies.md)。
+本目录只放第三方源码或其可追溯构建入口；不要把 `build/` 下的编译产物复制回源码
+目录，也不要把调研中未采用的库加入 CMake。
 
 ## Fluent-Qt
 
