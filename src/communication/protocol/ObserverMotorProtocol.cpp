@@ -38,9 +38,11 @@ quint8 nodeFromCanId(const quint32 canId, const quint32 base)
     return static_cast<quint8>(canId - base);
 }
 
-bool isCanFdBRS(const CanGatewayFrame &frame)
+bool isCanFd(const CanGatewayFrame &frame)
 {
-    return (frame.flags & 0x07U) == kCanFdBrsFlags;
+    // bit0=扩展帧、bit1=CAN FD、bit2=BRS；电机协议只接受标准数据帧。
+    // 当前总线发送 0x02（FD、关闭 BRS），接收端保留兼容未来的 0x06。
+    return frame.flags == kCanFdFlags || frame.flags == kCanFdBrsFlags;
 }
 
 bool isClassicCan(const CanGatewayFrame &frame)
@@ -99,8 +101,8 @@ bool decode(const CanGatewayFrame &frame, DecodedFrame &decoded, QString *error)
 
     if (frame.canId == kControlCanId)
     {
-        if (!isCanFdBRS(frame) || frame.data.size() != 24)
-            return fail(error, QStringLiteral("Observer_Motor 控制帧必须是 CAN FD+BRS、24 字节"));
+        if (!isCanFd(frame) || frame.data.size() != 24)
+            return fail(error, QStringLiteral("Observer_Motor 控制帧必须是 CAN FD、24 字节"));
         const QByteArray &data = frame.data;
         if (static_cast<quint8>(data.at(0)) != kVersion)
             return fail(error, QStringLiteral("Observer_Motor 控制帧版本不支持"));
@@ -133,8 +135,8 @@ bool decode(const CanGatewayFrame &frame, DecodedFrame &decoded, QString *error)
     if (frame.canId >= kFeedbackBaseCanId + kFirstNodeId
         && frame.canId <= kFeedbackBaseCanId + kLastNodeId)
     {
-        if (!isCanFdBRS(frame) || frame.data.size() != 12)
-            return fail(error, QStringLiteral("Observer_Motor 普通反馈必须是 CAN FD+BRS、12 字节"));
+        if (!isCanFd(frame) || frame.data.size() != 12)
+            return fail(error, QStringLiteral("Observer_Motor 普通反馈必须是 CAN FD、12 字节"));
         decoded.kind = FrameKind::Feedback;
         decoded.nodeId = nodeFromCanId(frame.canId, kFeedbackBaseCanId);
         decoded.feedback.nodeId = decoded.nodeId;
@@ -174,8 +176,8 @@ bool decode(const CanGatewayFrame &frame, DecodedFrame &decoded, QString *error)
     if (frame.canId >= kDebugBaseCanId + kFirstNodeId
         && frame.canId <= kDebugBaseCanId + kLastNodeId)
     {
-        if (!isCanFdBRS(frame) || frame.data.size() != 64)
-            return fail(error, QStringLiteral("Observer_Motor 调试反馈必须是 CAN FD+BRS、64 字节"));
+        if (!isCanFd(frame) || frame.data.size() != 64)
+            return fail(error, QStringLiteral("Observer_Motor 调试反馈必须是 CAN FD、64 字节"));
         decoded.kind = FrameKind::Debug;
         decoded.nodeId = nodeFromCanId(frame.canId, kDebugBaseCanId);
         decoded.debug.nodeId = decoded.nodeId;

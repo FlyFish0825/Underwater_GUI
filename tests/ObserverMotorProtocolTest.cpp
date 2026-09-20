@@ -50,9 +50,36 @@ int main(int argc, char *argv[])
         return 1;
 
     DecodedFrame decoded;
-    if (!require(decode(frame(kControlCanId, kCanFdBrsFlags, controlData), decoded),
+    if (!require(decode(frame(kControlCanId, kCanFdFlags, controlData), decoded),
                  "控制帧解析失败")
         || !require(decoded.control.speedsRpm[1] == -1500, "控制帧小端有符号速度错误"))
+        return 1;
+
+    CanGatewayFrame gatewayControl = frame(kControlCanId, kCanFdFlags, controlData);
+    gatewayControl.sequence = control.sequence;
+    CanGatewayDecoder gatewayDecoder;
+    const QVector<CanGatewayFrame> gatewayFrames =
+        gatewayDecoder.feed(encodeCanGatewayFrame(gatewayControl));
+    if (!require(gatewayFrames.size() == 1, "0x100 网关帧回环解析失败")
+        || !require(gatewayFrames.first().canId == kControlCanId
+                        && gatewayFrames.first().flags == kCanFdFlags
+                        && gatewayFrames.first().data.size() == 24,
+                    "0x100 网关帧 ID、FLAGS 或长度错误"))
+        return 1;
+
+    ControlFrame stop;
+    stop.command = Command::RunVector;
+    stop.nodeMask = 0x02;
+    stop.sequence = 2;
+    const QByteArray stopData = encodeControl(stop);
+    if (!require(stopData == QByteArray::fromHex(
+                             "011102000200000000000000000000000000000000000000"),
+                 "停止控制帧编码错误")
+        || !require(decode(frame(kControlCanId, kCanFdFlags, stopData), decoded),
+                    "停止控制帧解析失败")
+        || !require(decoded.control.command == Command::RunVector
+                        && decoded.control.nodeMask == 0x02 && decoded.control.runMask == 0,
+                    "停止控制帧字段错误"))
         return 1;
 
     QByteArray feedback;
@@ -65,7 +92,7 @@ int main(int argc, char *argv[])
     feedback[8] = static_cast<char>(MotorState::ClosedLoop);
     feedback[9] = 0x07;
     feedback[10] = 9;
-    if (!require(decode(frame(0x201, kCanFdBrsFlags, feedback), decoded),
+    if (!require(decode(frame(0x201, kCanFdFlags, feedback), decoded),
                  "普通反馈解析失败")
         || !require(decoded.feedback.speedRpm == 1234 && qFuzzyCompare(decoded.feedback.iqA, -2.5)
                         && qFuzzyCompare(decoded.feedback.busVoltageV, 24.1)
@@ -101,7 +128,7 @@ int main(int argc, char *argv[])
     debug[24] = static_cast<char>(MotorState::OpenLoop);
     debug[25] = 0x07;
     debug[28] = 10;
-    if (!require(decode(frame(0x301, kCanFdBrsFlags, debug), decoded),
+    if (!require(decode(frame(0x301, kCanFdFlags, debug), decoded),
                  "调试反馈解析失败")
         || !require(decoded.debug.nodeId == 1 && qFuzzyCompare(decoded.debug.udV, 0.3)
                         && decoded.debug.statusFlags == 0x07,

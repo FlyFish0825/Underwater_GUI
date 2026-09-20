@@ -19,6 +19,9 @@ constexpr quint8 kFirstNodeId = 1U;
 constexpr quint8 kLastNodeId = 8U;
 constexpr quint8 kVersion = 0x01U;
 constexpr quint8 kClassicCanFlags = 0x00U;
+// 当前 Observer_Motor 测试总线为 1 Mbit/s CAN FD，关闭 BRS。
+constexpr quint8 kCanFdFlags = 0x02U;
+// 兼容旧调用方/测试夹具；接收端仍允许将来切换到 CAN FD+BRS。
 constexpr quint8 kCanFdBrsFlags = 0x06U;
 
 enum class Command : quint8
