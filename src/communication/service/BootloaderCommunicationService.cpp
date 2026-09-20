@@ -112,6 +112,28 @@ bool BootloaderCommunicationService::sendCanFrame(const CanGatewayFrame &frame)
     return m_transport->writeBytes(packet);
 }
 
+bool BootloaderCommunicationService::sendObserverMotorControl(
+    const ObserverMotorProtocol::ControlFrame &control, QString *error)
+{
+    if (error != nullptr)
+        error->clear();
+
+    const QByteArray data = ObserverMotorProtocol::encodeControl(control, error);
+    if (data.isEmpty())
+    {
+        if (error != nullptr && !error->isEmpty())
+            emit errorOccurred(*error);
+        return false;
+    }
+
+    CanGatewayFrame frame;
+    frame.sequence = control.sequence;
+    frame.canId = ObserverMotorProtocol::kControlCanId;
+    frame.flags = ObserverMotorProtocol::kCanFdFlags;
+    frame.data = data;
+    return sendCanFrame(frame);
+}
+
 bool BootloaderCommunicationService::setCanBitrate(const quint32 nominalBps,
                                                    const quint32 dataBps)
 {
