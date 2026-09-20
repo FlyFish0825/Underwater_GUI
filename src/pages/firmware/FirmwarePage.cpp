@@ -246,6 +246,20 @@ QString commandNameZh(const QString &name)
         {QStringLiteral("REPAIR_ROUND_END"), QStringLiteral("结束修复轮次")},
         {QStringLiteral("RECOVERY_READY"), QStringLiteral("恢复就绪")},
         {QStringLiteral("RECOVERY_FAILED"), QStringLiteral("恢复失败")},
+        {QStringLiteral("WINDOW_STATUS"), QStringLiteral("窗口写入状态")},
+        {QStringLiteral("GUARD_UPDATE_BEGIN"), QStringLiteral("开始更新保护")},
+        {QStringLiteral("GUARD_UPDATE_READY"), QStringLiteral("保护更新就绪")},
+        {QStringLiteral("ROLLBACK_REQUEST"), QStringLiteral("请求回滚")},
+        {QStringLiteral("ROLLBACK_SIZE_LO"), QStringLiteral("回滚大小低字")},
+        {QStringLiteral("ROLLBACK_SIZE_HI"), QStringLiteral("回滚大小高字")},
+        {QStringLiteral("ROLLBACK_CRC_LO"), QStringLiteral("回滚 CRC 低字")},
+        {QStringLiteral("ROLLBACK_CRC_HI"), QStringLiteral("回滚 CRC 高字")},
+        {QStringLiteral("ROLLBACK_BEGIN"), QStringLiteral("开始回滚")},
+        {QStringLiteral("ROLLBACK_PREPARED"), QStringLiteral("回滚准备完成")},
+        {QStringLiteral("FULL_STREAM"), QStringLiteral("完整流传输")},
+        {QStringLiteral("COMMIT_PREPARE"), QStringLiteral("准备提交")},
+        {QStringLiteral("COMMIT_ACK"), QStringLiteral("提交确认")},
+        {QStringLiteral("COMMIT_EXECUTE"), QStringLiteral("执行提交")},
     };
     return names.value(name, QStringLiteral("命令 %1").arg(name));
 }
@@ -824,9 +838,9 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                 m_serialStatus->setText(connectionStatusText(false, QStringLiteral("通信错误：%1").arg(message)));
                 logRequest(QStringLiteral("错误：%1").arg(message));
             });
-    connect(m_communication, &BootloaderCommunicationService::frameReceived, this,
-            [this](const CanGatewayFrame &frame)
-            { logRequest(QStringLiteral("解析到 %1").arg(describeCanGatewayFrame(frame))); });
+    // 不把所有 CAN 帧写入日志：电机普通反馈可达 100 Hz/更高频率，
+    // 全量格式化、渲染和保存会拖慢下载页面。Bootloader 响应和下载阶段
+    // 仍由 BootloaderService/下载控制器通过 logRequest() 记录。
     connect(m_bootloader, &BootloaderService::hostResponseReceived, this,
             &FirmwarePage::handleBootResponse);
     connect(m_bootloader, &BootloaderService::peerMessageReceived, this,
@@ -1661,6 +1675,13 @@ void FirmwarePage::renderRuntimeLog()
 
 void FirmwarePage::logRequest(const QString &message)
 {
+    // 高频电机反馈/网关逐帧诊断不能进入固件页日志链路：
+    // 一旦写入这里，就会同时触发实时 HTML 重绘、可选记录、历史持久化，
+    // 并广播给高级命令窗口。在 100/1000 Hz 下会反过来拖慢整个 UI。
+    // Bootloader 的 TX/RX、下载进度、错误和状态日志均不匹配该格式，仍正常保留。
+    if (message.contains(QStringLiteral("解析到 CAN"), Qt::CaseInsensitive))
+        return;
+
     const QString timestamped =
         QStringLiteral("[%1] %2").arg(QDateTime::currentDateTime().toString("HH:mm:ss.zzz"), message);
     m_runtimeLog.append(timestamped);
