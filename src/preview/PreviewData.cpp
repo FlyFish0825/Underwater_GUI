@@ -35,11 +35,15 @@ DashboardSnapshot dashboardPreview()
     snapshot.canControl = false;
     snapshot.controlUnavailableReason = QStringLiteral("仅演示：未连接设备");
     snapshot.depthM = 12.4;
+    snapshot.depthValid = true;
     snapshot.rollDeg = 0.5;
+    snapshot.attitudeValid = true;
     snapshot.pitchDeg = -1.2;
     snapshot.yawDeg = 178.6;
     snapshot.busVoltageV = 24.1;
+    snapshot.busVoltageValid = true;
     snapshot.internalTemperatureC = 28.3;
+    snapshot.internalTemperatureValid = true;
     snapshot.robotMode = QStringLiteral("手动");
     snapshot.armed = true;
     snapshot.leakDetected = false;
@@ -88,11 +92,17 @@ MotorDebugSnapshot motorDebugPreview()
     snapshot.currentKi = 0.05;
     snapshot.observerGain = 0.10;
     snapshot.currentLimitA = 20.0;
-    const QStringList ids = {QStringLiteral("phase_current"), QStringLiteral("bus_voltage"),
-                             QStringLiteral("rpm"), QStringLiteral("observer_error")};
-    const QStringList names = {QStringLiteral("相电流"), QStringLiteral("母线电压"),
-                               QStringLiteral("转速（×100）"), QStringLiteral("观测器误差")};
-    const QStringList units = {QStringLiteral("A"), QStringLiteral("V"), QStringLiteral("rpm"),
+    const QStringList ids = {
+        QStringLiteral("phase_current_u"), QStringLiteral("phase_current_v"),
+        QStringLiteral("phase_current_w"), QStringLiteral("bus_voltage"),
+        QStringLiteral("speed_rpm"),       QStringLiteral("pll_electrical_speed"),
+        QStringLiteral("observer_error")};
+    const QStringList names = {QStringLiteral("相电流 U"),  QStringLiteral("相电流 V"),
+                               QStringLiteral("相电流 W"),  QStringLiteral("母线电压"),
+                               QStringLiteral("转速"),      QStringLiteral("PLL 电速度"),
+                               QStringLiteral("观测器误差")};
+    const QStringList units = {QStringLiteral("A"), QStringLiteral("A"),   QStringLiteral("A"),
+                               QStringLiteral("V"), QStringLiteral("rpm"), QStringLiteral("rad/s"),
                                QStringLiteral("%")};
     for (int channel = 0; channel < ids.size(); ++channel)
     {
@@ -100,22 +110,29 @@ MotorDebugSnapshot motorDebugPreview()
         series.id = ids.at(channel);
         series.name = names.at(channel);
         series.unit = units.at(channel);
+        series.sampleRateHz = 24.0;
+        series.firstTimestampUs = 181904000;
         series.stamp = freshStamp();
         for (int i = 0; i < 180; ++i)
         {
             const double t = static_cast<double>(i) / 24.0;
             double value = 0.0;
-            if (channel == 0)
+            if (channel < 3)
             {
-                value = 35.0 + 13.0 * qSin(t * 2.0 * M_PI);
+                const double phase = channel * 2.0 * M_PI / 3.0;
+                value = 35.0 + 13.0 * qSin(t * 2.0 * M_PI + phase);
             }
-            else if (channel == 1)
+            else if (channel == 3)
             {
                 value = 35.0 + ((i / 18) % 2) * 13.0;
             }
-            else if (channel == 2)
+            else if (channel == 4)
             {
-                value = 9.0 + 2.0 * qSin(t * 1.5) + 0.5 * qSin(t * 9.0);
+                value = 1082.0 + 65.0 * qSin(t * 1.5) + 8.0 * qSin(t * 9.0);
+            }
+            else if (channel == 5)
+            {
+                value = 113.0 + 4.0 * qSin(t * 1.5);
             }
             else
             {
@@ -141,14 +158,14 @@ FirmwareSnapshot firmwarePreview()
     snapshot.fileSize = QStringLiteral("1.24 MB (1,302,528 bytes)");
     snapshot.checksum = QStringLiteral("a3f5e8c1d2b4…e7f9a2d3c");
     snapshot.fileDescription = QStringLiteral("演示固件元数据。不执行刷写操作。");
-    const QStringList ids = {QStringLiteral("0x01"), QStringLiteral("0x02"),
-                             QStringLiteral("0x03"), QStringLiteral("0x04"),
-                             QStringLiteral("0x05"), QStringLiteral("0x06"),
+    const QStringList ids = {QStringLiteral("0x01"), QStringLiteral("0x02"), QStringLiteral("0x03"),
+                             QStringLiteral("0x04"), QStringLiteral("0x05"), QStringLiteral("0x06"),
                              QStringLiteral("0x07"), QStringLiteral("0x08")};
-    const QStringList names = {QStringLiteral("推进器 1（左前）"), QStringLiteral("推进器 2（右前）"),
-                               QStringLiteral("推进器 3（左后）"), QStringLiteral("推进器 4（右后）"),
-                               QStringLiteral("推进器 5（内左前）"), QStringLiteral("推进器 6（内右前）"),
-                               QStringLiteral("推进器 7（内左后）"), QStringLiteral("推进器 8（内右后）")};
+    const QStringList names = {
+        QStringLiteral("推进器 1（左前）"),   QStringLiteral("推进器 2（右前）"),
+        QStringLiteral("推进器 3（左后）"),   QStringLiteral("推进器 4（右后）"),
+        QStringLiteral("推进器 5（内左前）"), QStringLiteral("推进器 6（内右前）"),
+        QStringLiteral("推进器 7（内左后）"), QStringLiteral("推进器 8（内右后）")};
     for (int i = 0; i < ids.size(); ++i)
     {
         FirmwareNode node;

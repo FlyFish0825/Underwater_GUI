@@ -2,6 +2,9 @@
     <qresource prefix="/theme">
         <file>theme.qss</file>
     </qresource>
+    <qresource prefix="/icons">
+        <file alias="project_logo.png">Logo.png</file>
+    </qresource>
     <qresource prefix="/icons/nav">
         <file alias="dashboard.png">nav_animation/generated/nav_dashboard.png</file>
         <file alias="motor_debug.png">nav_animation/generated/nav_motor_debug.png</file>

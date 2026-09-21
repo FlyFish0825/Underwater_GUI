@@ -10,9 +10,12 @@ contract is a value type: it contains business values, units, validity,
 freshness, and stable IDs; it does not contain QWidget pointers, transport
 objects, protocol headers, command bytes, or CRC fields.
 
-This phase uses deterministic preview values and request logging. It does not
-claim a real device connection or implement transport, protocol parsing,
-control allocation, firmware flashing, camera streaming, or vision algorithms.
+Preview mode still uses deterministic values, but the normal application now
+also has USB CDC transport, AA55 gateway parsing, Observer Motor snapshots and
+Bootloader services. A UI contract still does not claim that a real device is
+connected: pages consume snapshots and emit typed requests, while transport,
+protocol parsing, control validation and firmware flashing remain below the
+page boundary. Camera streaming and vision algorithms are still out of scope.
 
 Unknown values display `--`; zero is never used as a substitute for missing
 data. Feedback, target values, and user requests remain separate.

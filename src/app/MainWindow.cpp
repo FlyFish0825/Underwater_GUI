@@ -1,5 +1,8 @@
 #include "app/MainWindow.h"
 
+#include "communication/protocol/ObserverMotorProtocol.h"
+#include "data/recording/ResearchDataRecorder.h"
+#include "data/services/ObserverMotorDataService.h"
 #include "pages/dashboard/DashboardPage.h"
 #include "pages/firmware/FirmwarePage.h"
 #include "pages/manipulator/ManipulatorPage.h"
@@ -11,24 +14,30 @@
 
 #include <QButtonGroup>
 #include <QCloseEvent>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QFileDialog>
 #include <QFrame>
 #include <QGraphicsProxyWidget>
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QScreen>
 #include <QScrollArea>
 #include <QShowEvent>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
+#include <QVector>
 #include <QWindow>
 #include <QtMath>
-#include <QVector>
 
 #include <functional>
 
@@ -157,9 +166,151 @@ QToolButton *navigationButton(const QString &text, const QString &description,
                               const rov::IconKind icon, QWidget *parent)
 {
     const QString asset = navigationAsset(icon);
-    auto *button = new rov::AnimatedNavButton(text, description, icon, asset,
-                                              8, 1, 0, parent);
+    auto *button = new rov::AnimatedNavButton(text, description, icon, asset, 8, 1, 0, parent);
     return button;
+}
+
+QString motorLabel(const quint8 nodeId)
+{
+    static const QStringList labels = {
+        QStringLiteral("前左 · 水平"),   QStringLiteral("前右 · 水平"),
+        QStringLiteral("后左 · 水平"),   QStringLiteral("后右 · 水平"),
+        QStringLiteral("内左前 · 垂向"), QStringLiteral("内右前 · 垂向"),
+        QStringLiteral("内左后 · 垂向"), QStringLiteral("内右后 · 垂向")};
+    const int index = static_cast<int>(nodeId) - 1;
+    return index >= 0 && index < labels.size() ? labels.at(index) : QStringLiteral("未知");
+}
+
+rov::DashboardSnapshot dashboardFromMotorFleet(const rov::ObserverMotorFleetSnapshot &fleet)
+{
+    rov::DashboardSnapshot snapshot;
+    snapshot.demo.isDemo = false;
+    snapshot.systemStamp = fleet.stamp;
+    snapshot.connected = false;
+    snapshot.canControl = false;
+    snapshot.controlUnavailableReason = QStringLiteral("等待电机节点反馈");
+    snapshot.depthValid = false;
+    snapshot.attitudeValid = false;
+    snapshot.thrustLimitPercent = 70;
+
+    int onlineCount = 0;
+    for (const rov::ObserverMotorNodeSnapshot &node : fleet.nodes)
+    {
+        rov::ThrusterTelemetry item;
+        item.id = QStringLiteral("thruster%1").arg(node.nodeId);
+        item.label = QStringLiteral("T%1 · %2").arg(node.nodeId).arg(motorLabel(node.nodeId));
+        item.rpm = node.speedRpm;
+        item.currentA = node.iqA;
+        item.temperatureC = node.temperatureC;
+        item.status = node.online ? QStringLiteral("在线") : QStringLiteral("离线");
+        item.stamp = node.stamp;
+        snapshot.thrusters.append(item);
+        if (!node.online)
+            continue;
+        ++onlineCount;
+        if (!snapshot.busVoltageValid)
+        {
+            snapshot.busVoltageV = node.busVoltageV;
+            snapshot.busVoltageValid = true;
+            snapshot.internalTemperatureC = node.temperatureC;
+            snapshot.internalTemperatureValid = true;
+            snapshot.robotMode = node.state;
+        }
+    }
+    snapshot.connected = onlineCount > 0;
+    snapshot.canControl = snapshot.connected;
+    snapshot.controlUnavailableReason =
+        snapshot.connected ? QString() : QStringLiteral("无在线电机节点");
+    snapshot.alarmCount = qMax(0, static_cast<int>(fleet.nodes.size()) - onlineCount);
+    if (snapshot.alarmCount > 0)
+        snapshot.alarms.append(QStringLiteral("%1 个电机节点离线").arg(snapshot.alarmCount));
+    return snapshot;
+}
+
+void appendHistory(QVector<double> &history, const double value)
+{
+    history.append(value);
+    constexpr int kHistoryLimit = 500;
+    if (history.size() > kHistoryLimit)
+        history.remove(0, history.size() - kHistoryLimit);
+}
+
+void addLiveSeries(QVector<rov::DebugSeries> &series, const QString &id, const QString &name,
+                   const QString &unit, const QVector<double> &samples, const rov::DataStamp &stamp)
+{
+    rov::DebugSeries item;
+    item.id = id;
+    item.name = name;
+    item.unit = unit;
+    item.samples = samples;
+    item.sampleRateHz = 20.0;
+    item.stamp = stamp;
+    series.append(item);
+}
+
+rov::MotorDebugSnapshot motorDebugFromNode(const rov::ObserverMotorNodeSnapshot &node,
+                                           QVector<QVector<double>> &history, quint8 &historyNodeId)
+{
+    rov::MotorDebugSnapshot snapshot;
+    snapshot.demo.isDemo = false;
+    snapshot.motorStamp = node.stamp;
+    snapshot.selectedMotorId = QStringLiteral("thruster%1").arg(node.nodeId);
+    snapshot.selectedMotorLabel =
+        QStringLiteral("Node%1 · 推进器 %2").arg(node.nodeId).arg(node.nodeId);
+    snapshot.state = node.online ? node.state : QStringLiteral("离线");
+    snapshot.rpm = node.speedRpm;
+    snapshot.currentA = node.iqA;
+    snapshot.voltageV = node.busVoltageV;
+    snapshot.temperatureC = node.temperatureC;
+    snapshot.fault =
+        !node.online ? QStringLiteral("离线")
+                     : (node.voltageLimited ? QStringLiteral("电压限幅") : QStringLiteral("无"));
+
+    if (historyNodeId != node.nodeId || history.size() != 7)
+    {
+        historyNodeId = node.nodeId;
+        history = QVector<QVector<double>>(7);
+    }
+    if (node.debugMode)
+    {
+        appendHistory(history[0], node.phaseCurrentU_A);
+        appendHistory(history[1], node.phaseCurrentV_A);
+        appendHistory(history[2], node.phaseCurrentW_A);
+    }
+    else
+    {
+        history[0].clear();
+        history[1].clear();
+        history[2].clear();
+    }
+    appendHistory(history[3], node.busVoltageV);
+    appendHistory(history[4], node.speedRpm);
+    if (node.debugMode)
+        appendHistory(history[5], node.pllElectricalSpeedRadPerSec);
+    else
+        history[5].clear();
+    if (node.debugMode)
+        appendHistory(history[6], node.observerElectricalAngleDeg);
+    else
+        history[6].clear();
+
+    const rov::DataStamp emptyStamp;
+    const rov::DataStamp phaseStamp = node.debugMode ? node.stamp : emptyStamp;
+    addLiveSeries(snapshot.series, QStringLiteral("phase_current_u"), QStringLiteral("相电流 U"),
+                  QStringLiteral("A"), history[0], phaseStamp);
+    addLiveSeries(snapshot.series, QStringLiteral("phase_current_v"), QStringLiteral("相电流 V"),
+                  QStringLiteral("A"), history[1], phaseStamp);
+    addLiveSeries(snapshot.series, QStringLiteral("phase_current_w"), QStringLiteral("相电流 W"),
+                  QStringLiteral("A"), history[2], phaseStamp);
+    addLiveSeries(snapshot.series, QStringLiteral("bus_voltage"), QStringLiteral("母线电压"),
+                  QStringLiteral("V"), history[3], node.stamp);
+    addLiveSeries(snapshot.series, QStringLiteral("speed_rpm"), QStringLiteral("转速"),
+                  QStringLiteral("rpm"), history[4], node.stamp);
+    addLiveSeries(snapshot.series, QStringLiteral("pll_electrical_speed"),
+                  QStringLiteral("PLL 电速度"), QStringLiteral("rad/s"), history[5], phaseStamp);
+    addLiveSeries(snapshot.series, QStringLiteral("observer_angle_deg"),
+                  QStringLiteral("观测器电角度"), QStringLiteral("°"), history[6], phaseStamp);
+    return snapshot;
 }
 
 QSize initialWindowSize(QScreen *screen)
@@ -197,6 +348,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setWindowTitle(QStringLiteral("水下机器人上位机"));
+    setWindowIcon(QIcon(QStringLiteral(":/icons/project_logo.png")));
     setContentsMargins(1, 1, 1, 1);
     setMinimumSize(kMinimumWindowWidth, kMinimumWindowHeight);
     resize(initialWindowSize(QGuiApplication::primaryScreen()));
@@ -215,7 +367,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     auto *topLayout = new QHBoxLayout(topBar);
     topLayout->setContentsMargins(20, 0, 18, 0);
     topLayout->setSpacing(10);
-    auto *brandIcon = new IconWidget(IconKind::Brand, topBar);
+    auto *brandIcon = new QLabel(topBar);
+    brandIcon->setPixmap(QIcon(QStringLiteral(":/icons/project_logo.png")).pixmap(28, 28));
+    brandIcon->setScaledContents(true);
     brandIcon->setFixedSize(28, 28);
     topLayout->addWidget(brandIcon);
     topLayout->addWidget(
@@ -286,19 +440,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         QString label;
         QString description;
         IconKind icon;
-    } entries[] = {{QStringLiteral("总览"), QStringLiteral("机器人状态 · 控制"),
-                    IconKind::Dashboard},
-                   {QStringLiteral("电机调试"), QStringLiteral("实时波形 · FOC 参数"), IconKind::Motor},
-                   {QStringLiteral("固件升级"), QStringLiteral("Bootloader · CAN 节点"),
-                    IconKind::Firmware},
-                   {QStringLiteral("机械臂"), QStringLiteral("关节 · 笛卡尔控制"), IconKind::Manipulator},
-                   {QStringLiteral("视觉"), QStringLiteral("相机 · 图像处理"), IconKind::Vision},
-                   {QStringLiteral("设置"), QStringLiteral("系统 · 通信配置"), IconKind::Settings}};
+    } entries[] = {
+        {QStringLiteral("总览"), QStringLiteral("机器人状态 · 控制"), IconKind::Dashboard},
+        {QStringLiteral("电机调试"), QStringLiteral("实时波形 · FOC 参数"), IconKind::Motor},
+        {QStringLiteral("固件升级"), QStringLiteral("Bootloader · CAN 节点"), IconKind::Firmware},
+        {QStringLiteral("机械臂"), QStringLiteral("关节 · 笛卡尔控制"), IconKind::Manipulator},
+        {QStringLiteral("视觉"), QStringLiteral("相机 · 图像处理"), IconKind::Vision},
+        {QStringLiteral("设置"), QStringLiteral("系统 · 通信配置"), IconKind::Settings}};
     QVector<QToolButton *> buttons;
     for (int i = 0; i < 6; ++i)
     {
-        auto *button = navigationButton(entries[i].label, entries[i].description, entries[i].icon,
-                                        sidebar);
+        auto *button =
+            navigationButton(entries[i].label, entries[i].description, entries[i].icon, sidebar);
         m_navGroup->addButton(button, i);
         navLayout->addWidget(button);
         buttons.append(button);
@@ -316,7 +469,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     auto *firmware = new FirmwarePage;
     auto *manipulator = new ManipulatorPage;
     auto *vision = new VisionPage;
-    auto *settings = new SettingsPlaceholder;
+    auto *settings = new SettingsPlaceholder(firmware->connectionBar());
     const auto scrollablePage = [](QWidget *page, const QString &objectName)
     {
         auto *scroll = new QScrollArea;
@@ -329,8 +482,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         scroll->setWidget(page);
         return scroll;
     };
-    auto *motorDebugScroll =
-        scrollablePage(motorDebug, QStringLiteral("motorDebugPageScroll"));
+    auto *motorDebugScroll = scrollablePage(motorDebug, QStringLiteral("motorDebugPageScroll"));
     auto *firmwareScroll = scrollablePage(firmware, QStringLiteral("firmwarePageScroll"));
     m_pages->addWidget(dashboard);
     m_pages->addWidget(motorDebugScroll);
@@ -338,6 +490,76 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_pages->addWidget(manipulator);
     m_pages->addWidget(vision);
     m_pages->addWidget(settings);
+
+    // 组合根把同一条网关 CAN 帧流交给数据服务；UI 页面只订阅快照，
+    // 不直接接触 USB CDC、AA55 或 CAN ID。
+    m_motorData = new ObserverMotorDataService(this);
+    m_recorder = new ResearchDataRecorder(this);
+    auto *communication = firmware->communicationService();
+    connect(settings, &SettingsPlaceholder::canBitrateApplyRequested, this,
+            [settings, communication](const quint32 nominalBps, const quint32 dataBps)
+            {
+                if (communication == nullptr || !communication->setCanBitrate(nominalBps, dataBps))
+                    settings->onCanBitrateError(QStringLiteral("无法提交 CAN 速率配置"));
+            });
+    connect(communication, &BootloaderCommunicationService::canBitrateConfigured, settings,
+            &SettingsPlaceholder::onCanBitrateConfigured);
+    connect(communication, &BootloaderCommunicationService::canBitrateError, settings,
+            &SettingsPlaceholder::onCanBitrateError);
+    connect(communication, &BootloaderCommunicationService::opened, settings,
+            [settings](const QString &) { settings->setGatewayConnected(true); });
+    connect(communication, &BootloaderCommunicationService::closed, settings,
+            [settings]() { settings->setGatewayConnected(false); });
+    connect(communication, &BootloaderCommunicationService::opened, this,
+            [this](const QString &)
+            {
+                if (m_gatewayStatus != nullptr)
+                {
+                    m_gatewayStatus->setText(QStringLiteral("●  CAN 网关在线"));
+                    m_gatewayStatus->setStyleSheet(
+                        QStringLiteral("color: #078d4a; font-weight: 600;"));
+                }
+            });
+    connect(communication, &BootloaderCommunicationService::closed, this,
+            [this]()
+            {
+                if (m_gatewayStatus != nullptr)
+                {
+                    m_gatewayStatus->setText(QStringLiteral("●  CAN 网关离线"));
+                    m_gatewayStatus->setStyleSheet(
+                        QStringLiteral("color: #8a8f98; font-weight: 600;"));
+                }
+            });
+    // FirmwarePage may auto-connect in its constructor, before these signals
+    // are subscribed. Seed settings from the live service as well.
+    settings->setGatewayConnected(communication->isOpen());
+    connect(firmware->communicationService(), &BootloaderCommunicationService::frameReceived, this,
+            [this](const CanGatewayFrame &frame)
+            {
+                // 科研记录走独立有界队列，不依赖当前页面，也不会触发绘图或逐帧 UI 更新。
+                if (m_recorder != nullptr)
+                    m_recorder->recordFrame(frame, QStringLiteral("rx"));
+                // 总览和记录都需要真实电机反馈；数据服务只按 50 ms 发布快照，
+                // 不把 100 Hz 原始帧逐帧送入 QWidget 或曲线重绘。
+                if (m_motorData != nullptr)
+                    m_motorData->handleCanFrame(frame);
+            });
+    connect(firmware->communicationService(), &BootloaderCommunicationService::frameSent, this,
+            [this](const CanGatewayFrame &frame)
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordFrame(frame, QStringLiteral("tx"));
+            });
+    connect(firmware->communicationService(), &BootloaderCommunicationService::closed, m_motorData,
+            &ObserverMotorDataService::reset);
+    connect(m_motorData, &ObserverMotorDataService::snapshotChanged, this,
+            [this, dashboard, motorDebug](const ObserverMotorFleetSnapshot &fleet)
+            {
+                dashboard->setSnapshot(dashboardFromMotorFleet(fleet));
+                const quint8 nodeId = motorDebug->selectedNodeId();
+                motorDebug->setSnapshot(motorDebugFromNode(
+                    m_motorData->nodeSnapshot(nodeId), m_debugSeriesHistory, m_debugHistoryNodeId));
+            });
     // 机械臂、视觉和设置页保留原有的小屏幕等比保护。
     // 电机调试与固件升级页改由页面内部自适应，避免宽屏下整页缩小后两侧留白。
     for (QWidget *page : {static_cast<QWidget *>(manipulator), static_cast<QWidget *>(vision),
@@ -358,11 +580,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_pageProxy = m_pageScene->addWidget(m_pages);
     m_pageView->setScene(m_pageScene);
     bodyLayout->addWidget(m_pageView, 1);
-    // USB CDC 连接检查属于全局状态，不放在 Bootloader 页面内部。
-    if (QWidget *connectionBar = firmware->connectionBar())
-    {
-        rootLayout->insertWidget(1, connectionBar, 0);
-    }
     rootLayout->addWidget(body, 1);
 
     auto *footer = new QFrame(root);
@@ -376,29 +593,157 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     footerLayout->addWidget(
         makeLabel(QStringLiteral("2026-09-16 18:21:04"), QStringLiteral("mutedLabel")));
     footerLayout->addStretch();
+    m_gatewayStatus = statusDotLabel(QStringLiteral("CAN 网关离线"), QStringLiteral("#8a8f98"));
+    footerLayout->addWidget(m_gatewayStatus);
     m_footerLog =
         makeLabel(QStringLiteral("日志：信息   |   设备：未连接"), QStringLiteral("mutedLabel"));
     footerLayout->addWidget(m_footerLog);
     rootLayout->addWidget(footer);
+    if (communication->isOpen())
+    {
+        m_gatewayStatus->setText(QStringLiteral("●  CAN 网关在线"));
+        m_gatewayStatus->setStyleSheet(QStringLiteral("color: #078d4a; font-weight: 600;"));
+    }
 
     connect(m_navGroup, &QButtonGroup::idClicked, this, &MainWindow::selectPage);
     buttons.at(0)->setChecked(true);
     m_pages->setCurrentIndex(0);
 
     connect(dashboard, &DashboardPage::armRequested, this,
-            [this]() { handleRequest(QStringLiteral("总览：请求解锁电机")); });
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordEvent(QStringLiteral("arm"), QStringLiteral("请求解锁电机"));
+                handleRequest(QStringLiteral("总览：请求解锁电机"));
+            });
     connect(dashboard, &DashboardPage::disarmRequested, this,
-            [this]() { handleRequest(QStringLiteral("总览：请求停用电机")); });
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordEvent(QStringLiteral("disarm"),
+                                            QStringLiteral("请求停用电机"));
+                handleRequest(QStringLiteral("总览：请求停用电机"));
+            });
     connect(dashboard, &DashboardPage::holdPositionRequested, this,
-            [this]() { handleRequest(QStringLiteral("总览：请求保持位置")); });
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordEvent(QStringLiteral("hold"), QStringLiteral("请求保持位置"));
+                handleRequest(QStringLiteral("总览：请求保持位置"));
+            });
     connect(dashboard, &DashboardPage::surfaceRequested, this,
-            [this]() { handleRequest(QStringLiteral("总览：请求紧急上浮")); });
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordEvent(QStringLiteral("surface"),
+                                            QStringLiteral("请求紧急上浮"));
+                handleRequest(QStringLiteral("总览：请求紧急上浮"));
+            });
+    connect(dashboard, &DashboardPage::manualControlRequested, this,
+            [this](const SixDofControlRequest &request)
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordControlInput(request);
+            });
+    connect(dashboard, &DashboardPage::snapshotAvailable, this,
+            [this](const DashboardSnapshot &snapshot)
+            {
+                if (m_recorder != nullptr && !snapshot.demo.isDemo)
+                    m_recorder->recordDashboardSnapshot(snapshot);
+            });
+    connect(dashboard, &DashboardPage::recordingStartRequested, this,
+            [this, dashboard]()
+            {
+                const QString documents =
+                    QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+                const QString defaultPath =
+                    documents + QStringLiteral("/ROV_科研记录_%1.jsonl")
+                                    .arg(QDateTime::currentDateTimeUtc().toString(
+                                        QStringLiteral("yyyyMMdd_HHmmss")));
+                const QString path = QFileDialog::getSaveFileName(
+                    this, QStringLiteral("选择科研数据记录位置"), defaultPath,
+                    QStringLiteral("JSON Lines 记录 (*.jsonl)"));
+                if (path.isEmpty() || m_recorder == nullptr)
+                    return;
+                QString error;
+                if (!m_recorder->startRecording(path, &error))
+                    handleRequest(QStringLiteral("数据记录启动失败：%1").arg(error));
+                else
+                    dashboard->setRecordingStatus(true, 0, 0, path);
+            });
+    connect(dashboard, &DashboardPage::recordingStopRequested, this,
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->stopRecording();
+            });
+    connect(dashboard, &DashboardPage::recordingOpenDirectoryRequested, this,
+            [this]()
+            {
+                if (m_recorder == nullptr || m_recorder->lastDirectory().isEmpty())
+                {
+                    handleRequest(QStringLiteral("尚无科研记录目录"));
+                    return;
+                }
+                QDesktopServices::openUrl(QUrl::fromLocalFile(m_recorder->lastDirectory()));
+            });
+    connect(m_recorder, &ResearchDataRecorder::statusChanged, dashboard,
+            &DashboardPage::setRecordingStatus);
+    connect(m_recorder, &ResearchDataRecorder::errorOccurred, this,
+            [this](const QString &message)
+            { handleRequest(QStringLiteral("数据记录错误：%1").arg(message)); });
     connect(motorDebug, &MotorDebugPage::parameterWriteRequested, this,
             [this](const MotorParameterRequest &)
             { handleRequest(QStringLiteral("电机调试：请求写入参数")); });
     connect(motorDebug, &MotorDebugPage::captureRequested, this,
             [this](const MotorCaptureRequest &)
             { handleRequest(QStringLiteral("电机调试：请求采集数据")); });
+    connect(
+        motorDebug, &MotorDebugPage::speedControlRequested, this,
+        [this, communication](const MotorSpeedControlRequest &request)
+        {
+            if (request.nodeId < ObserverMotorProtocol::kFirstNodeId ||
+                request.nodeId > ObserverMotorProtocol::kLastNodeId)
+            {
+                handleRequest(QStringLiteral("电机控制失败：无效节点 Node%1").arg(request.nodeId));
+                return;
+            }
+            if (!request.runCommand && (request.targetRpm < -10000 || request.targetRpm > 10000))
+            {
+                handleRequest(QStringLiteral("电机控制失败：目标转速必须在 -10000～10000 rpm"));
+                return;
+            }
+
+            ObserverMotorProtocol::ControlFrame control;
+            control.command = request.runCommand ? ObserverMotorProtocol::Command::RunVector
+                                                 : ObserverMotorProtocol::Command::SpeedVector;
+            control.nodeMask = static_cast<quint8>(1U << (request.nodeId - 1U));
+            control.runMask = request.enabled ? control.nodeMask : 0U;
+            control.sequence = ++m_motorControlSequence;
+            if (!request.runCommand)
+            {
+                control.speedsRpm[static_cast<size_t>(request.nodeId - 1U)] =
+                    static_cast<qint16>(request.targetRpm);
+            }
+
+            QString error;
+            if (communication == nullptr ||
+                !communication->sendObserverMotorControl(control, &error))
+            {
+                if (error.isEmpty())
+                    error = QStringLiteral("网关未连接或串口发送失败");
+                handleRequest(QStringLiteral("电机控制发送失败：%1").arg(error));
+                return;
+            }
+            handleRequest(
+                QStringLiteral("已发送 0x100 控制帧：Node%1，%2 rpm，%3")
+                    .arg(request.nodeId)
+                    .arg(request.targetRpm)
+                    .arg(request.runCommand
+                             ? (request.enabled ? QStringLiteral("启动") : QStringLiteral("停止"))
+                             : (request.enabled ? QStringLiteral("设置速度并启动")
+                                                : QStringLiteral("设置速度"))));
+        });
     connect(firmware, &FirmwarePage::upgradeRequested, this,
             [this](const FirmwareUpgradeRequest &)
             { handleRequest(QStringLiteral("固件升级：已记录升级请求；未连接 Bootloader")); });
@@ -424,6 +769,8 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (m_recorder != nullptr)
+        m_recorder->stopRecording();
     if (auto *firmware = findChild<FirmwarePage *>())
         firmware->closeAuxiliaryWindows();
     QMainWindow::closeEvent(event);
@@ -623,8 +970,8 @@ void MainWindow::updatePageViewport()
     // 这样不会在正常尺寸下留下大块空白，也不会让底部表格/日志被裁切。
     QSize pageSize = viewportSize;
     qreal scale = 1.0;
-    if (QWidget *currentPage = m_pages->currentWidget(); currentPage != nullptr &&
-        currentPage->property("fitViewportScale").toBool())
+    if (QWidget *currentPage = m_pages->currentWidget();
+        currentPage != nullptr && currentPage->property("fitViewportScale").toBool())
     {
         const QSize required = currentPage->minimumSizeHint();
         if (required.width() > viewportSize.width() || required.height() > viewportSize.height())

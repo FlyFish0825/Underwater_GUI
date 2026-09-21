@@ -1,0 +1,32 @@
+{
+    "cmake.generator": "Ninja",
+    "cmake.sourceDirectory": "${workspaceFolder}",
+    "cmake.buildDirectory": "${workspaceFolder}/build/gui",
+    "cmake.configureOnOpen": true,
+    "cmake.configureSettings": {
+        "BUILD_TESTING": "ON",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_PREFIX_PATH": "${workspaceFolder}/toolchain/qt/5.15.19",
+        "CMAKE_C_COMPILER": "${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/g++.exe"
+    },
+    "cmake.environment": {
+        "PATH": "${workspaceFolder}/toolchain/qt/5.15.19/bin;${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin;${workspaceFolder}/toolchain/cmake/3.28.6/cmake-3.28.6-windows-x86_64/bin;${workspaceFolder}/toolchain/ninja/1.11.1;${env:PATH}"
+    },
+    "clangd.path": "${workspaceFolder}/toolchain/llvm/14.0.6/bin/clangd.exe",
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build/gui",
+        "--query-driver=${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/*",
+        "--background-index",
+        "--header-insertion=iwyu",
+        "--clang-tidy",
+        "--completion-style=detailed"
+    ],
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "C_Cpp.default.compilerPath": "${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/g++.exe",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/gui/compile_commands.json",
+    "files.encoding": "utf8",
+    "files.autoGuessEncoding": false,
+    "cmake.copyCompileCommands": "${workspaceFolder}/build/gui/compile_commands.json"
+}

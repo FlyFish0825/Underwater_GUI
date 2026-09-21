@@ -36,11 +36,15 @@ struct DashboardSnapshot
 
     // Feedback values: depth metres and attitude degrees.
     double depthM = 0.0;
+    bool depthValid = false;
     double rollDeg = 0.0;
+    bool attitudeValid = false;
     double pitchDeg = 0.0;
     double yawDeg = 0.0;
     double busVoltageV = 0.0;
+    bool busVoltageValid = false;
     double internalTemperatureC = 0.0;
+    bool internalTemperatureValid = false;
     QString robotMode;
     bool armed = false;
     bool leakDetected = false;

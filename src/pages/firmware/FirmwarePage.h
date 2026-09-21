@@ -13,6 +13,7 @@ class QLabel;
 class QComboBox;
 class QBoxLayout;
 class QFrame;
+class QLineEdit;
 class QResizeEvent;
 class QTextBrowser;
 class QPushButton;
@@ -39,6 +40,9 @@ class FirmwarePage final : public QWidget
 
     // 连接栏由主窗口统一放置，避免把“仅连接检查”混在 Bootloader 页面内容中。
     QWidget *connectionBar() const;
+
+    // 供主窗口的数据服务订阅同一条 USB CDC → AA55 CAN 网关帧流。
+    BootloaderCommunicationService *communicationService() const;
 
     // 主窗口退出前调用，销毁脱离页面布局显示的独立窗口。
     void closeAuxiliaryWindows();
@@ -76,6 +80,7 @@ class FirmwarePage final : public QWidget
     void exportRecordedLogs();
     void logRequest(const QString &message);
     void renderRuntimeLog();
+    bool matchesRuntimeLogFilter(const QString &message) const;
 
     FirmwareSnapshot m_snapshot;
     QBoxLayout *m_mainRowLayout = nullptr;
@@ -87,6 +92,14 @@ class FirmwarePage final : public QWidget
     QLabel *m_dropTitle = nullptr;
     QLabel *m_dropHint = nullptr;
     QTextBrowser *m_requestLog = nullptr;
+    QComboBox *m_logFilter = nullptr;
+    QComboBox *m_logNodeFilter = nullptr;
+    QLineEdit *m_logCanIdFilter = nullptr;
+    QLineEdit *m_logSearchFilter = nullptr;
+    QPushButton *m_logFollowButton = nullptr;
+    QPushButton *m_logPauseButton = nullptr;
+    bool m_logFollowing = true;
+    bool m_logPaused = false;
     QFrame *m_dropZone = nullptr;
     QFrame *m_connectionBar = nullptr;
     QTableWidget *m_nodeTable = nullptr;

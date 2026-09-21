@@ -118,6 +118,12 @@ test-results/
 
 # ---------- IDE / 编辑器个人配置 ----------
 .vscode/*
+# 本项目使用锁定工具链，保留可复现的 VSCode/CMake/clangd 配置。
+!.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
 !.vscode/extensions.json
 !.vscode/settings.example.json
 .idea/
@@ -169,4 +175,8 @@ local_config/
 # 注意：不要在此处忽略 docs/、协议规范、示意图/、*.md、*.png 等项目资料。
 
 
-third_party
+# The existing Fluent-Qt checkout is machine-provided; Qwt is vendored with
+# its upstream COPYING and is intentionally tracked for reproducible builds.
+third_party/*
+!third_party/qwt-6.3/
+!third_party/qwt-6.3/**

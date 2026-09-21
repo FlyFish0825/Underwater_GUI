@@ -1,0 +1,24 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "ROV UI (Motor Debug)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/gui/rov_ui.exe",
+            "args": ["--page", "1"],
+            "cwd": "${workspaceFolder}/build/gui",
+            "stopAtEntry": false,
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/gdb.exe",
+            "preLaunchTask": "Build Debug",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "${workspaceFolder}/toolchain/qt/5.15.19/bin;${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin;${env:PATH}"
+                }
+            ]
+        }
+    ]
+}

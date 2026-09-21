@@ -3,8 +3,10 @@
 #include <FluentQt/FluentQt.h>
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QFile>
 #include <QGuiApplication>
+#include <QIcon>
 #include <QStringList>
 #include <QTimer>
 
@@ -16,7 +18,10 @@ int main(int argc, char *argv[])
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QCoreApplication::setOrganizationName(QStringLiteral("UnderwaterGUI"));
+    QCoreApplication::setApplicationName(QStringLiteral("UnderwaterGUI"));
     QApplication application(argc, argv);
+    application.setWindowIcon(QIcon(QStringLiteral(":/icons/project_logo.png")));
     fluent::initializeResources();
 
     QFile theme(QStringLiteral(":/theme/theme.qss"));

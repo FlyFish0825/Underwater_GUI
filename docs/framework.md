@@ -1,4 +1,7 @@
-# ROV UI framework delivery
+# ROV UI framework
+
+分层架构图请先阅读 [`architecture.md`](architecture.md)；本文只保留页面骨架和
+契约边界，避免把通信、数据和绘图细节重复画在同一张图里。
 
 ## Public skeleton
 
@@ -17,14 +20,16 @@ business requests. The Settings item is an intentionally minimal placeholder.
 ## Layer boundaries
 
 ```text
-future Transport → future Protocol → future Service/Data → contracts → pages
-                                                               ↑
-                                                            MainWindow
+Transport → Protocol → Service/Data → MainWindow → Pages
+                                      ↑            ↓
+                                  Requests ← Contracts/Snapshots
 ```
 
-This delivery contains only the UI, contracts, deterministic preview data,
-and request logging. `src/communication/README.md` and `src/data/README.md`
-mark the future boundaries without inventing device code.
+当前工程已经包含 USB CDC、AA55 网关、Observer Motor 和 Bootloader 服务；页面仍然
+通过快照和类型化请求与这些服务交互，不直接读取原始帧。Motor Debug 的控制请求由
+`MainWindow` 校验后交给通信服务编码，曲线由 `QwtCurvePlotWidget` 负责显示；高速曲线
+的组件选择、窗口预设和尚未接入的原始样本环单独记录在 [`plotting.md`](plotting.md)。
+Qt、Fluent-Qt、Qwt 的版本和许可证边界见 [`dependencies.md`](dependencies.md)。
 
 ## Reference alignment
 
@@ -47,4 +52,6 @@ status colors. The reference screenshots are not embedded as UI assets.
 `src/preview/PreviewData.cpp` provides fixed values and the UI labels preview
 state explicitly. The executable accepts `--page N --capture PATH` for local
 visual inspection; it starts with a normal Windows platform, captures the
-window, and exits. No real device or communication result is implied.
+window, and exits. No real device or communication result is implied. The
+current preview deliberately covers the IABC and speed series used by the
+Motor Debug presets.

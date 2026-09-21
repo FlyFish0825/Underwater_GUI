@@ -10,7 +10,11 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets Concurrent PrintSupport)
+
+# Qwt 6.3.x supplies the reusable QWidget plotting primitives. Its wrapper
+# disables optional modules unavailable in the locked Qt SDK (SVG/OpenGL).
+add_subdirectory(third_party/qwt-6.3 EXCLUDE_FROM_ALL)
 
 # Fluent-Qt 作为可选的第三方控件库接入：只构建库本身，不构建它的示例、画廊、
 # 测试和 Python 绑定，避免把与上位机无关的目标带入现有工程。
@@ -60,10 +64,14 @@ add_library(rov_communication STATIC
     src/communication/bootloader/BootloaderService.cpp
     src/communication/bootloader/BootloaderService.h
     src/communication/bootloader/BootloaderTypes.h
+    src/communication/protocol/CanGatewayConfigProtocol.cpp
+    src/communication/protocol/CanGatewayConfigProtocol.h
     src/communication/protocol/CanGatewayProtocol.cpp
     src/communication/protocol/CanGatewayProtocol.h
     src/communication/protocol/CanFlowControlProtocol.cpp
     src/communication/protocol/CanFlowControlProtocol.h
+    src/communication/protocol/ObserverMotorProtocol.cpp
+    src/communication/protocol/ObserverMotorProtocol.h
     src/communication/protocol/SystemHeartbeatProtocol.cpp
     src/communication/protocol/SystemHeartbeatProtocol.h
     src/communication/service/BootloaderCommunicationService.cpp
@@ -77,6 +85,17 @@ add_library(rov_firmware_history STATIC
     src/data/store/FirmwareHistoryStore.h
 )
 
+add_library(rov_motor_data STATIC
+    src/contracts/motor/ObserverMotorContract.h
+    src/data/services/ObserverMotorDataService.cpp
+    src/data/services/ObserverMotorDataService.h
+)
+
+add_library(rov_research_recording STATIC
+    src/data/recording/ResearchDataRecorder.cpp
+    src/data/recording/ResearchDataRecorder.h
+)
+
 add_library(rov_page_dashboard STATIC
     src/pages/dashboard/DashboardPage.cpp
     src/pages/dashboard/DashboardPage.h
@@ -85,6 +104,8 @@ add_library(rov_page_dashboard STATIC
 add_library(rov_page_motor_debug STATIC
     src/pages/motor_debug/MotorDebugPage.cpp
     src/pages/motor_debug/MotorDebugPage.h
+    src/widgets/plot/QwtCurvePlotWidget.cpp
+    src/widgets/plot/QwtCurvePlotWidget.h
 )
 
 add_library(rov_page_firmware STATIC
@@ -135,6 +156,8 @@ set(ROV_UI_TARGETS
     rov_ui_common
     rov_preview
     rov_communication
+    rov_motor_data
+    rov_research_recording
     rov_firmware_history
     rov_page_dashboard
     rov_page_motor_debug
@@ -151,9 +174,12 @@ endforeach()
 
 target_link_libraries(rov_page_firmware PUBLIC rov_communication)
 target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history)
+target_link_libraries(rov_motor_data PUBLIC rov_communication)
+target_link_libraries(rov_research_recording PUBLIC rov_communication)
 target_link_libraries(rov_ui_common PUBLIC FluentQt::FluentQt)
 target_link_libraries(rov_page_dashboard PUBLIC rov_ui_common)
 target_link_libraries(rov_page_motor_debug PUBLIC rov_ui_common)
+target_link_libraries(rov_page_motor_debug PUBLIC rov_third_party_qwt)
 target_link_libraries(rov_page_firmware PUBLIC rov_ui_common)
 target_link_libraries(rov_page_manipulator PUBLIC rov_ui_common)
 target_link_libraries(rov_page_settings PUBLIC rov_ui_common)
@@ -173,6 +199,8 @@ target_link_libraries(rov_ui PRIVATE
     rov_preview
     rov_ui_common
     rov_communication
+    rov_motor_data
+    rov_research_recording
 )
 
 if (WIN32)
@@ -185,10 +213,41 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(rov_can_bitrate_settings_test tests/CanBitrateSettingsTest.cpp)
+    target_link_libraries(rov_can_bitrate_settings_test PRIVATE rov_page_settings rov_firmware_history)
+    add_test(NAME rov_can_bitrate_settings_test COMMAND rov_can_bitrate_settings_test -platform offscreen)
     add_executable(rov_can_flow_protocol_test
         tests/CanFlowControlProtocolTest.cpp
     )
     target_include_directories(rov_can_flow_protocol_test PRIVATE src)
     target_link_libraries(rov_can_flow_protocol_test PRIVATE Qt5::Core rov_communication)
     add_test(NAME rov_can_flow_protocol_test COMMAND rov_can_flow_protocol_test)
+
+    add_executable(rov_observer_motor_protocol_test
+        tests/ObserverMotorProtocolTest.cpp
+    )
+    target_include_directories(rov_observer_motor_protocol_test PRIVATE src)
+    target_link_libraries(rov_observer_motor_protocol_test PRIVATE Qt5::Core rov_communication)
+    add_test(NAME rov_observer_motor_protocol_test COMMAND rov_observer_motor_protocol_test)
+
+    add_executable(rov_system_heartbeat_protocol_test
+        tests/SystemHeartbeatProtocolTest.cpp
+    )
+    target_include_directories(rov_system_heartbeat_protocol_test PRIVATE src)
+    target_link_libraries(rov_system_heartbeat_protocol_test PRIVATE Qt5::Core rov_communication)
+    add_test(NAME rov_system_heartbeat_protocol_test COMMAND rov_system_heartbeat_protocol_test)
+
+    add_executable(rov_can_gateway_config_protocol_test
+        tests/CanGatewayConfigProtocolTest.cpp
+    )
+    target_include_directories(rov_can_gateway_config_protocol_test PRIVATE src)
+    target_link_libraries(rov_can_gateway_config_protocol_test PRIVATE Qt5::Core rov_communication)
+    add_test(NAME rov_can_gateway_config_protocol_test COMMAND rov_can_gateway_config_protocol_test)
+
+    add_executable(rov_research_data_recorder_test
+        tests/ResearchDataRecorderTest.cpp
+    )
+    target_include_directories(rov_research_data_recorder_test PRIVATE src)
+    target_link_libraries(rov_research_data_recorder_test PRIVATE Qt5::Core rov_research_recording)
+    add_test(NAME rov_research_data_recorder_test COMMAND rov_research_data_recorder_test)
 endif()

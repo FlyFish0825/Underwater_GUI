@@ -1,0 +1,44 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Configure Debug + compile_commands",
+            "type": "process",
+            "command": "${workspaceFolder}/toolchain/cmake/3.28.6/cmake-3.28.6-windows-x86_64/bin/cmake.exe",
+            "args": [
+                "-S", "${workspaceFolder}",
+                "-B", "${workspaceFolder}/build/gui",
+                "-G", "Ninja",
+                "-DBUILD_TESTING=ON",
+                "-DCMAKE_BUILD_TYPE=Debug",
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+                "-DCMAKE_PREFIX_PATH=${workspaceFolder}/toolchain/qt/5.15.19",
+                "-DCMAKE_C_COMPILER=${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/gcc.exe",
+                "-DCMAKE_CXX_COMPILER=${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/g++.exe"
+            ],
+            "options": {
+                "env": {
+                    "PATH": "${workspaceFolder}/toolchain/qt/5.15.19/bin;${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin;${workspaceFolder}/toolchain/cmake/3.28.6/cmake-3.28.6-windows-x86_64/bin;${workspaceFolder}/toolchain/ninja/1.11.1;${env:PATH}"
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build Debug",
+            "type": "process",
+            "command": "${workspaceFolder}/toolchain/cmake/3.28.6/cmake-3.28.6-windows-x86_64/bin/cmake.exe",
+            "args": ["--build", "${workspaceFolder}/build/gui", "--parallel", "4"],
+            "dependsOn": "Configure Debug + compile_commands",
+            "problemMatcher": "$gcc",
+            "group": { "kind": "build", "isDefault": true }
+        },
+        {
+            "label": "CTest Debug",
+            "type": "process",
+            "command": "${workspaceFolder}/toolchain/cmake/3.28.6/cmake-3.28.6-windows-x86_64/bin/ctest.exe",
+            "args": ["--test-dir", "${workspaceFolder}/build/gui", "--output-on-failure"],
+            "dependsOn": "Build Debug",
+            "problemMatcher": []
+        }
+    ]
+}

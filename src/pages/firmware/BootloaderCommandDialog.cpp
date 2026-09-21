@@ -80,7 +80,7 @@ QString commandDescription(BootCommand command)
     case BootCommand::EnterBoot:
         return QStringLiteral("请求 APP 进入 Bootloader。APP 收到后写入启动标志并复位，不需要先回复 ACK。");
     case BootCommand::JumpApp:
-        return QStringLiteral("请求 Bootloader 跳转到 APP。Byte2=0x00 为正常启动，0x01 为 Trial Jump 试运行。");
+        return QStringLiteral("安全试运行 APP。上位机固定发送 Byte2=0x01，Bootloader 先将新 APP 置为未验证并开启看门狗；APP 必须收到 ENTER_BOOT 后自行复位回 Bootloader，验证成功才恢复 app_valid。界面不提供 Byte2=0x00 的直接跳转。");
     case BootCommand::Reset:
         return QStringLiteral("复位目标节点，使其重新执行 Bootloader 启动流程。");
     case BootCommand::Abort:
@@ -184,8 +184,8 @@ BootloaderCommandDialog::BootloaderCommandDialog(QWidget *parent) : QDialog(pare
     auto *right = new QVBoxLayout;
     auto *form = new QFormLayout;
     m_jumpMode = new AppComboBox;
-    m_jumpMode->addItem(QStringLiteral("正常启动 · Byte2=0x00"), 0);
-    m_jumpMode->addItem(QStringLiteral("试运行 Trial · Byte2=0x01"), 1);
+    m_jumpMode->addItem(QStringLiteral("安全 Trial · Byte2=0x01"), 1);
+    m_jumpMode->setEnabled(false);
     form->addRow(QStringLiteral("JUMP_APP 模式"), m_jumpMode);
     m_commandCode = new AppLineEdit;
     m_commandCode->setReadOnly(true);
@@ -238,14 +238,6 @@ BootloaderCommandDialog::BootloaderCommandDialog(QWidget *parent) : QDialog(pare
                 m_source->setEnabled(enabled);
                 m_value->setEnabled(enabled);
             });
-    connect(m_jumpMode, qOverload<int>(&QComboBox::currentIndexChanged), this,
-            [this](int index)
-            {
-                if (m_commandList->currentItem() != nullptr
-                    && m_commandList->currentItem()->data(Qt::UserRole).toInt()
-                           == static_cast<int>(BootCommand::JumpApp))
-                    m_byte2->setText(QStringLiteral("0x%1").arg(index));
-            });
     updateParameterHints();
 }
 
@@ -293,9 +285,12 @@ void BootloaderCommandDialog::sendSelected()
     QString byteText = m_byte2->text().trimmed();
     if (byteText.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive))
         byteText = byteText.mid(2);
-    const quint8 byte2 = static_cast<quint8>(byteText.toUInt(&ok, 16));
+    const quint8 requestedByte2 = static_cast<quint8>(byteText.toUInt(&ok, 16));
     if (!ok)
         return;
+    // 这是最后一道 UI 防线：即使调试模式中的文本框被程序化修改，
+    // JUMP_APP 仍无法退化为未经 Trial 的普通跳转。
+    const quint8 byte2 = command == BootCommand::JumpApp ? 0x01U : requestedByte2;
     QByteArray params = parseHexBytes(m_params->text());
     if (params.size() > 4)
         return;
@@ -329,7 +324,8 @@ void BootloaderCommandDialog::updateParameterHints()
     m_commandCode->setText(QStringLiteral("0x%1")
                                .arg(static_cast<quint8>(command), 2, 16, QLatin1Char('0'))
                                .toUpper());
-    m_jumpMode->setEnabled(command == BootCommand::JumpApp);
+    m_jumpMode->setEnabled(false);
+    m_byte2->setReadOnly(command == BootCommand::JumpApp);
     if (command == BootCommand::SessionBegin)
     {
         m_byte2->setText(QStringLiteral("0x07"));
@@ -342,7 +338,7 @@ void BootloaderCommandDialog::updateParameterHints()
     }
     else if (command == BootCommand::JumpApp)
     {
-        m_byte2->setText(QStringLiteral("0x00"));
+        m_byte2->setText(QStringLiteral("0x01"));
         m_params->setText(QStringLiteral("00 00 00 00"));
     }
     else
