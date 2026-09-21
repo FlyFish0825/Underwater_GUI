@@ -23,6 +23,7 @@ class MotorDebugPage final : public QWidget
     explicit MotorDebugPage(QWidget *parent = nullptr);
 
     void setSnapshot(const MotorDebugSnapshot &snapshot);
+    quint8 selectedNodeId() const;
 
   signals:
     void parameterWriteRequested(const MotorParameterRequest &request);

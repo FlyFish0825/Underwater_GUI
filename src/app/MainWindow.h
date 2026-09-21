@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QVector>
 
 class QLabel;
 class QButtonGroup;
@@ -52,6 +53,8 @@ class MainWindow final : public QMainWindow
     QLabel *m_gatewayStatus = nullptr;
     ObserverMotorDataService *m_motorData = nullptr;
     ResearchDataRecorder *m_recorder = nullptr;
+    QVector<QVector<double>> m_debugSeriesHistory;
+    quint8 m_debugHistoryNodeId = 0;
     quint16 m_motorControlSequence = 0;
     bool m_screenSignalConnected = false;
 };

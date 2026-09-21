@@ -170,6 +170,149 @@ QToolButton *navigationButton(const QString &text, const QString &description,
     return button;
 }
 
+QString motorLabel(const quint8 nodeId)
+{
+    static const QStringList labels = {
+        QStringLiteral("前左 · 水平"),   QStringLiteral("前右 · 水平"),
+        QStringLiteral("后左 · 水平"),   QStringLiteral("后右 · 水平"),
+        QStringLiteral("内左前 · 垂向"), QStringLiteral("内右前 · 垂向"),
+        QStringLiteral("内左后 · 垂向"), QStringLiteral("内右后 · 垂向")};
+    const int index = static_cast<int>(nodeId) - 1;
+    return index >= 0 && index < labels.size() ? labels.at(index) : QStringLiteral("未知");
+}
+
+rov::DashboardSnapshot dashboardFromMotorFleet(const rov::ObserverMotorFleetSnapshot &fleet)
+{
+    rov::DashboardSnapshot snapshot;
+    snapshot.demo.isDemo = false;
+    snapshot.systemStamp = fleet.stamp;
+    snapshot.connected = false;
+    snapshot.canControl = false;
+    snapshot.controlUnavailableReason = QStringLiteral("等待电机节点反馈");
+    snapshot.depthValid = false;
+    snapshot.attitudeValid = false;
+    snapshot.thrustLimitPercent = 70;
+
+    int onlineCount = 0;
+    for (const rov::ObserverMotorNodeSnapshot &node : fleet.nodes)
+    {
+        rov::ThrusterTelemetry item;
+        item.id = QStringLiteral("thruster%1").arg(node.nodeId);
+        item.label = QStringLiteral("T%1 · %2").arg(node.nodeId).arg(motorLabel(node.nodeId));
+        item.rpm = node.speedRpm;
+        item.currentA = node.iqA;
+        item.temperatureC = node.temperatureC;
+        item.status = node.online ? QStringLiteral("在线") : QStringLiteral("离线");
+        item.stamp = node.stamp;
+        snapshot.thrusters.append(item);
+        if (!node.online)
+            continue;
+        ++onlineCount;
+        if (!snapshot.busVoltageValid)
+        {
+            snapshot.busVoltageV = node.busVoltageV;
+            snapshot.busVoltageValid = true;
+            snapshot.internalTemperatureC = node.temperatureC;
+            snapshot.internalTemperatureValid = true;
+            snapshot.robotMode = node.state;
+        }
+    }
+    snapshot.connected = onlineCount > 0;
+    snapshot.canControl = snapshot.connected;
+    snapshot.controlUnavailableReason =
+        snapshot.connected ? QString() : QStringLiteral("无在线电机节点");
+    snapshot.alarmCount = qMax(0, static_cast<int>(fleet.nodes.size()) - onlineCount);
+    if (snapshot.alarmCount > 0)
+        snapshot.alarms.append(QStringLiteral("%1 个电机节点离线").arg(snapshot.alarmCount));
+    return snapshot;
+}
+
+void appendHistory(QVector<double> &history, const double value)
+{
+    history.append(value);
+    constexpr int kHistoryLimit = 500;
+    if (history.size() > kHistoryLimit)
+        history.remove(0, history.size() - kHistoryLimit);
+}
+
+void addLiveSeries(QVector<rov::DebugSeries> &series, const QString &id, const QString &name,
+                   const QString &unit, const QVector<double> &samples, const rov::DataStamp &stamp)
+{
+    rov::DebugSeries item;
+    item.id = id;
+    item.name = name;
+    item.unit = unit;
+    item.samples = samples;
+    item.sampleRateHz = 20.0;
+    item.stamp = stamp;
+    series.append(item);
+}
+
+rov::MotorDebugSnapshot motorDebugFromNode(const rov::ObserverMotorNodeSnapshot &node,
+                                           QVector<QVector<double>> &history, quint8 &historyNodeId)
+{
+    rov::MotorDebugSnapshot snapshot;
+    snapshot.demo.isDemo = false;
+    snapshot.motorStamp = node.stamp;
+    snapshot.selectedMotorId = QStringLiteral("thruster%1").arg(node.nodeId);
+    snapshot.selectedMotorLabel =
+        QStringLiteral("Node%1 · 推进器 %2").arg(node.nodeId).arg(node.nodeId);
+    snapshot.state = node.online ? node.state : QStringLiteral("离线");
+    snapshot.rpm = node.speedRpm;
+    snapshot.currentA = node.iqA;
+    snapshot.voltageV = node.busVoltageV;
+    snapshot.temperatureC = node.temperatureC;
+    snapshot.fault =
+        !node.online ? QStringLiteral("离线")
+                     : (node.voltageLimited ? QStringLiteral("电压限幅") : QStringLiteral("无"));
+
+    if (historyNodeId != node.nodeId || history.size() != 7)
+    {
+        historyNodeId = node.nodeId;
+        history = QVector<QVector<double>>(7);
+    }
+    if (node.debugMode)
+    {
+        appendHistory(history[0], node.phaseCurrentU_A);
+        appendHistory(history[1], node.phaseCurrentV_A);
+        appendHistory(history[2], node.phaseCurrentW_A);
+    }
+    else
+    {
+        history[0].clear();
+        history[1].clear();
+        history[2].clear();
+    }
+    appendHistory(history[3], node.busVoltageV);
+    appendHistory(history[4], node.speedRpm);
+    if (node.debugMode)
+        appendHistory(history[5], node.pllElectricalSpeedRadPerSec);
+    else
+        history[5].clear();
+    if (node.debugMode)
+        appendHistory(history[6], node.observerElectricalAngleDeg);
+    else
+        history[6].clear();
+
+    const rov::DataStamp emptyStamp;
+    const rov::DataStamp phaseStamp = node.debugMode ? node.stamp : emptyStamp;
+    addLiveSeries(snapshot.series, QStringLiteral("phase_current_u"), QStringLiteral("相电流 U"),
+                  QStringLiteral("A"), history[0], phaseStamp);
+    addLiveSeries(snapshot.series, QStringLiteral("phase_current_v"), QStringLiteral("相电流 V"),
+                  QStringLiteral("A"), history[1], phaseStamp);
+    addLiveSeries(snapshot.series, QStringLiteral("phase_current_w"), QStringLiteral("相电流 W"),
+                  QStringLiteral("A"), history[2], phaseStamp);
+    addLiveSeries(snapshot.series, QStringLiteral("bus_voltage"), QStringLiteral("母线电压"),
+                  QStringLiteral("V"), history[3], node.stamp);
+    addLiveSeries(snapshot.series, QStringLiteral("speed_rpm"), QStringLiteral("转速"),
+                  QStringLiteral("rpm"), history[4], node.stamp);
+    addLiveSeries(snapshot.series, QStringLiteral("pll_electrical_speed"),
+                  QStringLiteral("PLL 电速度"), QStringLiteral("rad/s"), history[5], phaseStamp);
+    addLiveSeries(snapshot.series, QStringLiteral("observer_angle_deg"),
+                  QStringLiteral("观测器电角度"), QStringLiteral("°"), history[6], phaseStamp);
+    return snapshot;
+}
+
 QSize initialWindowSize(QScreen *screen)
 {
     if (screen == nullptr)
@@ -396,9 +539,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
                 // 科研记录走独立有界队列，不依赖当前页面，也不会触发绘图或逐帧 UI 更新。
                 if (m_recorder != nullptr)
                     m_recorder->recordFrame(frame, QStringLiteral("rx"));
-                // 只有电机调试页真正可见时才解析高频反馈；不绘制时直接丢弃，
-                // 避免 100/1000 Hz 数据进入无用的快照和 UI 更新链。
-                if (m_motorData != nullptr && m_pages != nullptr && m_pages->currentIndex() == 1)
+                // 总览和记录都需要真实电机反馈；数据服务只按 50 ms 发布快照，
+                // 不把 100 Hz 原始帧逐帧送入 QWidget 或曲线重绘。
+                if (m_motorData != nullptr)
                     m_motorData->handleCanFrame(frame);
             });
     connect(firmware->communicationService(), &BootloaderCommunicationService::frameSent, this,
@@ -409,6 +552,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             });
     connect(firmware->communicationService(), &BootloaderCommunicationService::closed, m_motorData,
             &ObserverMotorDataService::reset);
+    connect(m_motorData, &ObserverMotorDataService::snapshotChanged, this,
+            [this, dashboard, motorDebug](const ObserverMotorFleetSnapshot &fleet)
+            {
+                dashboard->setSnapshot(dashboardFromMotorFleet(fleet));
+                const quint8 nodeId = motorDebug->selectedNodeId();
+                motorDebug->setSnapshot(motorDebugFromNode(
+                    m_motorData->nodeSnapshot(nodeId), m_debugSeriesHistory, m_debugHistoryNodeId));
+            });
     // 机械臂、视觉和设置页保留原有的小屏幕等比保护。
     // 电机调试与固件升级页改由页面内部自适应，避免宽屏下整页缩小后两侧留白。
     for (QWidget *page : {static_cast<QWidget *>(manipulator), static_cast<QWidget *>(vision),

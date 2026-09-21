@@ -906,19 +906,24 @@ void DashboardPage::openThrusterDetails(const int index)
 void DashboardPage::refreshView()
 {
     const bool available = hasSystemData(m_snapshot);
-    m_depthValue->setText(formatNumber(available, m_snapshot.depthM, 1, QStringLiteral(" m")));
-    m_rollValue->setText(formatNumber(available, m_snapshot.rollDeg, 1, QStringLiteral("°")));
-    m_pitchValue->setText(formatNumber(available, m_snapshot.pitchDeg, 1, QStringLiteral("°")));
-    m_yawValue->setText(formatNumber(available, m_snapshot.yawDeg, 1, QStringLiteral("°")));
-    m_voltageValue->setText(
-        formatNumber(available, m_snapshot.busVoltageV, 1, QStringLiteral(" V")));
+    m_depthValue->setText(formatNumber(available && m_snapshot.depthValid, m_snapshot.depthM, 1,
+                                       QStringLiteral(" m")));
+    m_rollValue->setText(formatNumber(available && m_snapshot.attitudeValid, m_snapshot.rollDeg, 1,
+                                      QStringLiteral("°")));
+    m_pitchValue->setText(formatNumber(available && m_snapshot.attitudeValid, m_snapshot.pitchDeg,
+                                       1, QStringLiteral("°")));
+    m_yawValue->setText(formatNumber(available && m_snapshot.attitudeValid, m_snapshot.yawDeg, 1,
+                                     QStringLiteral("°")));
+    m_voltageValue->setText(formatNumber(available && m_snapshot.busVoltageValid,
+                                         m_snapshot.busVoltageV, 1, QStringLiteral(" V")));
     m_modeValue->setText(available && !m_snapshot.robotMode.isEmpty() ? m_snapshot.robotMode
                                                                       : QStringLiteral("--"));
     m_armValue->setText(
         available ? (m_snapshot.armed ? QStringLiteral("已解锁") : QStringLiteral("已停用"))
                   : QStringLiteral("--"));
-    m_temperatureValue->setText(
-        formatNumber(available, m_snapshot.internalTemperatureC, 1, QStringLiteral(" °C")));
+    m_temperatureValue->setText(formatNumber(available && m_snapshot.internalTemperatureValid,
+                                             m_snapshot.internalTemperatureC, 1,
+                                             QStringLiteral(" °C")));
     setTone(m_modeValue, "good");
     setTone(m_armValue, available && m_snapshot.armed ? "good" : "warn");
 
@@ -969,7 +974,8 @@ void DashboardPage::refreshView()
         {
             const ThrusterTelemetry &item = m_snapshot.thrusters.at(i);
             const bool disabled = m_thrusterDisabled.value(i, false);
-            const bool itemValid = item.stamp.validity == DataValidity::Valid;
+            const bool itemValid = item.stamp.validity == DataValidity::Valid &&
+                                   item.stamp.freshness != DataFreshness::Offline;
             const bool itemOnline = item.status == QStringLiteral("在线");
             itemOnline ? ++online : ++offline;
             if (itemValid)

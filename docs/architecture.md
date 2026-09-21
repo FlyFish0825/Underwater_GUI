@@ -148,23 +148,25 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    rx[0x201 / 0x301<br/>目标：100~1000 Hz]
+    rx[0x201 / 0x301<br/>普通反馈约 100 Hz]
     decode[Protocol decode<br/>只生成结构化帧]
     cache[DataService cache<br/>按节点覆盖/批量缓存]
-    gate{Motor Debug<br/>页面可见？}
-    drop[丢弃本次绘图路径<br/>不打印、不保存]
     publish[定时发布快照<br/>当前服务约 50 ms 发布]
+    gate{Motor Debug<br/>页面可见？}
+    drop[跳过曲线重绘<br/>不打印、不保存高频文本]
     ring[Curve ring buffer<br/>规划：每条曲线有界容量]
     plot[QwtCurvePlotWidget<br/>已接入多曲线与交互]
 
-    rx --> decode --> cache --> gate
+    rx --> decode --> cache --> publish
+    publish --> dashboard[Dashboard<br/>8 节点实时状态]
+    publish --> gate
     gate -->|否| drop
-    gate -->|是| publish --> ring --> plot
+    gate -->|是| ring --> plot
 ```
 
-当前代码已经做到页面不可见时不把网关帧交给电机数据服务，Qwt 绘图后端也已接入；
-但 ring buffer 和原始高频样本到曲线的链路仍待接入验证，当前曲线显示的是预览样本或
-定时发布的快照。关键约束是“采样频率”
+当前普通反馈约 100 Hz，数据服务按约 50 ms 发布快照，因此总览和第二页不会执行 100 次
+每秒的 QWidget 更新。Qwt 曲线使用服务快照构建有界显示历史；记录器旁路保留每一帧原始
+数据。关键约束是“采样频率”
 和“绘图频率”分离：1000 Hz 的数据不能造成 1000 次 GUI repaint，也不能造成
 1000 条日志。
 

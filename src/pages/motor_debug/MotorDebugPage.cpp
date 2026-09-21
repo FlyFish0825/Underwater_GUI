@@ -33,8 +33,8 @@ class CurveWindowWidget final : public QFrame
 
         auto *toolbar = new QHBoxLayout;
         toolbar->setSpacing(6);
-        m_title = rov::makeLabel(QStringLiteral("曲线窗口 %1").arg(number),
-                                 QStringLiteral("bodyValue"));
+        m_title =
+            rov::makeLabel(QStringLiteral("曲线窗口 %1").arg(number), QStringLiteral("bodyValue"));
         toolbar->addWidget(m_title);
         m_variable = new QComboBox;
         m_variable->setMinimumWidth(150);
@@ -50,16 +50,26 @@ class CurveWindowWidget final : public QFrame
         m_plot = new rov::QwtCurvePlotWidget;
         root->addWidget(m_plot, 1);
         connect(m_fit, &QPushButton::clicked, m_plot, &rov::QwtCurvePlotWidget::fitToData);
-        connect(m_clear, &QPushButton::clicked, this, [this]()
+        connect(m_clear, &QPushButton::clicked, this,
+                [this]()
                 {
                     m_selectedIndexes.clear();
                     refreshPlot(true);
                 });
     }
 
-    QComboBox *variableCombo() const { return m_variable; }
-    QPushButton *removeButton() const { return m_remove; }
-    int selectedIndex() const { return m_selectedIndex; }
+    QComboBox *variableCombo() const
+    {
+        return m_variable;
+    }
+    QPushButton *removeButton() const
+    {
+        return m_remove;
+    }
+    int selectedIndex() const
+    {
+        return m_selectedIndex;
+    }
 
     void setSeriesCatalog(const QVector<rov::DebugSeries> &series,
                           const QVector<int> &preferredIndexes)
@@ -103,7 +113,10 @@ class CurveWindowWidget final : public QFrame
         refreshPlot(false);
     }
 
-    void fitToData() { m_plot->fitToData(); }
+    void fitToData()
+    {
+        m_plot->fitToData();
+    }
 
   private:
     void refreshPlot(const bool autoFit)
@@ -175,8 +188,8 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     curveCard->contentLayout()->setSpacing(7);
     auto *curveToolbar = new QHBoxLayout;
     curveToolbar->setSpacing(7);
-    curveToolbar->addWidget(makeLabel(QStringLiteral("每个窗口可叠加变量并独立缩放"),
-                                      QStringLiteral("mutedLabel")));
+    curveToolbar->addWidget(
+        makeLabel(QStringLiteral("每个窗口可叠加变量并独立缩放"), QStringLiteral("mutedLabel")));
     curveToolbar->addStretch();
     auto *fitAll = makeButton(QStringLiteral("全部自动适配"), QStringLiteral("softButton"));
     curveToolbar->addWidget(fitAll);
@@ -209,12 +222,11 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     statusLayout->setColumnStretch(3, 1);
     statusLayout->addWidget(makeLabel(QStringLiteral("电机"), QStringLiteral("mutedLabel")), 0, 0);
     m_motorSelect = new AppComboBox;
-    m_motorSelect->addItems({QStringLiteral("Node1 · 推进器 1（FL）"),
-                             QStringLiteral("Node2 · 推进器 2（FR）"),
-                             QStringLiteral("Node3 · 推进器 3（ML）"),
-                             QStringLiteral("Node4 · 推进器 4（MR）"),
-                             QStringLiteral("Node5 · 推进器 5"), QStringLiteral("Node6 · 推进器 6"),
-                             QStringLiteral("Node7 · 推进器 7"), QStringLiteral("Node8 · 推进器 8")});
+    m_motorSelect->addItems(
+        {QStringLiteral("Node1 · 推进器 1（FL）"), QStringLiteral("Node2 · 推进器 2（FR）"),
+         QStringLiteral("Node3 · 推进器 3（ML）"), QStringLiteral("Node4 · 推进器 4（MR）"),
+         QStringLiteral("Node5 · 推进器 5"), QStringLiteral("Node6 · 推进器 6"),
+         QStringLiteral("Node7 · 推进器 7"), QStringLiteral("Node8 · 推进器 8")});
     statusLayout->addWidget(m_motorSelect, 0, 1, 1, 3);
     m_stateValue = makeStatusPill(QStringLiteral("运行中"), QStringLiteral("statusGood"));
     m_rpmValue = makeMetricValue(QStringLiteral("--"));
@@ -239,7 +251,8 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     m_observerGain = parameterBox(0.10);
     m_currentLimit = parameterBox(20.0);
     const QStringList parameterNames = {QStringLiteral("电流 Kp"), QStringLiteral("电流 Ki"),
-                                        QStringLiteral("观测器增益"), QStringLiteral("电流限值（A）")};
+                                        QStringLiteral("观测器增益"),
+                                        QStringLiteral("电流限值（A）")};
     QDoubleSpinBox *boxes[] = {m_kp, m_ki, m_observerGain, m_currentLimit};
     for (int index = 0; index < 4; ++index)
     {
@@ -289,7 +302,8 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     captureCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
     auto *captureLayout = new QHBoxLayout;
     auto *sampleRate = new AppComboBox;
-    sampleRate->addItems({QStringLiteral("1 kHz"), QStringLiteral("5 kHz"), QStringLiteral("10 kHz")});
+    sampleRate->addItems(
+        {QStringLiteral("1 kHz"), QStringLiteral("5 kHz"), QStringLiteral("10 kHz")});
     auto *duration = new AppComboBox;
     duration->addItems({QStringLiteral("10 s"), QStringLiteral("30 s"), QStringLiteral("60 s")});
     captureLayout->addWidget(makeMetricLabel(QStringLiteral("采样率")));
@@ -319,12 +333,11 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                                  QStringLiteral("phase_current_v"),
                                  QStringLiteral("phase_current_w")});
             });
-    connect(addSpeed, &QPushButton::clicked, this,
-            [this]()
-            {
-                addPresetWindow({QStringLiteral("speed_rpm"),
-                                 QStringLiteral("pll_electrical_speed")});
-            });
+    connect(
+        addSpeed, &QPushButton::clicked, this,
+        [this]() {
+            addPresetWindow({QStringLiteral("speed_rpm"), QStringLiteral("pll_electrical_speed")});
+        });
     connect(fitAll, &QPushButton::clicked, this, &MotorDebugPage::autoFitAllCurves);
     connect(m_motorSelect, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](const int index)
@@ -336,7 +349,8 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                 logRequest(QStringLiteral("已选择 %1").arg(m_motorSelect->currentText()));
             });
     connect(m_speedSlider, &QSlider::valueChanged, this,
-            [this](const int value) { m_speedValue->setText(QStringLiteral("%1 rpm").arg(value)); });
+            [this](const int value)
+            { m_speedValue->setText(QStringLiteral("%1 rpm").arg(value)); });
     connect(applySpeed, &QPushButton::clicked, this,
             [this]()
             {
@@ -362,7 +376,8 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                 // 启动同时下发当前目标转速；停止使用 RUN_VECTOR，确保固件执行停机。
                 request.runCommand = !m_running;
                 emit speedControlRequested(request);
-                logRequest(m_running ? QStringLiteral("请求启动电机") : QStringLiteral("请求停止电机"));
+                logRequest(m_running ? QStringLiteral("请求启动电机")
+                                     : QStringLiteral("请求停止电机"));
             });
     connect(apply, &QPushButton::clicked, this,
             [this]()
@@ -410,15 +425,21 @@ void MotorDebugPage::setSnapshot(const MotorDebugSnapshot &snapshot)
     refreshCurveWindows();
 }
 
+quint8 MotorDebugPage::selectedNodeId() const
+{
+    if (m_motorSelect == nullptr)
+        return 1;
+    return static_cast<quint8>(qBound(0, m_motorSelect->currentIndex(), 7) + 1);
+}
+
 void MotorDebugPage::addCurveWindow(const int seriesIndex)
 {
     auto *curve = new CurveWindowWidget(m_curveWindows.size() + 1);
     QVector<int> indexes;
     if (seriesIndex == 0)
-        indexes = indexesForIds(m_availableSeries,
-                                {QStringLiteral("phase_current_u"),
-                                 QStringLiteral("phase_current_v"),
-                                 QStringLiteral("phase_current_w")});
+        indexes = indexesForIds(m_availableSeries, {QStringLiteral("phase_current_u"),
+                                                    QStringLiteral("phase_current_v"),
+                                                    QStringLiteral("phase_current_w")});
     if (indexes.isEmpty() && seriesIndex >= 0 && seriesIndex < m_availableSeries.size())
         indexes.append(seriesIndex);
     curve->setSeriesCatalog(m_availableSeries, indexes);
@@ -483,12 +504,19 @@ void MotorDebugPage::refreshView()
 {
     if (m_stateValue == nullptr)
         return;
+    const bool available = m_snapshot.motorStamp.validity == DataValidity::Valid &&
+                           m_snapshot.motorStamp.freshness != DataFreshness::Offline;
     m_stateValue->setText(m_snapshot.state);
-    m_rpmValue->setText(QStringLiteral("%1 rpm").arg(m_snapshot.rpm, 0, 'f', 0));
-    m_currentValue->setText(QStringLiteral("%1 A").arg(m_snapshot.currentA, 0, 'f', 1));
-    m_voltageValue->setText(QStringLiteral("%1 V").arg(m_snapshot.voltageV, 0, 'f', 1));
-    m_temperatureValue->setText(QStringLiteral("%1 °C").arg(m_snapshot.temperatureC, 0, 'f', 1));
-    m_faultValue->setText(m_snapshot.fault);
+    m_rpmValue->setText(available ? QStringLiteral("%1 rpm").arg(m_snapshot.rpm, 0, 'f', 0)
+                                  : QStringLiteral("--"));
+    m_currentValue->setText(available ? QStringLiteral("%1 A").arg(m_snapshot.currentA, 0, 'f', 1)
+                                      : QStringLiteral("--"));
+    m_voltageValue->setText(available ? QStringLiteral("%1 V").arg(m_snapshot.voltageV, 0, 'f', 1)
+                                      : QStringLiteral("--"));
+    m_temperatureValue->setText(
+        available ? QStringLiteral("%1 °C").arg(m_snapshot.temperatureC, 0, 'f', 1)
+                  : QStringLiteral("--"));
+    m_faultValue->setText(available ? m_snapshot.fault : QStringLiteral("离线"));
     if (!m_snapshot.recentLog.isEmpty() && m_requestLog != nullptr)
         m_requestLog->setText(m_snapshot.recentLog.join(QStringLiteral("\n")));
 }
