@@ -6,6 +6,7 @@
 #include <QCheckBox>
 #include <QDateTime>
 #include <QDialog>
+#include <QEvent>
 #include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -15,6 +16,7 @@
 #include <QPen>
 #include <QPixmap>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStyle>
@@ -148,10 +150,26 @@ class RovTopView final : public QWidget
         m_image.load(QStringLiteral(":/dashboard/rov_top_view.png"));
         if (!m_image.isNull())
         {
-            m_image = m_image.transformed(QTransform().rotate(90), Qt::SmoothTransformation);
+            // The source image faces left. Place the bow at the bottom of the dashboard
+            // top view so the displayed head/tail positions match the vehicle layout.
+            m_image = m_image.transformed(QTransform().rotate(-90), Qt::SmoothTransformation);
         }
         setMinimumSize(250, 350);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    }
+
+    QPointF thrusterPosition(const int index) const
+    {
+        // Coordinates follow the annotated dashboard view: T1/T2 are the upper outer pair,
+        // T5/T6 and T7/T8 are the upper/lower inner pairs, and T3/T4 are the lower outer pair.
+        static const QPointF positions[] = {
+            QPointF(0.19, 0.14), QPointF(0.81, 0.14), QPointF(0.19, 0.86),
+            QPointF(0.81, 0.86), QPointF(0.32, 0.38), QPointF(0.68, 0.38),
+            QPointF(0.32, 0.63), QPointF(0.68, 0.63)};
+        const QPointF normalized = positions[qBound(0, index, rov::kDashboardThrusterCount - 1)];
+        const QRectF imageRect = drawnImageRect();
+        return QPointF(imageRect.left() + normalized.x() * imageRect.width(),
+                       imageRect.top() + normalized.y() * imageRect.height());
     }
 
   protected:
@@ -164,12 +182,7 @@ class RovTopView final : public QWidget
 
         if (!m_image.isNull())
         {
-            const QRectF target = QRectF(rect()).adjusted(8, 8, -8, -8);
-            const QSize scaledSize =
-                m_image.size().scaled(target.size().toSize(), Qt::KeepAspectRatio);
-            const QRectF imageRect(QPointF(target.center().x() - scaledSize.width() / 2.0,
-                                           target.center().y() - scaledSize.height() / 2.0),
-                                   scaledSize);
+            const QRectF imageRect = drawnImageRect();
             painter.drawPixmap(imageRect, m_image, m_image.rect());
             return;
         }
@@ -198,8 +211,7 @@ class RovTopView final : public QWidget
         painter.drawRoundedRect(QRectF(center.x() - 9, body.top() + 61, 18, 22), 4, 4);
         painter.drawRoundedRect(QRectF(center.x() - 8, body.bottom() - 82, 16, 22), 4, 4);
 
-        // URDF mapping: X is front/rear and Y is left/right in the top view.
-        // T1..T4 are outer horizontal units; T5..T8 are inner vertical units.
+        // Dashboard mapping follows the labeled physical layout in the vehicle top view.
         const QPointF thrusters[] = {QPointF(body.left() - 48, body.top() + 38),
                                      QPointF(body.right() + 48, body.top() + 38),
                                      QPointF(body.left() - 48, body.bottom() - 38),
@@ -265,6 +277,17 @@ class RovTopView final : public QWidget
     }
 
   private:
+    QRectF drawnImageRect() const
+    {
+        const QRectF target = QRectF(rect()).adjusted(8, 8, -8, -8);
+        const QSize scaledSize = m_image.isNull()
+                                     ? target.size().toSize()
+                                     : m_image.size().scaled(target.size().toSize(), Qt::KeepAspectRatio);
+        return QRectF(QPointF(target.center().x() - scaledSize.width() / 2.0,
+                              target.center().y() - scaledSize.height() / 2.0),
+                      scaledSize);
+    }
+
     QPixmap m_image;
 };
 
@@ -286,6 +309,7 @@ class ThrusterCard final : public QFrame
 {
   public:
     using ClickHandler = std::function<void()>;
+    using HoverHandler = std::function<void(bool)>;
 
     explicit ThrusterCard(QWidget *parent = nullptr) : QFrame(parent)
     {
@@ -294,8 +318,27 @@ class ThrusterCard final : public QFrame
     }
 
     ClickHandler onClicked;
+    HoverHandler onHoverChanged;
 
   protected:
+    void enterEvent(QEvent *event) override
+    {
+        if (onHoverChanged)
+        {
+            onHoverChanged(true);
+        }
+        QFrame::enterEvent(event);
+    }
+
+    void leaveEvent(QEvent *event) override
+    {
+        if (onHoverChanged)
+        {
+            onHoverChanged(false);
+        }
+        QFrame::leaveEvent(event);
+    }
+
     void mousePressEvent(QMouseEvent *event) override
     {
         if (event->button() == Qt::LeftButton)
@@ -318,6 +361,119 @@ class ThrusterCard final : public QFrame
 
   private:
     bool m_pressed = false;
+};
+
+class ThrusterConnectionOverlay final : public QWidget
+{
+  public:
+    explicit ThrusterConnectionOverlay(RovTopView *topView, QWidget *parent = nullptr)
+        : QWidget(parent), m_topView(topView)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+    }
+
+    void showConnection(const int index, ThrusterCard *card)
+    {
+        m_index = index;
+        m_card = card;
+        update();
+    }
+
+    void clearConnection(const ThrusterCard *card)
+    {
+        if (m_card == card)
+        {
+            m_index = -1;
+            m_card = nullptr;
+            update();
+        }
+    }
+
+  protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event)
+        if (m_card == nullptr || m_topView == nullptr || m_index < 0)
+        {
+            return;
+        }
+
+        const QPointF cardCenter = mapFromGlobal(m_card->mapToGlobal(m_card->rect().center()));
+        const bool cardOnLeft = cardCenter.x() < width() / 2.0;
+        const QPoint cardEdge(cardOnLeft ? m_card->width() : 0, m_card->height() / 2);
+        const QPointF start = mapFromGlobal(m_card->mapToGlobal(cardEdge));
+        const QPointF target =
+            mapFromGlobal(m_topView->mapToGlobal(m_topView->thrusterPosition(m_index).toPoint()));
+        const QPointF elbow(start.x() + (cardOnLeft ? 20.0 : -20.0), start.y());
+
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(QStringLiteral("#1687ee")), 2.5, Qt::SolidLine,
+                            Qt::RoundCap, Qt::RoundJoin));
+        painter.drawLine(start, elbow);       // Short segment leaves the card cleanly.
+        painter.drawLine(elbow, target);      // Long segment identifies the physical thruster.
+        painter.setPen(QPen(Qt::white, 1.5));
+        painter.setBrush(QColor(QStringLiteral("#1687ee")));
+        painter.drawEllipse(target, 5.0, 5.0);
+    }
+
+  private:
+    RovTopView *m_topView = nullptr;
+    ThrusterCard *m_card = nullptr;
+    int m_index = -1;
+};
+
+class ThrusterOverview final : public QWidget
+{
+  public:
+    explicit ThrusterOverview(QWidget *parent = nullptr) : QWidget(parent)
+    {
+        m_grid = new QGridLayout(this);
+        m_grid->setContentsMargins(0, 0, 0, 0);
+        m_grid->setHorizontalSpacing(8);
+        m_grid->setVerticalSpacing(8);
+        m_topView = new RovTopView(this);
+        m_grid->addWidget(m_topView, 0, 1, 4, 1);
+        m_grid->setColumnStretch(1, 2);
+        m_overlay = new ThrusterConnectionOverlay(m_topView, this);
+        m_overlay->setGeometry(rect());
+        m_overlay->raise();
+    }
+
+    void addThrusterCard(ThrusterCard *card, const int index)
+    {
+        // Arrange cards beside the same physical row as their annotated propeller:
+        // T1/T2, T5/T6, T7/T8, then T3/T4 from top to bottom.
+        static const int rows[] = {0, 0, 3, 3, 1, 1, 2, 2};
+        const int row = rows[qBound(0, index, rov::kDashboardThrusterCount - 1)];
+        const int column = index % 2 == 0 ? 0 : 2;
+        m_grid->addWidget(card, row, column);
+        card->onHoverChanged = [this, index, card](const bool entered)
+        {
+            if (entered)
+            {
+                m_overlay->showConnection(index, card);
+            }
+            else
+            {
+                m_overlay->clearConnection(card);
+            }
+        };
+    }
+
+  protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        m_overlay->setGeometry(rect());
+        m_overlay->raise();
+    }
+
+  private:
+    QGridLayout *m_grid = nullptr;
+    RovTopView *m_topView = nullptr;
+    ThrusterConnectionOverlay *m_overlay = nullptr;
 };
 
 ThrusterCard *thrusterTile(const rov::ThrusterTelemetry &item, QLabel *&rpmValue,
@@ -508,10 +664,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     topRow->setSpacing(12);
 
     auto *overview = new CardWidget(QStringLiteral("机器人总览（俯视图）"), IconKind::Dashboard);
-    auto *overviewGrid = new QGridLayout;
-    overviewGrid->setContentsMargins(0, 0, 0, 0);
-    overviewGrid->setHorizontalSpacing(8);
-    overviewGrid->setVerticalSpacing(8);
+    auto *thrusterOverview = new ThrusterOverview;
     for (int i = 0; i < kDashboardThrusterCount; ++i)
     {
         QLabel *rpm = nullptr;
@@ -525,16 +678,9 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
         m_thrusterCurrentValues.append(current);
         m_thrusterTemperatureValues.append(temperature);
         m_thrusterStatusValues.append(status);
-        const int row = i / 2;
-        const int column = i % 2 == 0 ? 0 : 2;
-        overviewGrid->addWidget(tile, row, column);
-        if (i == 0)
-        {
-            overviewGrid->addWidget(new RovTopView, 0, 1, 4, 1);
-        }
+        thrusterOverview->addThrusterCard(tile, i);
     }
-    overviewGrid->setColumnStretch(1, 2);
-    overview->contentLayout()->addLayout(overviewGrid);
+    overview->contentLayout()->addWidget(thrusterOverview);
     topRow->addWidget(overview, 5);
 
     auto *stateColumn = new QVBoxLayout;
