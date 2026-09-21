@@ -1,5 +1,12 @@
 CompileFlags:
-  Add: [-target, x86_64-w64-windows-gnu]
+  CompilationDatabase: build/gui
+
+  Add:
+    - -target
+    - x86_64-w64-windows-gnu
+
 Diagnostics:
   ClangTidy:
-    Add: [bugprone-*, performance-*]
+    Add:
+      - bugprone-*
+      - performance-*
