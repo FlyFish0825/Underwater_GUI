@@ -12,7 +12,7 @@ flowchart LR
     device[电机 / 网关 / Bootloader<br/>真实设备与 CAN 总线]
     transport[Transport<br/>USB CDC 字节收发]
     protocol[Protocol<br/>AA55、Observer Motor、Bootloader]
-    service[Service / Data<br/>会话、解析、状态、缓存]
+    service[Service / Data<br/>会话、解析、状态、缓存、记录]
     app[MainWindow<br/>页面装配与请求路由]
     ui[Qt Widgets UI<br/>Dashboard / Motor Debug / Firmware / ...]
 
@@ -63,7 +63,32 @@ flowchart TB
 | `BootloaderService` | 把高级命令转换成 Bootloader 业务结果 |
 | `BootloaderDownloadController` | 编排正式下载阶段和进度 |
 
-### 2.2 UI 与曲线局部
+### 2.2 科研记录局部
+
+问题：如何在不触发曲线和逐帧 UI 更新的前提下，保存完整实验数据？
+
+```mermaid
+flowchart LR
+    gateway[BootloaderCommunicationService<br/>CAN 收帧 / 发帧]
+    dashboard[DashboardPage<br/>输入请求 / 非演示快照]
+    main[MainWindow<br/>旁路路由]
+    queue[ResearchDataRecorder<br/>20,000 条有界队列]
+    worker[后台线程<br/>批量序列化与写盘]
+    files[JSONL + CSV + Meta<br/>科研分析文件]
+    plotGate{Motor Debug 可见？}
+    plot[ObserverMotorDataService<br/>曲线快照]
+
+    gateway --> main --> queue --> worker --> files
+    dashboard --> main
+    main --> plotGate
+    plotGate -->|是| plot
+    plotGate -->|否| discard[仅丢弃绘图路径]
+```
+
+记录链位于绘图可见性门控之前，因此切换页面不会中断会话；绘图链仍按原策略在页面
+不可见时丢弃。记录器只向总览页低频发布接收/丢弃计数，不发布逐点数据。
+
+### 2.3 UI 与曲线局部
 
 问题：多个 Qwt 曲线窗口如何共享变量目录，却互不影响显示配置？
 
@@ -143,7 +168,30 @@ flowchart LR
 和“绘图频率”分离：1000 Hz 的数据不能造成 1000 次 GUI repaint，也不能造成
 1000 条日志。
 
-### 3.3 Bootloader 下载
+### 3.3 后台科研记录
+
+```mermaid
+sequenceDiagram
+    participant C as CAN / 用户输入
+    participant M as MainWindow
+    participant Q as 有界记录队列
+    participant W as 写盘线程
+    participant F as JSONL / CSV / Meta
+
+    C->>M: 原始帧或类型化请求
+    M->>Q: 复制后立即入队
+    alt 队列有空间
+        Q-->>M: accepted++
+        W->>Q: 最多取 256 条
+        W->>F: 批量追加，约 250 ms 刷新
+    else 队列已满
+        Q-->>M: dropped++，不阻塞通信
+    end
+```
+
+详细字段、文件命名和 IMU/深度接入边界见 `docs/research-recording.md`。
+
+### 3.4 Bootloader 下载
 
 ```mermaid
 stateDiagram-v2
@@ -169,4 +217,5 @@ Bootloader 的收发和下载阶段日志保留；普通高频电机反馈不进
 - 协议字段和 CRC：`agent/ROV上位机通信协议与分层架构规范_v1.0.md`；
 - 当前工具链和构建：`docs/toolchain.md`；
 - 曲线组件选择和窗口设计：`docs/plotting.md`；
+- 科研记录格式和完整性：`docs/research-recording.md`；
 - Agent 开发边界：`agent/agent.md`。

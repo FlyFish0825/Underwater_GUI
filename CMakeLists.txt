@@ -91,6 +91,11 @@ add_library(rov_motor_data STATIC
     src/data/services/ObserverMotorDataService.h
 )
 
+add_library(rov_research_recording STATIC
+    src/data/recording/ResearchDataRecorder.cpp
+    src/data/recording/ResearchDataRecorder.h
+)
+
 add_library(rov_page_dashboard STATIC
     src/pages/dashboard/DashboardPage.cpp
     src/pages/dashboard/DashboardPage.h
@@ -152,6 +157,7 @@ set(ROV_UI_TARGETS
     rov_preview
     rov_communication
     rov_motor_data
+    rov_research_recording
     rov_firmware_history
     rov_page_dashboard
     rov_page_motor_debug
@@ -169,6 +175,7 @@ endforeach()
 target_link_libraries(rov_page_firmware PUBLIC rov_communication)
 target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history)
 target_link_libraries(rov_motor_data PUBLIC rov_communication)
+target_link_libraries(rov_research_recording PUBLIC rov_communication)
 target_link_libraries(rov_ui_common PUBLIC FluentQt::FluentQt)
 target_link_libraries(rov_page_dashboard PUBLIC rov_ui_common)
 target_link_libraries(rov_page_motor_debug PUBLIC rov_ui_common)
@@ -193,6 +200,7 @@ target_link_libraries(rov_ui PRIVATE
     rov_ui_common
     rov_communication
     rov_motor_data
+    rov_research_recording
 )
 
 if (WIN32)
@@ -235,4 +243,11 @@ if (BUILD_TESTING)
     target_include_directories(rov_can_gateway_config_protocol_test PRIVATE src)
     target_link_libraries(rov_can_gateway_config_protocol_test PRIVATE Qt5::Core rov_communication)
     add_test(NAME rov_can_gateway_config_protocol_test COMMAND rov_can_gateway_config_protocol_test)
+
+    add_executable(rov_research_data_recorder_test
+        tests/ResearchDataRecorderTest.cpp
+    )
+    target_include_directories(rov_research_data_recorder_test PRIVATE src)
+    target_link_libraries(rov_research_data_recorder_test PRIVATE Qt5::Core rov_research_recording)
+    add_test(NAME rov_research_data_recorder_test COMMAND rov_research_data_recorder_test)
 endif()

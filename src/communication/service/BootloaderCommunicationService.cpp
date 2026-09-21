@@ -22,8 +22,8 @@ void appendLe32(QByteArray &bytes, const quint32 value)
 
 bool isAllowedFlowFlags(const quint8 flags)
 {
-    return flags == 0x00U || flags == 0x01U || flags == 0x02U
-           || flags == 0x03U || flags == 0x06U || flags == 0x07U;
+    return flags == 0x00U || flags == 0x01U || flags == 0x02U || flags == 0x03U || flags == 0x06U ||
+           flags == 0x07U;
 }
 
 } // namespace
@@ -35,10 +35,7 @@ BootloaderCommunicationService::BootloaderCommunicationService(QObject *parent)
     m_flowTimeout.setSingleShot(true);
     m_canBitrateTimeout.setSingleShot(true);
     connect(&m_flowTimeout, &QTimer::timeout, this,
-            [this]()
-            {
-                finishFlowTransfer(false, QStringLiteral("等待 AA59 FLOW_ACK 超时"));
-             });
+            [this]() { finishFlowTransfer(false, QStringLiteral("等待 AA59 FLOW_ACK 超时")); });
     connect(&m_canBitrateTimeout, &QTimer::timeout, this,
             [this]()
             {
@@ -109,7 +106,10 @@ bool BootloaderCommunicationService::sendCanFrame(const CanGatewayFrame &frame)
         emit errorOccurred(QStringLiteral("CAN 帧参数非法，无法封装"));
         return false;
     }
-    return m_transport->writeBytes(packet);
+    const bool written = m_transport->writeBytes(packet);
+    if (written)
+        emit frameSent(frame);
+    return written;
 }
 
 bool BootloaderCommunicationService::sendObserverMotorControl(
@@ -134,8 +134,7 @@ bool BootloaderCommunicationService::sendObserverMotorControl(
     return sendCanFrame(frame);
 }
 
-bool BootloaderCommunicationService::setCanBitrate(const quint32 nominalBps,
-                                                   const quint32 dataBps)
+bool BootloaderCommunicationService::setCanBitrate(const quint32 nominalBps, const quint32 dataBps)
 {
     if (!isOpen())
     {
@@ -211,8 +210,9 @@ void BootloaderCommunicationService::processReceivedBytes(const QByteArray &byte
         {
             if (m_receiveBuffer.size() < 12)
                 return;
-            const int payloadLength = static_cast<quint8>(m_receiveBuffer.at(10))
-                                      | (static_cast<int>(static_cast<quint8>(m_receiveBuffer.at(11))) << 8);
+            const int payloadLength =
+                static_cast<quint8>(m_receiveBuffer.at(10)) |
+                (static_cast<int>(static_cast<quint8>(m_receiveBuffer.at(11))) << 8);
             /* AA58 当前状态心跳为 5 字节，保留 0 字节旧格式兼容。 */
             if (payloadLength != 0 && payloadLength != 5)
             {
@@ -226,8 +226,9 @@ void BootloaderCommunicationService::processReceivedBytes(const QByteArray &byte
         {
             if (m_receiveBuffer.size() < 12)
                 return;
-            const int payloadLength = static_cast<quint8>(m_receiveBuffer.at(10))
-                                      | (static_cast<int>(static_cast<quint8>(m_receiveBuffer.at(11))) << 8);
+            const int payloadLength =
+                static_cast<quint8>(m_receiveBuffer.at(10)) |
+                (static_cast<int>(static_cast<quint8>(m_receiveBuffer.at(11))) << 8);
             if (payloadLength > 4096)
             {
                 m_receiveBuffer.remove(0, 1);
@@ -244,8 +245,8 @@ void BootloaderCommunicationService::processReceivedBytes(const QByteArray &byte
 
         if (m_receiveBuffer.size() < packetLength)
             return;
-        if (static_cast<quint8>(m_receiveBuffer.at(packetLength - 2)) != expectedTail
-            || static_cast<quint8>(m_receiveBuffer.at(packetLength - 1)) != 0xAAU)
+        if (static_cast<quint8>(m_receiveBuffer.at(packetLength - 2)) != expectedTail ||
+            static_cast<quint8>(m_receiveBuffer.at(packetLength - 1)) != 0xAAU)
         {
             m_receiveBuffer.remove(0, 1);
             continue;
@@ -282,27 +283,24 @@ void BootloaderCommunicationService::processReceivedBytes(const QByteArray &byte
     }
 }
 
-void BootloaderCommunicationService::finishCanBitrateConfig(
-    const CanGatewayConfigStatus status,
-    const quint32 nominalBitrate,
-    const quint32 dataBitrate,
-    const QString &message)
+void BootloaderCommunicationService::finishCanBitrateConfig(const CanGatewayConfigStatus status,
+                                                            const quint32 nominalBitrate,
+                                                            const quint32 dataBitrate,
+                                                            const QString &message)
 {
     if (!m_canBitratePending)
         return;
     const quint16 sequence = m_pendingCanBitrate.sequence;
     m_canBitrateTimeout.stop();
     m_canBitratePending = false;
-    if (status == CanGatewayConfigStatus::Timeout
-        || status == CanGatewayConfigStatus::TransportError)
+    if (status == CanGatewayConfigStatus::Timeout ||
+        status == CanGatewayConfigStatus::TransportError)
     {
         emit canBitrateError(message);
     }
     else
     {
-        emit canBitrateConfigured(sequence,
-                                  static_cast<quint8>(status),
-                                  nominalBitrate,
+        emit canBitrateConfigured(sequence, static_cast<quint8>(status), nominalBitrate,
                                   dataBitrate);
     }
 }
@@ -314,8 +312,7 @@ void BootloaderCommunicationService::handleCanBitrateConfigResponse(const QByteA
     if (!decodeCanGatewayConfigResponse(packet, response, &error))
     {
         finishCanBitrateConfig(CanGatewayConfigStatus::TransportError,
-                               m_pendingCanBitrate.nominalBitrate,
-                               m_pendingCanBitrate.dataBitrate,
+                               m_pendingCanBitrate.nominalBitrate, m_pendingCanBitrate.dataBitrate,
                                error);
         return;
     }
@@ -326,21 +323,16 @@ void BootloaderCommunicationService::handleCanBitrateConfigResponse(const QByteA
     }
     if (response.sequence != m_pendingCanBitrate.sequence)
     {
-        finishCanBitrateConfig(
-            CanGatewayConfigStatus::TransportError,
-            m_pendingCanBitrate.nominalBitrate,
-            m_pendingCanBitrate.dataBitrate,
-            QStringLiteral("CAN 速率配置回复序号不匹配：期望 %1，收到 %2")
-                .arg(m_pendingCanBitrate.sequence)
-                .arg(response.sequence));
+        finishCanBitrateConfig(CanGatewayConfigStatus::TransportError,
+                               m_pendingCanBitrate.nominalBitrate, m_pendingCanBitrate.dataBitrate,
+                               QStringLiteral("CAN 速率配置回复序号不匹配：期望 %1，收到 %2")
+                                   .arg(m_pendingCanBitrate.sequence)
+                                   .arg(response.sequence));
         return;
     }
 
     const QString message = canGatewayConfigStatusText(response.status);
-    finishCanBitrateConfig(response.status,
-                           response.nominalBitrate,
-                           response.dataBitrate,
-                           message);
+    finishCanBitrateConfig(response.status, response.nominalBitrate, response.dataBitrate, message);
 }
 
 bool BootloaderCommunicationService::validateFlowBlock(const CanGatewayFrame &block,
@@ -349,7 +341,8 @@ bool BootloaderCommunicationService::validateFlowBlock(const CanGatewayFrame &bl
     if (!isAllowedFlowFlags(block.flags))
     {
         error = QStringLiteral("AA59 CAN_FLAGS=0x%1 不受支持")
-                    .arg(block.flags, 2, 16, QLatin1Char('0')).toUpper();
+                    .arg(block.flags, 2, 16, QLatin1Char('0'))
+                    .toUpper();
         return false;
     }
     if (block.data.isEmpty() || block.data.size() > 64)
@@ -479,8 +472,7 @@ void BootloaderCommunicationService::pumpFlowBlocks()
         if (!sendFlowFrame(CanFlowCommand::DataBlock, payload))
         {
             finishFlowTransfer(false,
-                               QStringLiteral("发送 AA59 DATA_BLOCK %1 失败")
-                                   .arg(m_nextFlowBlock));
+                               QStringLiteral("发送 AA59 DATA_BLOCK %1 失败").arg(m_nextFlowBlock));
             return;
         }
         --m_flowCredit;
@@ -509,11 +501,10 @@ void BootloaderCommunicationService::handleFlowAck(const CanFlowAck &ack)
 {
     if (ack.status != CanFlowStatus::Ok)
     {
-        finishFlowTransfer(false,
-                           QStringLiteral("AA59 网关拒绝传输：%1（状态码 0x%2）")
-                               .arg(canFlowStatusText(ack.status))
-                               .arg(static_cast<quint8>(ack.status), 2, 16,
-                                    QLatin1Char('0')).toUpper());
+        finishFlowTransfer(false, QStringLiteral("AA59 网关拒绝传输：%1（状态码 0x%2）")
+                                      .arg(canFlowStatusText(ack.status))
+                                      .arg(static_cast<quint8>(ack.status), 2, 16, QLatin1Char('0'))
+                                      .toUpper());
         return;
     }
 
@@ -530,18 +521,17 @@ void BootloaderCommunicationService::handleFlowAck(const CanFlowAck &ack)
 
     if (m_flowState == FlowState::WaitingEndAck)
     {
-        finishFlowTransfer(true,
-                           QStringLiteral("AA59 传输完成：%1 个逻辑块，%2 字节")
-                               .arg(m_flowBlocks.size()).arg(m_flowTotalBytes));
+        finishFlowTransfer(true, QStringLiteral("AA59 传输完成：%1 个逻辑块，%2 字节")
+                                     .arg(m_flowBlocks.size())
+                                     .arg(m_flowTotalBytes));
         return;
     }
 
-    if (m_flowState != FlowState::SendingBlocks
-        && m_flowState != FlowState::WaitingFinalBlockAck)
+    if (m_flowState != FlowState::SendingBlocks && m_flowState != FlowState::WaitingFinalBlockAck)
         return;
 
-    if (ack.acknowledgedBlock != 0xFFFFFFFFU
-        && ack.acknowledgedBlock >= static_cast<quint32>(m_flowBlocks.size()))
+    if (ack.acknowledgedBlock != 0xFFFFFFFFU &&
+        ack.acknowledgedBlock >= static_cast<quint32>(m_flowBlocks.size()))
     {
         finishFlowTransfer(false, QStringLiteral("AA59 ACK 的块编号超出本次传输范围"));
         return;
@@ -553,9 +543,8 @@ void BootloaderCommunicationService::handleFlowAck(const CanFlowAck &ack)
     }
 
     m_flowCredit += ack.creditReturn;
-    if (ack.acknowledgedBlock != 0xFFFFFFFFU
-        && (m_lastAcknowledgedBlock == 0xFFFFFFFFU
-            || ack.acknowledgedBlock > m_lastAcknowledgedBlock))
+    if (ack.acknowledgedBlock != 0xFFFFFFFFU &&
+        (m_lastAcknowledgedBlock == 0xFFFFFFFFU || ack.acknowledgedBlock > m_lastAcknowledgedBlock))
     {
         m_lastAcknowledgedBlock = ack.acknowledgedBlock;
         emit flowTransferProgress(static_cast<int>(m_lastAcknowledgedBlock + 1U),
@@ -563,8 +552,7 @@ void BootloaderCommunicationService::handleFlowAck(const CanFlowAck &ack)
     }
 
     const quint32 finalBlock = static_cast<quint32>(m_flowBlocks.size() - 1);
-    if (m_nextFlowBlock == m_flowBlocks.size()
-        && m_lastAcknowledgedBlock == finalBlock)
+    if (m_nextFlowBlock == m_flowBlocks.size() && m_lastAcknowledgedBlock == finalBlock)
     {
         m_flowTimeout.stop();
         m_flowState = FlowState::WaitingEndAck;
@@ -581,8 +569,7 @@ void BootloaderCommunicationService::handleFlowAck(const CanFlowAck &ack)
     pumpFlowBlocks();
 }
 
-void BootloaderCommunicationService::finishFlowTransfer(const bool success,
-                                                        const QString &message)
+void BootloaderCommunicationService::finishFlowTransfer(const bool success, const QString &message)
 {
     if (!isFlowTransferActive())
         return;

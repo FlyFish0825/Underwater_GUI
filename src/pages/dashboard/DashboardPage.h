@@ -7,6 +7,7 @@
 
 class QCheckBox;
 class QLabel;
+class QPushButton;
 class QSlider;
 
 namespace rov
@@ -20,6 +21,7 @@ class DashboardPage final : public QWidget
     explicit DashboardPage(QWidget *parent = nullptr);
 
     void setSnapshot(const DashboardSnapshot &snapshot);
+    void setRecordingStatus(bool active, quint64 accepted, quint64 dropped, const QString &path);
 
   signals:
     void armRequested();
@@ -30,6 +32,10 @@ class DashboardPage final : public QWidget
     void manualControlEnableRequested(const ManualControlEnableRequest &request);
     void thrustLimitRequested(const ThrustLimitRequest &request);
     void thrusterCommandRequested(const ThrusterCommandRequest &request);
+    void recordingStartRequested();
+    void recordingStopRequested();
+    void recordingOpenDirectoryRequested();
+    void snapshotAvailable(const DashboardSnapshot &snapshot);
 
   private:
     void refreshView();
@@ -57,6 +63,11 @@ class DashboardPage final : public QWidget
     QLabel *m_averageRpmValue = nullptr;
     QLabel *m_averageCurrentValue = nullptr;
     QLabel *m_averageTemperatureValue = nullptr;
+    QLabel *m_recordingStatus = nullptr;
+    QLabel *m_recordingCounters = nullptr;
+    QPushButton *m_recordingStart = nullptr;
+    QPushButton *m_recordingStop = nullptr;
+    QPushButton *m_recordingOpen = nullptr;
     QCheckBox *m_enableControl = nullptr;
     QSlider *m_thrustLimitSlider = nullptr;
     QLabel *m_thrustLimitValue = nullptr;

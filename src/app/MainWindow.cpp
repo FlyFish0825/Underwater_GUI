@@ -1,11 +1,12 @@
 #include "app/MainWindow.h"
 
+#include "communication/protocol/ObserverMotorProtocol.h"
+#include "data/recording/ResearchDataRecorder.h"
+#include "data/services/ObserverMotorDataService.h"
 #include "pages/dashboard/DashboardPage.h"
 #include "pages/firmware/FirmwarePage.h"
 #include "pages/manipulator/ManipulatorPage.h"
 #include "pages/motor_debug/MotorDebugPage.h"
-#include "communication/protocol/ObserverMotorProtocol.h"
-#include "data/services/ObserverMotorDataService.h"
 #include "pages/settings/SettingsPlaceholder.h"
 #include "pages/vision/VisionPage.h"
 #include "ui/common/AnimatedNavButton.h"
@@ -13,6 +14,9 @@
 
 #include <QButtonGroup>
 #include <QCloseEvent>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QFileDialog>
 #include <QFrame>
 #include <QGraphicsProxyWidget>
 #include <QGraphicsScene>
@@ -26,12 +30,14 @@
 #include <QScrollArea>
 #include <QShowEvent>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
+#include <QVector>
 #include <QWindow>
 #include <QtMath>
-#include <QVector>
 
 #include <functional>
 
@@ -160,8 +166,7 @@ QToolButton *navigationButton(const QString &text, const QString &description,
                               const rov::IconKind icon, QWidget *parent)
 {
     const QString asset = navigationAsset(icon);
-    auto *button = new rov::AnimatedNavButton(text, description, icon, asset,
-                                              8, 1, 0, parent);
+    auto *button = new rov::AnimatedNavButton(text, description, icon, asset, 8, 1, 0, parent);
     return button;
 }
 
@@ -292,19 +297,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         QString label;
         QString description;
         IconKind icon;
-    } entries[] = {{QStringLiteral("总览"), QStringLiteral("机器人状态 · 控制"),
-                    IconKind::Dashboard},
-                   {QStringLiteral("电机调试"), QStringLiteral("实时波形 · FOC 参数"), IconKind::Motor},
-                   {QStringLiteral("固件升级"), QStringLiteral("Bootloader · CAN 节点"),
-                    IconKind::Firmware},
-                   {QStringLiteral("机械臂"), QStringLiteral("关节 · 笛卡尔控制"), IconKind::Manipulator},
-                   {QStringLiteral("视觉"), QStringLiteral("相机 · 图像处理"), IconKind::Vision},
-                   {QStringLiteral("设置"), QStringLiteral("系统 · 通信配置"), IconKind::Settings}};
+    } entries[] = {
+        {QStringLiteral("总览"), QStringLiteral("机器人状态 · 控制"), IconKind::Dashboard},
+        {QStringLiteral("电机调试"), QStringLiteral("实时波形 · FOC 参数"), IconKind::Motor},
+        {QStringLiteral("固件升级"), QStringLiteral("Bootloader · CAN 节点"), IconKind::Firmware},
+        {QStringLiteral("机械臂"), QStringLiteral("关节 · 笛卡尔控制"), IconKind::Manipulator},
+        {QStringLiteral("视觉"), QStringLiteral("相机 · 图像处理"), IconKind::Vision},
+        {QStringLiteral("设置"), QStringLiteral("系统 · 通信配置"), IconKind::Settings}};
     QVector<QToolButton *> buttons;
     for (int i = 0; i < 6; ++i)
     {
-        auto *button = navigationButton(entries[i].label, entries[i].description, entries[i].icon,
-                                        sidebar);
+        auto *button =
+            navigationButton(entries[i].label, entries[i].description, entries[i].icon, sidebar);
         m_navGroup->addButton(button, i);
         navLayout->addWidget(button);
         buttons.append(button);
@@ -335,8 +339,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         scroll->setWidget(page);
         return scroll;
     };
-    auto *motorDebugScroll =
-        scrollablePage(motorDebug, QStringLiteral("motorDebugPageScroll"));
+    auto *motorDebugScroll = scrollablePage(motorDebug, QStringLiteral("motorDebugPageScroll"));
     auto *firmwareScroll = scrollablePage(firmware, QStringLiteral("firmwarePageScroll"));
     m_pages->addWidget(dashboard);
     m_pages->addWidget(motorDebugScroll);
@@ -348,6 +351,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     // 组合根把同一条网关 CAN 帧流交给数据服务；UI 页面只订阅快照，
     // 不直接接触 USB CDC、AA55 或 CAN ID。
     m_motorData = new ObserverMotorDataService(this);
+    m_recorder = new ResearchDataRecorder(this);
     auto *communication = firmware->communicationService();
     connect(settings, &SettingsPlaceholder::canBitrateApplyRequested, this,
             [settings, communication](const quint32 nominalBps, const quint32 dataBps)
@@ -369,7 +373,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
                 if (m_gatewayStatus != nullptr)
                 {
                     m_gatewayStatus->setText(QStringLiteral("●  CAN 网关在线"));
-                    m_gatewayStatus->setStyleSheet(QStringLiteral("color: #078d4a; font-weight: 600;"));
+                    m_gatewayStatus->setStyleSheet(
+                        QStringLiteral("color: #078d4a; font-weight: 600;"));
                 }
             });
     connect(communication, &BootloaderCommunicationService::closed, this,
@@ -378,23 +383,32 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
                 if (m_gatewayStatus != nullptr)
                 {
                     m_gatewayStatus->setText(QStringLiteral("●  CAN 网关离线"));
-                    m_gatewayStatus->setStyleSheet(QStringLiteral("color: #8a8f98; font-weight: 600;"));
+                    m_gatewayStatus->setStyleSheet(
+                        QStringLiteral("color: #8a8f98; font-weight: 600;"));
                 }
             });
     // FirmwarePage may auto-connect in its constructor, before these signals
     // are subscribed. Seed settings from the live service as well.
     settings->setGatewayConnected(communication->isOpen());
-    connect(firmware->communicationService(), &BootloaderCommunicationService::frameReceived,
-            this,
+    connect(firmware->communicationService(), &BootloaderCommunicationService::frameReceived, this,
             [this](const CanGatewayFrame &frame)
             {
+                // 科研记录走独立有界队列，不依赖当前页面，也不会触发绘图或逐帧 UI 更新。
+                if (m_recorder != nullptr)
+                    m_recorder->recordFrame(frame, QStringLiteral("rx"));
                 // 只有电机调试页真正可见时才解析高频反馈；不绘制时直接丢弃，
                 // 避免 100/1000 Hz 数据进入无用的快照和 UI 更新链。
                 if (m_motorData != nullptr && m_pages != nullptr && m_pages->currentIndex() == 1)
                     m_motorData->handleCanFrame(frame);
             });
-    connect(firmware->communicationService(), &BootloaderCommunicationService::closed,
-            m_motorData, &ObserverMotorDataService::reset);
+    connect(firmware->communicationService(), &BootloaderCommunicationService::frameSent, this,
+            [this](const CanGatewayFrame &frame)
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordFrame(frame, QStringLiteral("tx"));
+            });
+    connect(firmware->communicationService(), &BootloaderCommunicationService::closed, m_motorData,
+            &ObserverMotorDataService::reset);
     // 机械臂、视觉和设置页保留原有的小屏幕等比保护。
     // 电机调试与固件升级页改由页面内部自适应，避免宽屏下整页缩小后两侧留白。
     for (QWidget *page : {static_cast<QWidget *>(manipulator), static_cast<QWidget *>(vision),
@@ -445,67 +459,140 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_pages->setCurrentIndex(0);
 
     connect(dashboard, &DashboardPage::armRequested, this,
-            [this]() { handleRequest(QStringLiteral("总览：请求解锁电机")); });
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordEvent(QStringLiteral("arm"), QStringLiteral("请求解锁电机"));
+                handleRequest(QStringLiteral("总览：请求解锁电机"));
+            });
     connect(dashboard, &DashboardPage::disarmRequested, this,
-            [this]() { handleRequest(QStringLiteral("总览：请求停用电机")); });
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordEvent(QStringLiteral("disarm"),
+                                            QStringLiteral("请求停用电机"));
+                handleRequest(QStringLiteral("总览：请求停用电机"));
+            });
     connect(dashboard, &DashboardPage::holdPositionRequested, this,
-            [this]() { handleRequest(QStringLiteral("总览：请求保持位置")); });
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordEvent(QStringLiteral("hold"), QStringLiteral("请求保持位置"));
+                handleRequest(QStringLiteral("总览：请求保持位置"));
+            });
     connect(dashboard, &DashboardPage::surfaceRequested, this,
-            [this]() { handleRequest(QStringLiteral("总览：请求紧急上浮")); });
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordEvent(QStringLiteral("surface"),
+                                            QStringLiteral("请求紧急上浮"));
+                handleRequest(QStringLiteral("总览：请求紧急上浮"));
+            });
+    connect(dashboard, &DashboardPage::manualControlRequested, this,
+            [this](const SixDofControlRequest &request)
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordControlInput(request);
+            });
+    connect(dashboard, &DashboardPage::snapshotAvailable, this,
+            [this](const DashboardSnapshot &snapshot)
+            {
+                if (m_recorder != nullptr && !snapshot.demo.isDemo)
+                    m_recorder->recordDashboardSnapshot(snapshot);
+            });
+    connect(dashboard, &DashboardPage::recordingStartRequested, this,
+            [this, dashboard]()
+            {
+                const QString documents =
+                    QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+                const QString defaultPath =
+                    documents + QStringLiteral("/ROV_科研记录_%1.jsonl")
+                                    .arg(QDateTime::currentDateTimeUtc().toString(
+                                        QStringLiteral("yyyyMMdd_HHmmss")));
+                const QString path = QFileDialog::getSaveFileName(
+                    this, QStringLiteral("选择科研数据记录位置"), defaultPath,
+                    QStringLiteral("JSON Lines 记录 (*.jsonl)"));
+                if (path.isEmpty() || m_recorder == nullptr)
+                    return;
+                QString error;
+                if (!m_recorder->startRecording(path, &error))
+                    handleRequest(QStringLiteral("数据记录启动失败：%1").arg(error));
+                else
+                    dashboard->setRecordingStatus(true, 0, 0, path);
+            });
+    connect(dashboard, &DashboardPage::recordingStopRequested, this,
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->stopRecording();
+            });
+    connect(dashboard, &DashboardPage::recordingOpenDirectoryRequested, this,
+            [this]()
+            {
+                if (m_recorder == nullptr || m_recorder->lastDirectory().isEmpty())
+                {
+                    handleRequest(QStringLiteral("尚无科研记录目录"));
+                    return;
+                }
+                QDesktopServices::openUrl(QUrl::fromLocalFile(m_recorder->lastDirectory()));
+            });
+    connect(m_recorder, &ResearchDataRecorder::statusChanged, dashboard,
+            &DashboardPage::setRecordingStatus);
+    connect(m_recorder, &ResearchDataRecorder::errorOccurred, this,
+            [this](const QString &message)
+            { handleRequest(QStringLiteral("数据记录错误：%1").arg(message)); });
     connect(motorDebug, &MotorDebugPage::parameterWriteRequested, this,
             [this](const MotorParameterRequest &)
             { handleRequest(QStringLiteral("电机调试：请求写入参数")); });
     connect(motorDebug, &MotorDebugPage::captureRequested, this,
             [this](const MotorCaptureRequest &)
             { handleRequest(QStringLiteral("电机调试：请求采集数据")); });
-    connect(motorDebug, &MotorDebugPage::speedControlRequested, this,
-            [this, communication](const MotorSpeedControlRequest &request)
+    connect(
+        motorDebug, &MotorDebugPage::speedControlRequested, this,
+        [this, communication](const MotorSpeedControlRequest &request)
+        {
+            if (request.nodeId < ObserverMotorProtocol::kFirstNodeId ||
+                request.nodeId > ObserverMotorProtocol::kLastNodeId)
             {
-                if (request.nodeId < ObserverMotorProtocol::kFirstNodeId
-                    || request.nodeId > ObserverMotorProtocol::kLastNodeId)
-                {
-                    handleRequest(QStringLiteral("电机控制失败：无效节点 Node%1").arg(request.nodeId));
-                    return;
-                }
-                if (!request.runCommand
-                    && (request.targetRpm < -10000 || request.targetRpm > 10000))
-                {
-                    handleRequest(QStringLiteral("电机控制失败：目标转速必须在 -10000～10000 rpm"));
-                    return;
-                }
+                handleRequest(QStringLiteral("电机控制失败：无效节点 Node%1").arg(request.nodeId));
+                return;
+            }
+            if (!request.runCommand && (request.targetRpm < -10000 || request.targetRpm > 10000))
+            {
+                handleRequest(QStringLiteral("电机控制失败：目标转速必须在 -10000～10000 rpm"));
+                return;
+            }
 
-                ObserverMotorProtocol::ControlFrame control;
-                control.command = request.runCommand
-                                      ? ObserverMotorProtocol::Command::RunVector
-                                      : ObserverMotorProtocol::Command::SpeedVector;
-                control.nodeMask = static_cast<quint8>(1U << (request.nodeId - 1U));
-                control.runMask = request.enabled ? control.nodeMask : 0U;
-                control.sequence = ++m_motorControlSequence;
-                if (!request.runCommand)
-                {
-                    control.speedsRpm[static_cast<size_t>(request.nodeId - 1U)] =
-                        static_cast<qint16>(request.targetRpm);
-                }
+            ObserverMotorProtocol::ControlFrame control;
+            control.command = request.runCommand ? ObserverMotorProtocol::Command::RunVector
+                                                 : ObserverMotorProtocol::Command::SpeedVector;
+            control.nodeMask = static_cast<quint8>(1U << (request.nodeId - 1U));
+            control.runMask = request.enabled ? control.nodeMask : 0U;
+            control.sequence = ++m_motorControlSequence;
+            if (!request.runCommand)
+            {
+                control.speedsRpm[static_cast<size_t>(request.nodeId - 1U)] =
+                    static_cast<qint16>(request.targetRpm);
+            }
 
-                QString error;
-                if (communication == nullptr
-                    || !communication->sendObserverMotorControl(control, &error))
-                {
-                    if (error.isEmpty())
-                        error = QStringLiteral("网关未连接或串口发送失败");
-                    handleRequest(QStringLiteral("电机控制发送失败：%1").arg(error));
-                    return;
-                }
-                handleRequest(QStringLiteral("已发送 0x100 控制帧：Node%1，%2 rpm，%3")
-                                  .arg(request.nodeId)
-                                  .arg(request.targetRpm)
-                                  .arg(request.runCommand
-                                           ? (request.enabled ? QStringLiteral("启动")
-                                                              : QStringLiteral("停止"))
-                                           : (request.enabled
-                                                  ? QStringLiteral("设置速度并启动")
-                                                  : QStringLiteral("设置速度"))));
-            });
+            QString error;
+            if (communication == nullptr ||
+                !communication->sendObserverMotorControl(control, &error))
+            {
+                if (error.isEmpty())
+                    error = QStringLiteral("网关未连接或串口发送失败");
+                handleRequest(QStringLiteral("电机控制发送失败：%1").arg(error));
+                return;
+            }
+            handleRequest(
+                QStringLiteral("已发送 0x100 控制帧：Node%1，%2 rpm，%3")
+                    .arg(request.nodeId)
+                    .arg(request.targetRpm)
+                    .arg(request.runCommand
+                             ? (request.enabled ? QStringLiteral("启动") : QStringLiteral("停止"))
+                             : (request.enabled ? QStringLiteral("设置速度并启动")
+                                                : QStringLiteral("设置速度"))));
+        });
     connect(firmware, &FirmwarePage::upgradeRequested, this,
             [this](const FirmwareUpgradeRequest &)
             { handleRequest(QStringLiteral("固件升级：已记录升级请求；未连接 Bootloader")); });
@@ -531,6 +618,8 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (m_recorder != nullptr)
+        m_recorder->stopRecording();
     if (auto *firmware = findChild<FirmwarePage *>())
         firmware->closeAuxiliaryWindows();
     QMainWindow::closeEvent(event);
@@ -730,8 +819,8 @@ void MainWindow::updatePageViewport()
     // 这样不会在正常尺寸下留下大块空白，也不会让底部表格/日志被裁切。
     QSize pageSize = viewportSize;
     qreal scale = 1.0;
-    if (QWidget *currentPage = m_pages->currentWidget(); currentPage != nullptr &&
-        currentPage->property("fitViewportScale").toBool())
+    if (QWidget *currentPage = m_pages->currentWidget();
+        currentPage != nullptr && currentPage->property("fitViewportScale").toBool())
     {
         const QSize required = currentPage->minimumSizeHint();
         if (required.width() > viewportSize.width() || required.height() > viewportSize.height())

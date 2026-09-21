@@ -42,14 +42,12 @@ class BootloaderCommunicationService final : public QObject
   signals:
     void rawBytesReceived(const QByteArray &bytes);
     void frameReceived(const CanGatewayFrame &frame);
+    void frameSent(const CanGatewayFrame &frame);
     void heartbeatReceived(const SystemHeartbeat &heartbeat);
     void opened(const QString &portName);
     void closed();
     void errorOccurred(const QString &message);
-    void canBitrateConfigured(quint16 sequence,
-                              quint8 status,
-                              quint32 nominalBps,
-                              quint32 dataBps);
+    void canBitrateConfigured(quint16 sequence, quint8 status, quint32 nominalBps, quint32 dataBps);
     void canBitrateError(const QString &message);
     void flowTransferProgress(int completedBlocks, int totalBlocks);
     void flowTransferFinished(bool success, const QString &message);
@@ -71,10 +69,8 @@ class BootloaderCommunicationService final : public QObject
     void finishFlowTransfer(bool success, const QString &message);
     bool validateFlowBlock(const CanGatewayFrame &block, QString &error) const;
     void processReceivedBytes(const QByteArray &bytes);
-    void finishCanBitrateConfig(CanGatewayConfigStatus status,
-                                quint32 nominalBitrate,
-                                quint32 dataBitrate,
-                                const QString &message);
+    void finishCanBitrateConfig(CanGatewayConfigStatus status, quint32 nominalBitrate,
+                                quint32 dataBitrate, const QString &message);
     void handleCanBitrateConfigResponse(const QByteArray &packet);
 
     SerialTransport *m_transport = nullptr;

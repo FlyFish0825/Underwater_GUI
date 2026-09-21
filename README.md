@@ -56,6 +56,16 @@ CAN ID、DLC、字节偏移或心跳 CRC8。
 窗口布局持久化和压力测试仍需单独完成，不能把预览截图视为实机联调结果。详细边界见
 [`docs/plotting.md`](docs/plotting.md)。
 
+## 科研数据记录
+
+总览页可启动独立的后台记录会话。记录链在页面可见性判断之前接收 CAN 收发帧，保存
+原始 payload、Observer Motor 转速/电流/IABC/电压/温度、控制帧、六自由度输入、用户
+事件以及非演示的深度/姿态快照；它不把逐点记录送到界面或日志。每次会话生成 JSONL、
+CSV 和元数据文件，队列满时不阻塞通信线程，而是累计明确的丢弃计数。
+
+当前尚未接入真实 IMU 与压力/深度协议，预留列保持空值，演示数据不会冒充科研数据。
+使用方法、字段和完整性检查见 [`docs/research-recording.md`](docs/research-recording.md)。
+
 ## 编译与运行
 
 使用项目已经锁定的工具链：
@@ -111,6 +121,7 @@ VSCode/clangd 使用 `build/gui/compile_commands.json`。需要手工确认跳�
 - `docs/architecture.md`：按总览、局部、细节组织的项目架构图；
 - `docs/plotting.md`：高速多窗口曲线组件调研、许可证和接入方案；
 - `docs/dependencies.md`：实际使用的第三方库、版本、许可证和构建范围；
+- `docs/research-recording.md`：科研数据记录、导出格式、性能策略和传感器接入边界；
 - `docs/ui-contract.md`：页面输入快照与输出请求契约；
 - `docs/toolchain.md`：精确工具链和构建记录；
 - `agent/`：后续开发必须遵守的统一 Agent 提示词、通信规范和参考图。

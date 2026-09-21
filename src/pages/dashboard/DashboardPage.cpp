@@ -6,6 +6,7 @@
 #include <QCheckBox>
 #include <QDateTime>
 #include <QDialog>
+#include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -745,6 +746,32 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     alarms->contentLayout()->addStretch();
     bottomRow->addWidget(alarms, 4);
 
+    auto *recording = new CardWidget(QStringLiteral("科研数据记录"), IconKind::Dashboard);
+    m_recordingStatus = makeLabel(QStringLiteral("未记录"), QStringLiteral("statusWarn"));
+    m_recordingStatus->setAlignment(Qt::AlignCenter);
+    m_recordingCounters = makeLabel(QStringLiteral("记录电机、输入、原始 CAN；不进入绘图"),
+                                    QStringLiteral("mutedLabel"));
+    m_recordingCounters->setWordWrap(true);
+    m_recordingCounters->setAlignment(Qt::AlignCenter);
+    recording->contentLayout()->addWidget(m_recordingStatus);
+    recording->contentLayout()->addWidget(m_recordingCounters);
+    auto *recordButtons = new QHBoxLayout;
+    m_recordingStart = makeButton(QStringLiteral("开始记录"), QStringLiteral("primaryButton"));
+    m_recordingStop = makeButton(QStringLiteral("停止"), QStringLiteral("softButton"));
+    m_recordingOpen = makeButton(QStringLiteral("打开目录"), QStringLiteral("softButton"));
+    m_recordingStop->setEnabled(false);
+    recordButtons->addWidget(m_recordingStart);
+    recordButtons->addWidget(m_recordingStop);
+    recordButtons->addWidget(m_recordingOpen);
+    recording->contentLayout()->addLayout(recordButtons);
+    connect(m_recordingStart, &QPushButton::clicked, this,
+            [this]() { emit recordingStartRequested(); });
+    connect(m_recordingStop, &QPushButton::clicked, this,
+            [this]() { emit recordingStopRequested(); });
+    connect(m_recordingOpen, &QPushButton::clicked, this,
+            [this]() { emit recordingOpenDirectoryRequested(); });
+    bottomRow->addWidget(recording, 4);
+
     auto *quick = new CardWidget(QStringLiteral("快捷操作"), IconKind::Action);
     auto *quickGrid = new QGridLayout;
     auto *arm = makeButton(QStringLiteral("解锁电机"), QStringLiteral("primaryButton"));
@@ -813,6 +840,23 @@ void DashboardPage::setSnapshot(const DashboardSnapshot &snapshot)
 {
     m_snapshot = snapshot;
     refreshView();
+    emit snapshotAvailable(snapshot);
+}
+
+void DashboardPage::setRecordingStatus(const bool active, const quint64 accepted,
+                                       const quint64 dropped, const QString &path)
+{
+    if (m_recordingStatus == nullptr || m_recordingCounters == nullptr)
+        return;
+    m_recordingStatus->setText(active ? QStringLiteral("正在记录") : QStringLiteral("未记录"));
+    setTone(m_recordingStatus, active ? "good" : "warn");
+    const QString fileName = path.isEmpty() ? QStringLiteral("--") : QFileInfo(path).fileName();
+    m_recordingCounters->setText(
+        QStringLiteral("接收 %1 · 丢弃 %2\n%3").arg(accepted).arg(dropped).arg(fileName));
+    if (m_recordingStart != nullptr)
+        m_recordingStart->setEnabled(!active);
+    if (m_recordingStop != nullptr)
+        m_recordingStop->setEnabled(active);
 }
 
 void DashboardPage::openThrusterDetails(const int index)
