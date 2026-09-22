@@ -88,7 +88,7 @@ bool ObserverMotorDataService::handleCanFrame(const CanGatewayFrame &frame)
         node.debugMode = false;
         node.state = ObserverMotorProtocol::stateText(feedback.state);
         node.speedRpm = feedback.speedRpm;
-        node.iqA = feedback.iqA;
+        node.currentA = feedback.busCurrentA;
         node.busVoltageV = feedback.busVoltageV;
         node.temperatureC = feedback.temperatureC;
         node.currentCalibrationDone = feedback.currentCalibrationDone;
@@ -112,7 +112,7 @@ bool ObserverMotorDataService::handleCanFrame(const CanGatewayFrame &frame)
         node.debugMode = true;
         node.state = ObserverMotorProtocol::stateText(debug.state);
         node.speedRpm = debug.speedRpm;
-        node.iqA = debug.iqA;
+        node.currentA = debug.iqA;
         node.busVoltageV = debug.busVoltageV;
         node.temperatureC = debug.temperatureC;
         node.pllElectricalSpeedRadPerSec = debug.pllElectricalSpeedRadPerSec;

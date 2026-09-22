@@ -200,7 +200,7 @@ rov::DashboardSnapshot dashboardFromMotorFleet(const rov::ObserverMotorFleetSnap
         item.id = QStringLiteral("thruster%1").arg(node.nodeId);
         item.label = QStringLiteral("T%1 · %2").arg(node.nodeId).arg(motorLabel(node.nodeId));
         item.rpm = node.speedRpm;
-        item.currentA = node.iqA;
+        item.currentA = node.currentA;
         item.temperatureC = node.temperatureC;
         item.status = node.online ? QStringLiteral("在线") : QStringLiteral("离线");
         item.stamp = node.stamp;
@@ -259,7 +259,7 @@ rov::MotorDebugSnapshot motorDebugFromNode(const rov::ObserverMotorNodeSnapshot 
         QStringLiteral("Node%1 · 推进器 %2").arg(node.nodeId).arg(node.nodeId);
     snapshot.state = node.online ? node.state : QStringLiteral("离线");
     snapshot.rpm = node.speedRpm;
-    snapshot.currentA = node.iqA;
+    snapshot.currentA = node.currentA;
     snapshot.voltageV = node.busVoltageV;
     snapshot.temperatureC = node.temperatureC;
     snapshot.fault =

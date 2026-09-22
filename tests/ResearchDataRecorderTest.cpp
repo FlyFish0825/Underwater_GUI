@@ -27,6 +27,12 @@ void appendLe16(QByteArray &bytes, const qint16 value)
     bytes.append(static_cast<char>((raw >> 8U) & 0xFFU));
 }
 
+void appendUnsignedLe16(QByteArray &bytes, const quint16 value)
+{
+    bytes.append(static_cast<char>(value & 0xFFU));
+    bytes.append(static_cast<char>((value >> 8U) & 0xFFU));
+}
+
 QByteArray readAll(const QString &path)
 {
     QFile file(path);
@@ -50,9 +56,9 @@ int main(int argc, char *argv[])
 
     QByteArray feedback;
     appendLe16(feedback, 1234);
-    appendLe16(feedback, -250);
+    appendUnsignedLe16(feedback, 65535U);
     appendLe16(feedback, 2410);
-    appendLe16(feedback, 283);
+    appendUnsignedLe16(feedback, 65535U);
     feedback.resize(12);
     feedback[8] = static_cast<char>(ObserverMotorProtocol::MotorState::ClosedLoop);
     feedback[9] = 0x03;
@@ -83,7 +89,8 @@ int main(int argc, char *argv[])
     const QByteArray meta =
         readAll(temporary.filePath(QStringLiteral("research_session.meta.json")));
     if (!require(jsonl.contains("\"motor_speed_rpm\":1234"), "motor rpm missing") ||
-        !require(jsonl.contains("\"motor_iq_a\":-2.5"), "motor current missing") ||
+        !require(jsonl.contains("\"motor_bus_current_a\":10"), "motor current missing") ||
+        !require(jsonl.contains("\"motor_temperature_c\":150"), "motor temperature missing") ||
         !require(jsonl.contains("\"input_surge\":0.5"), "control input missing") ||
         !require(jsonl.contains("\"depth_m\":12.75"), "depth missing") ||
         !require(jsonl.contains("test_marker"), "event missing") ||

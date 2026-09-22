@@ -141,9 +141,12 @@ bool decode(const CanGatewayFrame &frame, DecodedFrame &decoded, QString *error)
         decoded.nodeId = nodeFromCanId(frame.canId, kFeedbackBaseCanId);
         decoded.feedback.nodeId = decoded.nodeId;
         decoded.feedback.speedRpm = readSignedLe16(frame.data, 0);
-        decoded.feedback.iqA = static_cast<double>(readSignedLe16(frame.data, 2)) / 100.0;
+        decoded.feedback.busCurrentA =
+            static_cast<double>(readLe16(frame.data, 2)) * kFeedbackBusCurrentLsbA;
         decoded.feedback.busVoltageV = static_cast<double>(readLe16(frame.data, 4)) / 100.0;
-        decoded.feedback.temperatureC = static_cast<double>(readSignedLe16(frame.data, 6)) / 10.0;
+        decoded.feedback.temperatureC = kFeedbackTemperatureMinC
+                                        + static_cast<double>(readLe16(frame.data, 6))
+                                              * kFeedbackTemperatureLsbC;
         decoded.feedback.state = static_cast<MotorState>(static_cast<quint8>(frame.data.at(8)));
         decoded.feedback.currentCalibrationDone = (static_cast<quint8>(frame.data.at(9)) & 0x01U) != 0;
         decoded.feedback.speedLoopEnabled = (static_cast<quint8>(frame.data.at(9)) & 0x02U) != 0;

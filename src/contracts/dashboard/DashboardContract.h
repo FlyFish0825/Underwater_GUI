@@ -20,9 +20,10 @@ struct ThrusterTelemetry
     QString label;
     // Feedback: revolutions per minute, display range -6000..6000 rpm.
     double rpm = 0.0;
-    // Feedback: phase current, display range 0..80 A.
+    // Feedback: estimated bus current, display range 0..10 A in normal feedback.
+    // Debug feedback uses the selected node's Iq value while normal feedback is paused.
     double currentA = 0.0;
-    // Feedback: motor temperature, display range -20..120 °C.
+    // Feedback: STM32G431 internal temperature, display range -20..150 °C.
     double temperatureC = 0.0;
     QString status;
     DataStamp stamp;

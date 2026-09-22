@@ -15,6 +15,12 @@ void appendLe16(QByteArray &bytes, const qint16 value)
     bytes.append(static_cast<char>((static_cast<quint16>(value) >> 8U) & 0xFFU));
 }
 
+void appendUnsignedLe16(QByteArray &bytes, const quint16 value)
+{
+    bytes.append(static_cast<char>(value & 0xFFU));
+    bytes.append(static_cast<char>((value >> 8U) & 0xFFU));
+}
+
 bool require(const bool condition, const char *message)
 {
     if (!condition)
@@ -85,19 +91,31 @@ int main(int argc, char *argv[])
     QByteArray feedback;
     feedback.reserve(12);
     appendLe16(feedback, 1234);
-    appendLe16(feedback, -250);
+    appendUnsignedLe16(feedback, 65535U);
     appendLe16(feedback, 2410);
-    appendLe16(feedback, 283);
+    appendUnsignedLe16(feedback, 65535U);
     feedback.resize(12);
     feedback[8] = static_cast<char>(MotorState::ClosedLoop);
     feedback[9] = 0x07;
     feedback[10] = 9;
     if (!require(decode(frame(0x201, kCanFdFlags, feedback), decoded),
                  "普通反馈解析失败")
-        || !require(decoded.feedback.speedRpm == 1234 && qFuzzyCompare(decoded.feedback.iqA, -2.5)
+        || !require(decoded.feedback.speedRpm == 1234
+                        && qFuzzyCompare(decoded.feedback.busCurrentA, 10.0)
                         && qFuzzyCompare(decoded.feedback.busVoltageV, 24.1)
-                        && qFuzzyCompare(decoded.feedback.temperatureC, 28.3),
+                        && qFuzzyCompare(decoded.feedback.temperatureC, 150.0),
                     "普通反馈缩放错误"))
+        return 1;
+
+    feedback[2] = 0;
+    feedback[3] = 0;
+    feedback[6] = 0;
+    feedback[7] = 0;
+    if (!require(decode(frame(0x201, kCanFdFlags, feedback), decoded),
+                 "普通反馈零值解析失败")
+        || !require(qFuzzyCompare(decoded.feedback.busCurrentA, 0.0)
+                        && qFuzzyCompare(decoded.feedback.temperatureC, -20.0),
+                    "普通反馈无符号量程下限错误"))
         return 1;
 
     QByteArray heartbeat = QByteArray::fromHex("010201011C010900");
