@@ -15,8 +15,10 @@ struct ObserverMotorNodeSnapshot
     bool debugMode = false;
     QString state = QStringLiteral("IDLE");
     qint16 speedRpm = 0;
-    double iqA = 0.0;
+    // Normal feedback supplies estimated bus current; debug feedback supplies Iq.
+    double currentA = 0.0;
     double busVoltageV = 0.0;
+    // MCU internal temperature: normal feedback uses -20..150 C full scale.
     double temperatureC = 0.0;
     bool currentCalibrationDone = false;
     bool speedLoopEnabled = false;

@@ -236,7 +236,7 @@ QJsonObject ResearchDataRecorder::toJson(const PendingRecord &record)
                 break;
             case ObserverMotorProtocol::FrameKind::Feedback:
                 put(object, "motor_speed_rpm", static_cast<int>(decoded.feedback.speedRpm));
-                put(object, "motor_iq_a", decoded.feedback.iqA);
+                put(object, "motor_bus_current_a", decoded.feedback.busCurrentA);
                 put(object, "motor_bus_voltage_v", decoded.feedback.busVoltageV);
                 put(object, "motor_temperature_c", decoded.feedback.temperatureC);
                 put(object, "motor_state",
@@ -326,7 +326,8 @@ QByteArray ResearchDataRecorder::csvHeader()
     return QByteArrayLiteral(
         "schema_version,type,timestamp_utc,monotonic_us,source,direction,sequence,can_id,flags,"
         "data_hex,"
-        "motor_node_id,motor_command,motor_node_mask,motor_run_mask,motor_speed_rpm,motor_iq_a,"
+        "motor_node_id,motor_command,motor_node_mask,motor_run_mask,motor_speed_rpm,"
+        "motor_bus_current_a,motor_iq_a,"
         "motor_bus_voltage_v,motor_temperature_c,motor_state,motor_feedback_sequence,"
         "motor_target_rpm_1,motor_target_rpm_2,motor_target_rpm_3,motor_target_rpm_4,"
         "motor_target_rpm_5,motor_target_rpm_6,motor_target_rpm_7,motor_target_rpm_8,"

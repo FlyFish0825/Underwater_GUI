@@ -23,6 +23,12 @@ constexpr quint8 kClassicCanFlags = 0x00U;
 constexpr quint8 kCanFdFlags = 0x02U;
 // 兼容旧调用方/测试夹具；接收端仍允许将来切换到 CAN FD+BRS。
 constexpr quint8 kCanFdBrsFlags = 0x06U;
+constexpr double kFeedbackBusCurrentMaxA = 10.0;
+constexpr double kFeedbackBusCurrentLsbA = kFeedbackBusCurrentMaxA / 65535.0;
+constexpr double kFeedbackTemperatureMinC = -20.0;
+constexpr double kFeedbackTemperatureMaxC = 150.0;
+constexpr double kFeedbackTemperatureLsbC =
+    (kFeedbackTemperatureMaxC - kFeedbackTemperatureMinC) / 65535.0;
 
 enum class Command : quint8
 {
@@ -62,8 +68,11 @@ struct FeedbackFrame
 {
     quint8 nodeId = 0;
     qint16 speedRpm = 0;
-    double iqA = 0.0;
+    // Byte2..3: estimated bus current, unsigned 0..10 A full scale.
+    double busCurrentA = 0.0;
+    // Byte4..5: bus voltage, 0.01 V per LSB.
     double busVoltageV = 0.0;
+    // Byte6..7: STM32G431 internal temperature, unsigned -20..150 C full scale.
     double temperatureC = 0.0;
     MotorState state = MotorState::Idle;
     bool currentCalibrationDone = false;
