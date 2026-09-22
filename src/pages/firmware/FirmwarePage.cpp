@@ -621,10 +621,11 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
         new CardWidget(QStringLiteral("节点升级状态（8）"), IconKind::Firmware);
     targetCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
     targetCard->contentLayout()->setSpacing(5);
-    m_nodeTable = new QTableWidget(0, 6);
+    m_nodeTable = new QTableWidget(0, 7);
     m_nodeTable->setHorizontalHeaderLabels(
-        {QStringLiteral("节点 ID"), QStringLiteral("设备名称"), QStringLiteral("当前版本"),
-         QStringLiteral("目标版本"), QStringLiteral("在线状态"), QStringLiteral("升级状态")});
+        {QStringLiteral("节点 ID"), QStringLiteral("设备名称"), QStringLiteral("角色"),
+         QStringLiteral("当前版本"), QStringLiteral("目标版本"), QStringLiteral("在线状态"),
+         QStringLiteral("升级状态")});
     m_nodeTable->horizontalHeader()->setStretchLastSection(true);
     m_nodeTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_nodeTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -636,10 +637,11 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     // 表格高度只容纳表头和 8 行数据，避免空白视口挤占日志区域。
     m_nodeTable->setFixedHeight(8 * 25 + 36);
     m_nodeTable->setColumnWidth(0, 76);
-    m_nodeTable->setColumnWidth(2, 100);
+    m_nodeTable->setColumnWidth(2, 82);
     m_nodeTable->setColumnWidth(3, 100);
     m_nodeTable->setColumnWidth(4, 100);
     m_nodeTable->setColumnWidth(5, 100);
+    m_nodeTable->setColumnWidth(6, 110);
     m_nodeTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_nodeTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_nodeTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -852,8 +854,11 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             &FirmwarePage::selectNode);
     connect(m_nodeTable, &QTableWidget::cellClicked, this, &FirmwarePage::selectTableRow);
     connect(openProtocol, &QPushButton::clicked, this, &FirmwarePage::showCommandCenter);
-    connect(modeGroup, qOverload<int>(&QButtonGroup::buttonClicked), this,
-            &FirmwarePage::setUpgradeMode);
+    connect(modeGroup, &QButtonGroup::idClicked, this, &FirmwarePage::setUpgradeMode);
+    connect(m_canaryNodeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this]() { updateNodeRoles(); });
+    connect(m_guardNodeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this]() { updateNodeRoles(); });
     setUpgradeMode(0);
     connect(refreshSerial, &QPushButton::clicked, this, &FirmwarePage::refreshSerialDevices);
     connect(m_serialConnectButton, &QPushButton::clicked, this,
@@ -1037,7 +1042,27 @@ void FirmwarePage::setUpgradeMode(const int mode)
         }
         m_updateButton->setVisible(m_upgradeMode != 2);
     }
+    updateNodeRoles();
     updateSafetyLock();
+}
+
+void FirmwarePage::updateNodeRoles()
+{
+    if (m_nodeTable == nullptr)
+        return;
+    const int canary = m_canaryNodeCombo == nullptr ? 1 : m_canaryNodeCombo->currentData().toInt();
+    const int guard = m_guardNodeCombo == nullptr ? 8 : m_guardNodeCombo->currentData().toInt();
+    for (int row = 0; row < m_nodeTable->rowCount(); ++row)
+    {
+        const int node = row + 1;
+        QString role = QStringLiteral("普通");
+        if (m_upgradeMode == 1 && node == canary)
+            role = QStringLiteral("Canary");
+        if (m_upgradeMode == 1 && node == guard)
+            role = role == QStringLiteral("Canary") ? QStringLiteral("Canary / Guard")
+                                                     : QStringLiteral("Guard");
+        m_nodeTable->setItem(row, 2, new QTableWidgetItem(role));
+    }
 }
 
 void FirmwarePage::updateSafetyLock()
@@ -1094,8 +1119,8 @@ void FirmwarePage::updateNodePhase(const QString &phase)
         state = QStringLiteral("升级完成");
     else if (phase.contains(QStringLiteral("失败")))
         state = QStringLiteral("失败");
-    if (m_nodeTable != nullptr && m_nodeTable->item(row, 5) != nullptr)
-        m_nodeTable->item(row, 5)->setText(state);
+    if (m_nodeTable != nullptr && m_nodeTable->item(row, 6) != nullptr)
+        m_nodeTable->item(row, 6)->setText(state);
     if (row < m_progressStates.size() && m_progressStates.at(row) != nullptr)
         m_progressStates.at(row)->setText(state);
 }
@@ -1242,13 +1267,15 @@ void FirmwarePage::refreshView()
         const auto &node = m_snapshot.nodes.at(row);
         m_nodeTable->setItem(row, 0, new QTableWidgetItem(node.nodeId));
         m_nodeTable->setItem(row, 1, new QTableWidgetItem(node.deviceName));
-        m_nodeTable->setItem(row, 2, new QTableWidgetItem(node.currentVersion));
-        m_nodeTable->setItem(row, 3, new QTableWidgetItem(node.targetVersion));
+        m_nodeTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("普通")));
+        m_nodeTable->setItem(row, 3, new QTableWidgetItem(node.currentVersion));
+        m_nodeTable->setItem(row, 4, new QTableWidgetItem(node.targetVersion));
         m_nodeTable->setItem(
-            row, 4,
+            row, 5,
             new QTableWidgetItem(node.online ? QStringLiteral("在线") : QStringLiteral("离线")));
-        m_nodeTable->setItem(row, 5, new QTableWidgetItem(firmwareStateText(node.state)));
+        m_nodeTable->setItem(row, 6, new QTableWidgetItem(firmwareStateText(node.state)));
     }
+    updateNodeRoles();
     if (m_targetNodeCombo != nullptr)
     {
         const QVariant previous = m_targetNodeCombo->currentData();
@@ -1402,8 +1429,8 @@ void FirmwarePage::startFirmwareDownload()
 
     m_snapshot.nodes[index].state = FirmwareState::Programming;
     m_snapshot.nodes[index].progressPercent = 0;
-    if (m_nodeTable != nullptr && m_nodeTable->item(index, 5) != nullptr)
-        m_nodeTable->item(index, 5)->setText(QStringLiteral("准备下载"));
+    if (m_nodeTable != nullptr && m_nodeTable->item(index, 6) != nullptr)
+        m_nodeTable->item(index, 6)->setText(QStringLiteral("等待升级"));
     if (m_updateButton != nullptr)
         m_updateButton->setEnabled(false);
     updateSafetyLock();
@@ -1426,14 +1453,14 @@ void FirmwarePage::updateDownloadProgress(const quint8 target, const int percent
         if (nodeIdFromText(m_snapshot.nodes.at(row).nodeId) != target)
             continue;
         m_snapshot.nodes[row].progressPercent = percent;
-        if (m_nodeTable != nullptr && m_nodeTable->item(row, 5) != nullptr)
-            m_nodeTable->item(row, 5)->setText(percent >= 100 ? QStringLiteral("成功")
+        if (m_nodeTable != nullptr && m_nodeTable->item(row, 6) != nullptr)
+            m_nodeTable->item(row, 6)->setText(percent >= 100 ? QStringLiteral("升级完成")
                                                                : QStringLiteral("下载中 %1%").arg(percent));
         if (row < m_progressBars.size() && m_progressBars.at(row) != nullptr)
             m_progressBars.at(row)->setValue(percent);
         if (row < m_progressStates.size() && m_progressStates.at(row) != nullptr)
         {
-            m_progressStates.at(row)->setText(percent >= 100 ? QStringLiteral("成功")
+            m_progressStates.at(row)->setText(percent >= 100 ? QStringLiteral("升级完成")
                                                                : QStringLiteral("%1%").arg(percent));
             m_progressStates.at(row)->setProperty("class",
                                                   percent >= 100 ? QStringLiteral("statusGood")
@@ -1459,8 +1486,8 @@ void FirmwarePage::finishFirmwareDownload(const bool success, const QString &mes
         m_snapshot.nodes[index].state = success ? FirmwareState::Completed : FirmwareState::Failed;
         if (success)
             m_snapshot.nodes[index].progressPercent = 100;
-        if (m_nodeTable != nullptr && m_nodeTable->item(index, 5) != nullptr)
-            m_nodeTable->item(index, 5)->setText(success ? QStringLiteral("成功")
+        if (m_nodeTable != nullptr && m_nodeTable->item(index, 6) != nullptr)
+            m_nodeTable->item(index, 6)->setText(success ? QStringLiteral("升级完成")
                                                          : QStringLiteral("失败"));
         if (!success && index < m_progressStates.size() && m_progressStates.at(index) != nullptr)
             m_progressStates.at(index)->setText(QStringLiteral("失败"));
@@ -1581,7 +1608,7 @@ void FirmwarePage::handleBootResponse(const BootResponse &response)
         if (nodeIdFromText(m_snapshot.nodes.at(row).nodeId) == response.nodeId)
         {
             m_snapshot.nodes[row].online = true;
-            m_nodeTable->item(row, 4)->setText(QStringLiteral("在线"));
+            m_nodeTable->item(row, 5)->setText(QStringLiteral("在线"));
             if (m_targetNodeCombo != nullptr && m_targetNodeCombo->currentIndex() == row)
             {
                 m_stateStatus->setText(bootStatusName(response.status));
@@ -1603,8 +1630,8 @@ void FirmwarePage::handleBootResponse(const BootResponse &response)
                                                    .arg(static_cast<quint8>(response.data.at(1)))
                                                    .arg(static_cast<quint8>(response.data.at(2))));
                     m_snapshot.nodes[row].currentVersion = m_stateBootloader->text();
-                    if (m_nodeTable != nullptr && m_nodeTable->item(row, 2) != nullptr)
-                        m_nodeTable->item(row, 2)->setText(m_stateBootloader->text());
+                    if (m_nodeTable != nullptr && m_nodeTable->item(row, 3) != nullptr)
+                        m_nodeTable->item(row, 3)->setText(m_stateBootloader->text());
                 }
                 else if (response.command == BootCommand::GetInfo && response.data.size() >= 4)
                 {

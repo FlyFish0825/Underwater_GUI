@@ -69,6 +69,7 @@ class FirmwarePage final : public QWidget
     void setUpgradeMode(int mode);
     void updateSafetyLock();
     void updateNodePhase(const QString &phase);
+    void updateNodeRoles();
     bool confirmDangerousOperation(BootCommand command, quint8 target);
     void sendCommonCommand(BootCommand command, const QString &label, quint8 byte2 = 0,
                            const QByteArray &params = QByteArray());
