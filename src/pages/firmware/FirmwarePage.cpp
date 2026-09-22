@@ -371,14 +371,14 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(10, 8, 10, 8);
     root->setSpacing(8);
-    root->addWidget(makePageHeader(QStringLiteral("固件升级"),
-                                   QStringLiteral("按底层 Bootloader 协议下载固件并校验后启动 APP。"),
-                                   QStringLiteral("正式下载固定使用 Classic CAN")));
+    root->addWidget(makePageHeader(QStringLiteral("安全固件升级控制台"),
+                                   QStringLiteral("选择固件与目标节点后，由升级控制器自动执行安全下载和验证。"),
+                                   QStringLiteral("正常升级与协议调试相互隔离")));
 
     auto *mainRow = new QHBoxLayout;
     m_mainRowLayout = mainRow;
     mainRow->setSpacing(8);
-    auto *fileCard = new CardWidget(QStringLiteral("固件文件"), IconKind::File);
+    auto *fileCard = new CardWidget(QStringLiteral("固件文件与安全检查"), IconKind::File);
     fileCard->contentLayout()->setContentsMargins(10, 8, 10, 10);
     fileCard->contentLayout()->setSpacing(6);
     auto *dropZone = new FirmwareDropZone;
@@ -413,13 +413,15 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     info->addWidget(makeLabel(QStringLiteral("文件大小"), QStringLiteral("mutedLabel")), 2, 0);
     m_fileSize = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
     info->addWidget(m_fileSize, 2, 1);
-    info->addWidget(makeLabel(QStringLiteral("校验摘要"), QStringLiteral("mutedLabel")), 3, 0);
+    info->addWidget(makeLabel(QStringLiteral("目标区域"), QStringLiteral("mutedLabel")), 3, 0);
+    info->addWidget(makeLabel(QStringLiteral("APP"), QStringLiteral("bodyValue")), 3, 1);
+    info->addWidget(makeLabel(QStringLiteral("CRC32"), QStringLiteral("mutedLabel")), 4, 0);
     m_checksum = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
-    info->addWidget(m_checksum, 3, 1);
-    info->addWidget(makeLabel(QStringLiteral("说明"), QStringLiteral("mutedLabel")), 4, 0);
+    info->addWidget(m_checksum, 4, 1);
+    info->addWidget(makeLabel(QStringLiteral("说明"), QStringLiteral("mutedLabel")), 5, 0);
     m_description = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
     m_description->setWordWrap(true);
-    info->addWidget(m_description, 4, 1);
+    info->addWidget(m_description, 5, 1);
     auto *fileDetails = new QWidget;
     fileDetails->setObjectName(QStringLiteral("firmwareFileDetails"));
     fileDetails->setStyleSheet(QStringLiteral("QWidget#firmwareFileDetails { background: white; }"));
@@ -444,7 +446,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     auto *left = new QVBoxLayout;
     left->setSpacing(8);
     left->addWidget(fileCard);
-    auto *nodeControl = new CardWidget(QStringLiteral("节点控制"), IconKind::Action);
+    auto *nodeControl = new CardWidget(QStringLiteral("节点信息卡"), IconKind::Action);
     nodeControl->contentLayout()->setContentsMargins(10, 8, 10, 10);
     nodeControl->contentLayout()->setSpacing(6);
     auto *targetForm = new QGridLayout;
@@ -552,7 +554,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     connectionRow->addWidget(m_serialStatus, 1);
 
     auto *targetCard =
-        new CardWidget(QStringLiteral("目标节点与升级进度（8）"), IconKind::Firmware);
+        new CardWidget(QStringLiteral("节点升级状态（8）"), IconKind::Firmware);
     targetCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
     targetCard->contentLayout()->setSpacing(5);
     m_nodeTable = new QTableWidget(0, 6);
@@ -624,7 +626,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     targetCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     right->addWidget(targetCard, 0);
 
-    auto *logCard = new CardWidget(QStringLiteral("升级日志"), IconKind::List);
+    auto *logCard = new CardWidget(QStringLiteral("CAN 升级日志"), IconKind::List);
     // 日志本身会持续增长，局部压缩卡片边距，给有效日志内容更多可见高度。
     logCard->contentLayout()->setContentsMargins(6, 3, 6, 4);
     logCard->contentLayout()->setSpacing(2);
