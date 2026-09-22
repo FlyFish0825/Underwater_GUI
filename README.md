@@ -1,6 +1,6 @@
 # ROV Qt 上位机
 
-这是水下机器人 ROV 的 Qt Widgets 上位机工程。当前已在固件升级页接入 **Windows USB CDC 虚拟串口发现、VID/PID 筛选、串口接管、心跳监视、CAN 网关 AA55 增量拆包、Bootloader 命令中心和固定使用 Classic CAN 的 Legacy 单节点正式下载**；电机调试页已接入 Observer Motor 控制帧、Qwt 多窗口曲线和预览变量目录；其他设备驱动仍按任务卡逐步实现。
+这是水下机器人 ROV 的 Qt Widgets 上位机工程。当前已在固件升级页接入 **Windows USB CDC 虚拟串口发现、VID/PID 筛选、串口接管、心跳监视、CAN 网关 AA55 增量拆包、Bootloader 命令中心和固定使用 Classic CAN 的 Legacy 单节点正式下载**；电机调试页已接入 Observer Motor 控制帧、Qwt 多窗口曲线和预览变量目录；视觉页已接入 Windows DirectShow 相机枚举、实时预览、帧率状态和当前帧保存；其他设备驱动仍按任务卡逐步实现。
 
 ## 开始开发前必须阅读
 
@@ -19,7 +19,7 @@ src/app/             主窗口和应用入口
 src/pages/           Dashboard、Motor Debug、Firmware、Manipulator、Vision、Settings
 src/contracts/       页面快照和请求契约
 src/communication/   USB CDC 传输与 CAN 网关协议解析
-src/data/            Service/Data 层与电机快照
+src/data/            Service/Data 层、电机快照与本机相机采集
 src/ui/              公共控件和主题
 src/widgets/plot/    Qwt 曲线控件适配层
 third_party/qwt-6.3/ 可追溯的 Qwt 6.3.1 上游源码和许可证

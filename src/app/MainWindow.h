@@ -22,6 +22,7 @@ class FirmwarePage;
 class ManipulatorPage;
 class VisionPage;
 class ObserverMotorDataService;
+class CameraCaptureService;
 class ResearchDataRecorder;
 
 class MainWindow final : public QMainWindow
@@ -52,6 +53,7 @@ class MainWindow final : public QMainWindow
     QLabel *m_footerLog = nullptr;
     QLabel *m_gatewayStatus = nullptr;
     ObserverMotorDataService *m_motorData = nullptr;
+    CameraCaptureService *m_camera = nullptr;
     ResearchDataRecorder *m_recorder = nullptr;
     QVector<QVector<double>> m_debugSeriesHistory;
     quint8 m_debugHistoryNodeId = 0;

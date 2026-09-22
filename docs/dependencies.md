@@ -9,6 +9,7 @@
 | 组件 | 固定版本/提交 | 用途 | 来源与目录 | 许可证/注意事项 | 构建方式 |
 | --- | --- | --- | --- | --- | --- |
 | Qt | 5.15.19 | Qt Widgets、Core、Gui、Concurrent、PrintSupport | 锁定工具链 `toolchain/qt/5.15.19`，不随仓库提交 | 按 Qt 发行版和项目发布方式遵守对应许可 | `find_package(Qt5 5.15 ...)` |
+| Windows DirectShow | Windows 系统组件 | 相机枚举、RGB24 取帧和实时预览 | Windows SDK / MinGW 系统头文件与库 | 随 Windows 提供，不复制第三方源码 | `ole32`、`oleaut32`、`strmiids`、`uuid` |
 | Fluent-Qt | v1.8.4 / `fb9e6194ae8eaea1a29ed077e4d3b9bf48410223` | 公共按钮、输入框、进度控件和基础 UI 封装 | `third_party/Fluent-Qt`；当前由本机依赖提供，根 `.gitignore` 排除 | MIT，许可证在上游 `LICENSE` | CMake 目标 `FluentQt::FluentQt`；示例、画廊、测试和绑定关闭 |
 | Qwt | 6.3.1 / `92dc4d1065751cbebcb92231e18359ec28437af9` | Motor Debug 多曲线绘图、图例、缩放、平移和坐标跟踪 | 完整源码 `third_party/qwt-6.3` | Qwt License 1.0，保留 `third_party/qwt-6.3/COPYING` | CMake 目标 `rov_third_party_qwt`，静态链接到 `rov_page_motor_debug` |
 

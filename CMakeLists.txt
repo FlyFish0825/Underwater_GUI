@@ -91,6 +91,11 @@ add_library(rov_motor_data STATIC
     src/data/services/ObserverMotorDataService.h
 )
 
+add_library(rov_camera STATIC
+    src/data/services/CameraCaptureService.cpp
+    src/data/services/CameraCaptureService.h
+)
+
 add_library(rov_research_recording STATIC
     src/data/recording/ResearchDataRecorder.cpp
     src/data/recording/ResearchDataRecorder.h
@@ -157,6 +162,7 @@ set(ROV_UI_TARGETS
     rov_preview
     rov_communication
     rov_motor_data
+    rov_camera
     rov_research_recording
     rov_firmware_history
     rov_page_dashboard
@@ -175,6 +181,9 @@ endforeach()
 target_link_libraries(rov_page_firmware PUBLIC rov_communication)
 target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history)
 target_link_libraries(rov_motor_data PUBLIC rov_communication)
+if (WIN32)
+    target_link_libraries(rov_camera PRIVATE ole32 oleaut32 strmiids uuid)
+endif()
 target_link_libraries(rov_research_recording PUBLIC rov_communication)
 target_link_libraries(rov_ui_common PUBLIC FluentQt::FluentQt)
 target_link_libraries(rov_page_dashboard PUBLIC rov_ui_common)
@@ -182,6 +191,7 @@ target_link_libraries(rov_page_motor_debug PUBLIC rov_ui_common)
 target_link_libraries(rov_page_motor_debug PUBLIC rov_third_party_qwt)
 target_link_libraries(rov_page_firmware PUBLIC rov_ui_common)
 target_link_libraries(rov_page_manipulator PUBLIC rov_ui_common)
+target_link_libraries(rov_page_vision PUBLIC rov_ui_common)
 target_link_libraries(rov_page_settings PUBLIC rov_ui_common)
 
 target_include_directories(rov_ui PRIVATE src)
@@ -200,6 +210,7 @@ target_link_libraries(rov_ui PRIVATE
     rov_ui_common
     rov_communication
     rov_motor_data
+    rov_camera
     rov_research_recording
 )
 

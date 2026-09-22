@@ -40,8 +40,9 @@ Qt、Fluent-Qt、Qwt 的版本和许可证边界见 [`dependencies.md`](dependen
   bootloader/CAN implementation.
 - Manipulator: side-view arm drawing, Cartesian targets, joint table, status
   and quick actions; no kinematics.
-- Vision: camera placeholder, connection/stream/node status, planned display
-  modes and roadmap; no camera, OpenCV, GStreamer or vision algorithm.
+- Vision: Windows DirectShow device enumeration, RGB24 frame capture, live
+  preview, stream status and still-frame saving. Image-processing modes remain
+  typed requests; OpenCV, GStreamer and vision algorithms are not integrated.
 
 All five use the same light scientific/industrial visual language: white and
 light-gray surfaces, dark-blue typography, blue emphasis, and green/orange/red

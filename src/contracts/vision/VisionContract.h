@@ -30,7 +30,21 @@ struct VisionModeRequest
     QString modeId;
 };
 
+enum class CameraControlAction
+{
+    RefreshDevices,
+    Start,
+    Stop
+};
+
+struct CameraControlRequest
+{
+    CameraControlAction action = CameraControlAction::RefreshDevices;
+    int deviceIndex = -1;
+};
+
 } // namespace rov
 
 Q_DECLARE_METATYPE(rov::VisionSnapshot)
 Q_DECLARE_METATYPE(rov::VisionModeRequest)
+Q_DECLARE_METATYPE(rov::CameraControlRequest)

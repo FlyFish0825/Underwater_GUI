@@ -2,6 +2,7 @@
 
 #include "communication/protocol/ObserverMotorProtocol.h"
 #include "data/recording/ResearchDataRecorder.h"
+#include "data/services/CameraCaptureService.h"
 #include "data/services/ObserverMotorDataService.h"
 #include "pages/dashboard/DashboardPage.h"
 #include "pages/firmware/FirmwarePage.h"
@@ -494,6 +495,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     // 组合根把同一条网关 CAN 帧流交给数据服务；UI 页面只订阅快照，
     // 不直接接触 USB CDC、AA55 或 CAN ID。
     m_motorData = new ObserverMotorDataService(this);
+    m_camera = new CameraCaptureService(this);
     m_recorder = new ResearchDataRecorder(this);
     auto *communication = firmware->communicationService();
     connect(settings, &SettingsPlaceholder::canBitrateApplyRequested, this,
@@ -756,6 +758,53 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(vision, &VisionPage::visionModeRequested, this,
             [this](const VisionModeRequest &)
             { handleRequest(QStringLiteral("视觉：已记录显示模式请求")); });
+    connect(vision, &VisionPage::manualControlRequested, this,
+            [this](const SixDofControlRequest &request)
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordControlInput(request);
+                handleRequest(QStringLiteral("视觉：六自由度控制请求"));
+            });
+    connect(vision, &VisionPage::holdPositionRequested, this,
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordEvent(QStringLiteral("hold"),
+                                            QStringLiteral("视觉页请求保持位置"));
+                handleRequest(QStringLiteral("视觉：请求保持位置"));
+            });
+    connect(vision, &VisionPage::disarmRequested, this,
+            [this]()
+            {
+                if (m_recorder != nullptr)
+                    m_recorder->recordEvent(QStringLiteral("disarm"),
+                                            QStringLiteral("视觉页请求紧急停机"));
+                handleRequest(QStringLiteral("视觉：请求紧急停机"));
+            });
+    connect(vision, &VisionPage::cameraControlRequested, this,
+            [this](const CameraControlRequest &request)
+            {
+                switch (request.action)
+                {
+                case CameraControlAction::RefreshDevices:
+                    m_camera->refreshDevices();
+                    break;
+                case CameraControlAction::Start:
+                    m_camera->startCamera(request.deviceIndex);
+                    break;
+                case CameraControlAction::Stop:
+                    m_camera->stopCamera();
+                    break;
+                }
+            });
+    connect(m_camera, &CameraCaptureService::devicesChanged, vision,
+            &VisionPage::setAvailableCameras);
+    connect(m_camera, &CameraCaptureService::snapshotChanged, vision,
+            &VisionPage::setSnapshot);
+    connect(m_camera, &CameraCaptureService::frameReady, vision, &VisionPage::setCameraFrame);
+    connect(m_camera, &CameraCaptureService::errorOccurred, vision,
+            &VisionPage::showCameraError);
+    QTimer::singleShot(0, m_camera, &CameraCaptureService::refreshDevices);
 
     updatePageViewport();
     QTimer::singleShot(0, this, [this]() { updatePageViewport(); });
@@ -769,6 +818,8 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (m_camera != nullptr)
+        m_camera->stopCamera();
     if (m_recorder != nullptr)
         m_recorder->stopRecording();
     if (auto *firmware = findChild<FirmwarePage *>())
