@@ -24,7 +24,6 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
-#include <QInputDialog>
 #include <QLineEdit>
 #include <QLocale>
 #include <QMenu>
@@ -1166,20 +1165,26 @@ void FirmwarePage::updateNodePhase(const QString &phase)
 
 bool FirmwarePage::confirmDangerousOperation(const BootCommand command, const quint8 target)
 {
-    Q_UNUSED(target)
-    QString expected;
+    QString warning;
     if (command == BootCommand::Erase)
-        expected = QStringLiteral("ERASE");
+    {
+        warning = QStringLiteral("即将擦除 Node%1 的 APP 固件区域。\n\n"
+                                 "擦除后必须重新下载固件，是否继续？")
+                      .arg(target);
+    }
     else if (command == BootCommand::ReleaseGuard)
-        expected = QStringLiteral("RELEASE GUARD");
+    {
+        warning = QStringLiteral("即将释放 Node%1 的 Guard 保护。\n\n"
+                                 "释放后该节点将停止保护职责，是否继续？")
+                      .arg(target);
+    }
     else
         return true;
 
-    bool accepted = false;
-    const QString input = QInputDialog::getText(window(), QStringLiteral("确认危险操作"),
-                                                QStringLiteral("请输入 %1 以继续：").arg(expected),
-                                                QLineEdit::Normal, QString(), &accepted);
-    return accepted && input.trimmed().compare(expected, Qt::CaseInsensitive) == 0;
+    return QMessageBox::warning(window(), QStringLiteral("确认危险操作"), warning,
+                                QMessageBox::Yes | QMessageBox::Cancel,
+                                QMessageBox::Cancel)
+           == QMessageBox::Yes;
 }
 
 QWidget *FirmwarePage::connectionBar() const
@@ -1910,10 +1915,16 @@ void FirmwarePage::refreshSerialDevices()
     else
     {
         m_serialStatus->setText(
-            connectionStatusText(false, QStringLiteral("发现 %1 个匹配设备 · 当前为演示/离线模式")
+            connectionStatusText(false, QStringLiteral("发现 %1 个匹配设备，正在自动连接")
                                             .arg(m_serialDevices.size())));
         if (devicesChanged)
             logRequest(QStringLiteral("刷新设备：发现 %1 个匹配设备").arg(m_serialDevices.size()));
+        if (m_communication != nullptr && !m_communication->isOpen())
+        {
+            m_serialStatus->setText(connectionStatusText(
+                false, QStringLiteral("正在自动连接 %1 …").arg(m_serialDevices.first().portName)));
+            m_communication->open(m_serialDevices.first());
+        }
     }
 }
 
@@ -1932,12 +1943,6 @@ void FirmwarePage::toggleSerialConnection()
         logRequest(QStringLiteral("请先刷新并选择 VID_0483 PID_5740 设备"));
         return;
     }
-    const QMessageBox::StandardButton answer = QMessageBox::question(
-        window(), QStringLiteral("进入实机模式"),
-        QStringLiteral("进入实机模式后将允许发送 CAN 控制命令。\n请确认设备、总线和急停条件均已检查。"),
-        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
-    if (answer != QMessageBox::Yes)
-        return;
     m_communication->open(m_serialDevices.at(index));
 }
 
