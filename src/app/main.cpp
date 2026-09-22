@@ -8,7 +8,6 @@
 #include <QGuiApplication>
 #include <QIcon>
 #include <QStringList>
-#include <QTimer>
 
 int main(int argc, char *argv[])
 {
@@ -31,17 +30,6 @@ int main(int argc, char *argv[])
     }
 
     rov::MainWindow window;
-    int pageIndex = 0;
-    for (int i = 1; i < argc - 1; ++i)
-    {
-        if (QString::fromLocal8Bit(argv[i]) == QStringLiteral("--page"))
-        {
-            pageIndex = QString::fromLocal8Bit(argv[i + 1]).toInt();
-            break;
-        }
-    }
-    window.setPageIndex(pageIndex);
-
     for (int i = 1; i < argc - 1; ++i)
     {
         if (QString::fromLocal8Bit(argv[i]) == QStringLiteral("--window-size"))
@@ -55,21 +43,6 @@ int main(int argc, char *argv[])
         }
     }
     window.show();
-
-    for (int i = 1; i < argc - 1; ++i)
-    {
-        if (QString::fromLocal8Bit(argv[i]) == QStringLiteral("--capture"))
-        {
-            const QString output = QString::fromLocal8Bit(argv[i + 1]);
-            QTimer::singleShot(700, &window,
-                               [&window, output, &application]()
-                               {
-                                   window.grab().save(output);
-                                   application.quit();
-                               });
-            break;
-        }
-    }
 
     return application.exec();
 }

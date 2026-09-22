@@ -80,20 +80,7 @@ CSV 和元数据文件，队列满时不阻塞通信线程，而是累计明确�
 
 编译结果位于 `build/gui/rov_ui.exe`。Qt 和 MinGW 运行库部署使用匹配当前工具链的 `deploy-qt.ps1`。
 
-为了生成可重复的界面截图：
-
-```powershell
-& 'F:\file\BaiduSyncdisk\Project\Underwater_GUI\build\gui\rov_ui.exe' `
-    --page 0 --capture 'F:\file\BaiduSyncdisk\Project\Underwater_GUI\build\gui\dashboard.png'
-```
-
-页面索引：0 Dashboard，1 Motor Debug，2 Firmware，3 Manipulator，4 Vision，5 Settings。
-
-构建后可运行协议测试：
-
-```powershell
-ctest --test-dir build/gui --output-on-failure
-```
+测试目标默认不参与主程序构建，需要验证时再显式构建对应测试目标。
 
 VSCode/clangd 使用 `build/gui/compile_commands.json`。需要手工确认跳转时，可执行：
 

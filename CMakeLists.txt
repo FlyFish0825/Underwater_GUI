@@ -217,38 +217,38 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
-    add_executable(rov_can_bitrate_settings_test tests/CanBitrateSettingsTest.cpp)
+    add_executable(rov_can_bitrate_settings_test EXCLUDE_FROM_ALL tests/CanBitrateSettingsTest.cpp)
     target_link_libraries(rov_can_bitrate_settings_test PRIVATE rov_page_settings rov_firmware_history)
     add_test(NAME rov_can_bitrate_settings_test COMMAND rov_can_bitrate_settings_test -platform offscreen)
-    add_executable(rov_can_flow_protocol_test
+    add_executable(rov_can_flow_protocol_test EXCLUDE_FROM_ALL
         tests/CanFlowControlProtocolTest.cpp
     )
     target_include_directories(rov_can_flow_protocol_test PRIVATE src)
     target_link_libraries(rov_can_flow_protocol_test PRIVATE Qt5::Core rov_communication)
     add_test(NAME rov_can_flow_protocol_test COMMAND rov_can_flow_protocol_test)
 
-    add_executable(rov_observer_motor_protocol_test
+    add_executable(rov_observer_motor_protocol_test EXCLUDE_FROM_ALL
         tests/ObserverMotorProtocolTest.cpp
     )
     target_include_directories(rov_observer_motor_protocol_test PRIVATE src)
     target_link_libraries(rov_observer_motor_protocol_test PRIVATE Qt5::Core rov_communication)
     add_test(NAME rov_observer_motor_protocol_test COMMAND rov_observer_motor_protocol_test)
 
-    add_executable(rov_system_heartbeat_protocol_test
+    add_executable(rov_system_heartbeat_protocol_test EXCLUDE_FROM_ALL
         tests/SystemHeartbeatProtocolTest.cpp
     )
     target_include_directories(rov_system_heartbeat_protocol_test PRIVATE src)
     target_link_libraries(rov_system_heartbeat_protocol_test PRIVATE Qt5::Core rov_communication)
     add_test(NAME rov_system_heartbeat_protocol_test COMMAND rov_system_heartbeat_protocol_test)
 
-    add_executable(rov_can_gateway_config_protocol_test
+    add_executable(rov_can_gateway_config_protocol_test EXCLUDE_FROM_ALL
         tests/CanGatewayConfigProtocolTest.cpp
     )
     target_include_directories(rov_can_gateway_config_protocol_test PRIVATE src)
     target_link_libraries(rov_can_gateway_config_protocol_test PRIVATE Qt5::Core rov_communication)
     add_test(NAME rov_can_gateway_config_protocol_test COMMAND rov_can_gateway_config_protocol_test)
 
-    add_executable(rov_research_data_recorder_test
+    add_executable(rov_research_data_recorder_test EXCLUDE_FROM_ALL
         tests/ResearchDataRecorderTest.cpp
     )
     target_include_directories(rov_research_data_recorder_test PRIVATE src)
