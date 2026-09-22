@@ -141,6 +141,27 @@ void IconWidget::paintEvent(QPaintEvent *event)
         painter.drawLine(r.center().x(), r.top(), r.center().x(), r.bottom());
         painter.drawLine(r.left(), r.center().y(), r.right(), r.center().y());
         break;
+    case IconKind::Gamepad:
+    {
+        QPainterPath body;
+        body.moveTo(r.left() + 4, r.center().y() + 5);
+        body.cubicTo(r.left() + 1, r.center().y() - 4, r.left() + 5, r.top() + 2,
+                     r.center().x(), r.top() + 5);
+        body.cubicTo(r.right() - 5, r.top() + 2, r.right() - 1, r.center().y() - 4,
+                     r.right() - 4, r.center().y() + 5);
+        body.cubicTo(r.right() - 3, r.bottom() + 1, r.right() - 7, r.bottom() + 1,
+                     r.center().x() + 3, r.center().y() + 2);
+        body.cubicTo(r.center().x(), r.center().y() + 1, r.center().x(), r.center().y() + 1,
+                     r.center().x() - 3, r.center().y() + 2);
+        body.cubicTo(r.left() + 7, r.bottom() + 1, r.left() + 3, r.bottom() + 1,
+                     r.left() + 4, r.center().y() + 5);
+        painter.drawPath(body);
+        painter.drawLine(r.left() + 7, r.center().y(), r.left() + 13, r.center().y());
+        painter.drawLine(r.left() + 10, r.center().y() - 3, r.left() + 10, r.center().y() + 3);
+        painter.drawEllipse(QPointF(r.right() - 8, r.center().y() - 2), 1, 1);
+        painter.drawEllipse(QPointF(r.right() - 5, r.center().y() + 1), 1, 1);
+        break;
+    }
     case IconKind::Arm:
         painter.drawLine(r.left() + 3, r.bottom() - 3, r.left() + 3, r.top() + 5);
         painter.drawLine(r.left() + 3, r.top() + 5, r.right() - 4, r.top() + 5);

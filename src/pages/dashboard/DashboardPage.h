@@ -9,6 +9,7 @@ class QCheckBox;
 class QLabel;
 class QPushButton;
 class QSlider;
+class QSpinBox;
 
 namespace rov
 {
@@ -53,7 +54,8 @@ class DashboardPage final : public QWidget
     QLabel *m_temperatureValue = nullptr;
     QLabel *m_alarmValue = nullptr;
     QLabel *m_alarmSummary = nullptr;
-    QLabel *m_controlPermission = nullptr;
+    QLabel *m_alarmConnection = nullptr;
+    QLabel *m_alarmUpdated = nullptr;
     QLabel *m_requestLog = nullptr;
     QLabel *m_stateUpdate = nullptr;
     QLabel *m_totalThrusterValue = nullptr;
@@ -70,7 +72,8 @@ class DashboardPage final : public QWidget
     QPushButton *m_recordingOpen = nullptr;
     QCheckBox *m_enableControl = nullptr;
     QSlider *m_thrustLimitSlider = nullptr;
-    QLabel *m_thrustLimitValue = nullptr;
+    QSpinBox *m_thrustLimitInput = nullptr;
+    bool m_thrustLimitInitialized = false;
     QWidget *m_rpmChart = nullptr;
     QWidget *m_currentChart = nullptr;
     QWidget *m_temperatureChart = nullptr;

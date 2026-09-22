@@ -28,6 +28,7 @@ enum class IconKind
     Camera,
     Alarm,
     Action,
+    Gamepad,
     Arm,
     List
 };

@@ -19,6 +19,7 @@
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
 #include <QStyle>
 #include <QTransform>
 #include <QVBoxLayout>
@@ -638,7 +639,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
         "QLabel#summaryGood { color: #078d4a; }"
         "QLabel#summaryWarn { color: #d98512; }"
         "QLabel#summaryBad { color: #c54854; }"
-        "QLabel#axisName { color: #203b60; font-weight: 650; }"
+        "QLabel#axisName { color: #203b60; font-weight: 650; font-size: 15px; }"
         "QLabel#axisHint { color: #7a8fa6; font-size: 11px; }"
         "QLabel#axisValue { color: #203b60; font-weight: 650; min-width: 22px; }"
         "QPushButton#softButton[dashboardAxis=\"true\"] { min-width: 32px; min-height: 28px; "
@@ -714,23 +715,14 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     stateCard->contentLayout()->addLayout(stateGrid);
     stateColumn->addWidget(stateCard, 1);
 
-    auto *controlCard = new CardWidget(QStringLiteral("六自由度手动控制"), IconKind::Action);
-    auto *enableRow = new QHBoxLayout;
-    enableRow->addWidget(makeLabel(QStringLiteral("启用控制"), QStringLiteral("bodyValue")));
-    enableRow->addStretch();
+    auto *controlCard = new CardWidget(QStringLiteral("六自由度手动控制"), IconKind::Gamepad);
+    controlCard->headerLayout()->addWidget(
+        makeLabel(QStringLiteral("启用控制"), QStringLiteral("bodyValue")));
     m_enableControl = new QCheckBox(controlCard);
     m_enableControl->setObjectName(QStringLiteral("dashboardEnable"));
     m_enableControl->setChecked(false);
     m_enableControl->setToolTip(QStringLiteral("只输出用户意图，不直接控制设备"));
-    enableRow->addWidget(m_enableControl);
-    controlCard->contentLayout()->addLayout(enableRow);
-
-    auto *permissionRow = new QHBoxLayout;
-    permissionRow->addWidget(makeLabel(QStringLiteral("控制权限"), QStringLiteral("bodyValue")));
-    permissionRow->addStretch();
-    m_controlPermission = makeStatusPill(QStringLiteral("仅演示"), QStringLiteral("statusWarn"));
-    permissionRow->addWidget(m_controlPermission);
-    controlCard->contentLayout()->addLayout(permissionRow);
+    controlCard->headerLayout()->addWidget(m_enableControl);
 
     auto *axisGrid = new QGridLayout;
     axisGrid->setContentsMargins(0, 0, 0, 0);
@@ -827,6 +819,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     {
         axisGrid->setColumnStretch(column, 1);
     }
+    axisGrid->setAlignment(Qt::AlignHCenter);
     controlCard->contentLayout()->addLayout(axisGrid);
 
     auto *limitRow = new QHBoxLayout;
@@ -835,8 +828,13 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     m_thrustLimitSlider->setRange(0, 100);
     m_thrustLimitSlider->setSingleStep(5);
     limitRow->addWidget(m_thrustLimitSlider, 1);
-    m_thrustLimitValue = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
-    limitRow->addWidget(m_thrustLimitValue);
+    m_thrustLimitInput = new QSpinBox(controlCard);
+    m_thrustLimitInput->setRange(0, 100);
+    m_thrustLimitInput->setSuffix(QStringLiteral("%"));
+    m_thrustLimitInput->setAlignment(Qt::AlignRight);
+    m_thrustLimitInput->setKeyboardTracking(false);
+    m_thrustLimitInput->setMinimumWidth(72);
+    limitRow->addWidget(m_thrustLimitInput);
     controlCard->contentLayout()->addLayout(limitRow);
     stateColumn->addWidget(controlCard, 1);
     topRow->addLayout(stateColumn, 6);
@@ -881,11 +879,20 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
 
     auto *alarms = new CardWidget(QStringLiteral("活动报警"), IconKind::Alarm);
     m_alarmValue = makeMetricValue(QStringLiteral("--"));
-    m_alarmSummary = makeLabel(QStringLiteral("等待有效数据"), QStringLiteral("mutedLabel"));
+    m_alarmConnection = makeLabel(QStringLiteral("通信状态：--"), QStringLiteral("mutedLabel"));
+    m_alarmUpdated = makeLabel(QStringLiteral("更新时间：--"), QStringLiteral("mutedLabel"));
+    m_alarmSummary = makeLabel(QStringLiteral("等待有效数据"), QStringLiteral("alarmSummary"));
     m_alarmSummary->setWordWrap(true);
-    alarms->contentLayout()->addStretch();
-    alarms->contentLayout()->addWidget(m_alarmValue, 0, Qt::AlignCenter);
-    alarms->contentLayout()->addWidget(m_alarmSummary, 0, Qt::AlignCenter);
+    auto *alarmTop = new QHBoxLayout;
+    alarmTop->addWidget(m_alarmValue);
+    alarmTop->addStretch();
+    alarmTop->addWidget(m_alarmConnection);
+    alarms->contentLayout()->addLayout(alarmTop);
+    auto *alarmMeta = new QHBoxLayout;
+    alarmMeta->addWidget(m_alarmUpdated);
+    alarmMeta->addStretch();
+    alarms->contentLayout()->addLayout(alarmMeta);
+    alarms->contentLayout()->addWidget(m_alarmSummary);
     alarms->contentLayout()->addStretch();
     bottomRow->addWidget(alarms, 4);
 
@@ -971,7 +978,24 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     connect(m_thrustLimitSlider, &QSlider::valueChanged, this,
             [this](const int value)
             {
-                m_thrustLimitValue->setText(QStringLiteral("%1%").arg(value));
+                m_thrustLimitInitialized = true;
+                if (m_thrustLimitInput != nullptr)
+                {
+                    const QSignalBlocker blocker(m_thrustLimitInput);
+                    m_thrustLimitInput->setValue(value);
+                }
+                emit thrustLimitRequested(ThrustLimitRequest{value});
+                logRequest(QStringLiteral("推力上限请求：%1%").arg(value));
+            });
+    connect(m_thrustLimitInput, qOverload<int>(&QSpinBox::valueChanged), this,
+            [this](const int value)
+            {
+                m_thrustLimitInitialized = true;
+                if (m_thrustLimitSlider != nullptr)
+                {
+                    const QSignalBlocker blocker(m_thrustLimitSlider);
+                    m_thrustLimitSlider->setValue(value);
+                }
                 emit thrustLimitRequested(ThrustLimitRequest{value});
                 logRequest(QStringLiteral("推力上限请求：%1%").arg(value));
             });
@@ -1078,27 +1102,14 @@ void DashboardPage::refreshView()
                 : QStringLiteral("--");
         m_stateUpdate->setText(QStringLiteral("更新时间：%1").arg(timestamp));
     }
-    if (m_controlPermission != nullptr)
+    if (m_thrustLimitSlider != nullptr && !m_thrustLimitInitialized)
     {
-        m_controlPermission->setText(m_snapshot.canControl ? QStringLiteral("允许")
-                                                           : QStringLiteral("仅演示"));
-        m_controlPermission->setToolTip(m_snapshot.canControl
-                                            ? QStringLiteral("当前快照允许控制")
-                                            : m_snapshot.controlUnavailableReason);
-        m_controlPermission->setObjectName(m_snapshot.canControl ? QStringLiteral("statusGood")
-                                                                 : QStringLiteral("statusWarn"));
-        setTone(m_controlPermission, m_snapshot.canControl ? "good" : "warn");
-    }
-    if (m_thrustLimitSlider != nullptr)
-    {
-        const QSignalBlocker blocker(m_thrustLimitSlider);
-        m_thrustLimitSlider->setValue(qBound(0, m_snapshot.thrustLimitPercent, 100));
-    }
-    if (m_thrustLimitValue != nullptr)
-    {
-        m_thrustLimitValue->setText(available
-                                        ? QStringLiteral("%1%").arg(m_snapshot.thrustLimitPercent)
-                                        : QStringLiteral("--"));
+        const int limit = qBound(0, m_snapshot.thrustLimitPercent, 100);
+        const QSignalBlocker sliderBlocker(m_thrustLimitSlider);
+        const QSignalBlocker inputBlocker(m_thrustLimitInput);
+        m_thrustLimitSlider->setValue(limit);
+        m_thrustLimitInput->setValue(limit);
+        m_thrustLimitInitialized = true;
     }
 
     QVector<double> rpmValues;
@@ -1192,16 +1203,37 @@ void DashboardPage::refreshView()
     if (!available)
     {
         m_alarmValue->setText(QStringLiteral("--"));
+        m_alarmConnection->setText(QStringLiteral("通信状态：--"));
+        m_alarmUpdated->setText(QStringLiteral("更新时间：--"));
         m_alarmSummary->setText(QStringLiteral("等待有效数据"));
     }
     else if (m_snapshot.alarmCount == 0)
     {
         m_alarmValue->setText(QStringLiteral("无活动报警"));
-        m_alarmSummary->setText(QStringLiteral("所有系统正常。"));
+        m_alarmConnection->setText(m_snapshot.connected ? QStringLiteral("CAN 在线")
+                                                        : QStringLiteral("CAN 离线"));
+        setTone(m_alarmConnection, m_snapshot.connected ? "good" : "warn");
+        m_alarmUpdated->setText(
+            QStringLiteral("更新时间：%1")
+                .arg(m_snapshot.demo.lastUpdate.isValid()
+                         ? m_snapshot.demo.lastUpdate.toString(QStringLiteral("HH:mm:ss"))
+                         : QStringLiteral("--")));
+        m_alarmSummary->setText(
+            QStringLiteral("系统健康\n在线推进器：%1 / %2")
+                .arg(online)
+                .arg(kDashboardThrusterCount));
     }
     else
     {
         m_alarmValue->setText(QStringLiteral("%1 条活动报警").arg(m_snapshot.alarmCount));
+        m_alarmConnection->setText(m_snapshot.connected ? QStringLiteral("CAN 在线")
+                                                        : QStringLiteral("CAN 离线"));
+        setTone(m_alarmConnection, m_snapshot.connected ? "good" : "warn");
+        m_alarmUpdated->setText(
+            QStringLiteral("更新时间：%1")
+                .arg(m_snapshot.demo.lastUpdate.isValid()
+                         ? m_snapshot.demo.lastUpdate.toString(QStringLiteral("HH:mm:ss"))
+                         : QStringLiteral("--")));
         if (m_snapshot.alarms.isEmpty())
         {
             m_alarmSummary->setText(QStringLiteral("请查看系统报警详情。"));
@@ -1213,7 +1245,8 @@ void DashboardPage::refreshView()
             {
                 alarmLines.append(m_snapshot.alarms.at(i));
             }
-            m_alarmSummary->setText(alarmLines.join(QStringLiteral("\n")));
+            m_alarmSummary->setText(QStringLiteral("最近报警\n") +
+                                     alarmLines.join(QStringLiteral("\n")));
         }
     }
 }

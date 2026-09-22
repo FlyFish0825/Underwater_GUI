@@ -2,6 +2,7 @@
 
 #include "contracts/motor_debug/MotorDebugContract.h"
 
+#include <QHash>
 #include <QPoint>
 #include <QStringList>
 #include <QWidget>
@@ -14,7 +15,9 @@ class QDoubleSpinBox;
 class QGridLayout;
 class QPushButton;
 class QSlider;
+class QSpinBox;
 class QSplitter;
+class QTimer;
 class QVBoxLayout;
 
 namespace rov
@@ -47,10 +50,12 @@ class MotorDebugPage final : public QWidget
     void addPresetWindow(const QStringList &seriesIds);
     void removeCurveWindow(QWidget *window);
     void relayoutCurveWindows();
+    void updateCurveAreaLayout();
     void refreshCurveWindows();
     void autoFitAllCurves();
-    void toggleCurveWindow();
-    void restoreCurveWindow();
+    void detachCurveWindow(QWidget *window, const QPoint &globalPos, const QPoint &dragOffset);
+    void restoreCurveWindow(QWidget *window);
+    void sendSpeedControl(bool runCommand, bool enabled);
     void refreshView();
     void logRequest(const QString &message);
 
@@ -60,9 +65,8 @@ class MotorDebugPage final : public QWidget
     QGridLayout *m_curveGrid = nullptr;
     CardWidget *m_curveCard = nullptr;
     QWidget *m_curveCardHost = nullptr;
-    QVBoxLayout *m_curveCardHostLayout = nullptr;
     QSplitter *m_curveSplitter = nullptr;
-    QDialog *m_curveDialog = nullptr;
+    QHash<QWidget *, QDialog *> m_curveDialogs;
     QComboBox *m_motorSelect = nullptr;
     QLabel *m_stateValue = nullptr;
     QLabel *m_rpmValue = nullptr;
@@ -75,15 +79,17 @@ class MotorDebugPage final : public QWidget
     QDoubleSpinBox *m_observerGain = nullptr;
     QDoubleSpinBox *m_currentLimit = nullptr;
     QSlider *m_speedSlider = nullptr;
-    QLabel *m_speedValue = nullptr;
+    QSpinBox *m_speedInput = nullptr;
     QPushButton *m_runButton = nullptr;
+    QTimer *m_speedDispatchTimer = nullptr;
     QLabel *m_requestLog = nullptr;
-    QWidget *m_curveDragHandle = nullptr;
     QPoint m_curveDragStartGlobal;
     QPoint m_curveDragOffset;
+    QWidget *m_curveDragWindow = nullptr;
     bool m_curveDragActive = false;
-    double m_displayWindowSeconds = 10.0;
-    bool m_followLatest = true;
+    bool m_curveSystemMoveActive = false;
+    bool m_curveAreaCollapsed = false;
+    int m_curveExpandedHeight = 500;
     bool m_running = false;
 };
 

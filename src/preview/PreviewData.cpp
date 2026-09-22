@@ -95,15 +95,12 @@ MotorDebugSnapshot motorDebugPreview()
     const QStringList ids = {
         QStringLiteral("phase_current_u"), QStringLiteral("phase_current_v"),
         QStringLiteral("phase_current_w"), QStringLiteral("bus_voltage"),
-        QStringLiteral("speed_rpm"),       QStringLiteral("pll_electrical_speed"),
-        QStringLiteral("observer_error")};
+        QStringLiteral("speed_rpm"),       QStringLiteral("pll_electrical_speed")};
     const QStringList names = {QStringLiteral("相电流 U"),  QStringLiteral("相电流 V"),
                                QStringLiteral("相电流 W"),  QStringLiteral("母线电压"),
-                               QStringLiteral("转速"),      QStringLiteral("PLL 电速度"),
-                               QStringLiteral("观测器误差")};
+                               QStringLiteral("转速"),      QStringLiteral("PLL 电速度")};
     const QStringList units = {QStringLiteral("A"), QStringLiteral("A"),   QStringLiteral("A"),
-                               QStringLiteral("V"), QStringLiteral("rpm"), QStringLiteral("rad/s"),
-                               QStringLiteral("%")};
+                               QStringLiteral("V"), QStringLiteral("rpm"), QStringLiteral("rad/s")};
     for (int channel = 0; channel < ids.size(); ++channel)
     {
         DebugSeries series;
@@ -133,10 +130,6 @@ MotorDebugSnapshot motorDebugPreview()
             else if (channel == 5)
             {
                 value = 113.0 + 4.0 * qSin(t * 1.5);
-            }
-            else
-            {
-                value = -34.0 + 1.5 * qSin(t * 7.0) + 0.6 * qSin(t * 22.0);
             }
             series.samples.append(value);
         }
