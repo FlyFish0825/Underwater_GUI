@@ -9,6 +9,7 @@ class QCheckBox;
 class QLabel;
 class QPushButton;
 class QSlider;
+class QSpinBox;
 
 namespace rov
 {
@@ -70,7 +71,7 @@ class DashboardPage final : public QWidget
     QPushButton *m_recordingOpen = nullptr;
     QCheckBox *m_enableControl = nullptr;
     QSlider *m_thrustLimitSlider = nullptr;
-    QLabel *m_thrustLimitValue = nullptr;
+    QSpinBox *m_thrustLimitInput = nullptr;
     QWidget *m_rpmChart = nullptr;
     QWidget *m_currentChart = nullptr;
     QWidget *m_temperatureChart = nullptr;

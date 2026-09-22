@@ -412,6 +412,49 @@ QScrollArea#firmwarePageScroll QScrollBar::sub-page:vertical {
     background: transparent;
 }
 
+/* 电机调试页把垂直空间优先留给曲线和控制工作区。 */
+QWidget#motorDebugPageHeader QLabel#pageTitle {
+    font-size: 24px;
+}
+
+QWidget#motorDebugPageHeader QLabel#pageSubtitle {
+    font-size: 13px;
+}
+
+QSplitter#motorDebugVerticalSplitter,
+QSplitter#motorDebugControlSplitter,
+QSplitter#motorDebugControlAreaSplitter {
+    background: transparent;
+}
+
+QSplitter#motorDebugVerticalSplitter::handle:vertical,
+QSplitter#motorDebugControlSplitter::handle:vertical {
+    height: 8px;
+    background: #d8e5f0;
+    border-top: 1px solid #c3d5e4;
+    border-bottom: 1px solid #c3d5e4;
+}
+
+QSplitter#motorDebugVerticalSplitter::handle:vertical:hover,
+QSplitter#motorDebugControlSplitter::handle:vertical:hover {
+    background: #8fc4ec;
+    border-top-color: #4a9dde;
+    border-bottom-color: #4a9dde;
+}
+
+QSplitter#motorDebugControlAreaSplitter::handle:horizontal {
+    width: 8px;
+    background: #d8e5f0;
+    border-left: 1px solid #c3d5e4;
+    border-right: 1px solid #c3d5e4;
+}
+
+QSplitter#motorDebugControlAreaSplitter::handle:horizontal:hover {
+    background: #8fc4ec;
+    border-left-color: #4a9dde;
+    border-right-color: #4a9dde;
+}
+
 QGraphicsView#pageView {
     border: none;
     background: #f5f8fb;

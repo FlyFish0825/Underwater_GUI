@@ -7,6 +7,7 @@
 #include <QWidget>
 
 class QBoxLayout;
+class QHBoxLayout;
 class QVBoxLayout;
 
 namespace rov
@@ -54,9 +55,11 @@ class CardWidget final : public QFrame
                         QWidget *parent = nullptr);
 
     QVBoxLayout *contentLayout() const;
+    QHBoxLayout *headerLayout() const;
     QLabel *titleLabel() const;
 
   private:
+    QHBoxLayout *m_headerLayout = nullptr;
     QVBoxLayout *m_contentLayout = nullptr;
     QLabel *m_titleLabel = nullptr;
 };

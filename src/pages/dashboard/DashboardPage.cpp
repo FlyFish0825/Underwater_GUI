@@ -18,6 +18,7 @@
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
 #include <QStyle>
 #include <QTransform>
 #include <QVBoxLayout>
@@ -874,8 +875,14 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     m_thrustLimitSlider->setRange(0, 100);
     m_thrustLimitSlider->setSingleStep(5);
     limitRow->addWidget(m_thrustLimitSlider, 1);
-    m_thrustLimitValue = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
-    limitRow->addWidget(m_thrustLimitValue);
+    m_thrustLimitInput = new QSpinBox(controlCard);
+    m_thrustLimitInput->setRange(0, 100);
+    m_thrustLimitInput->setSingleStep(5);
+    m_thrustLimitInput->setSuffix(QStringLiteral("%"));
+    m_thrustLimitInput->setAlignment(Qt::AlignRight);
+    m_thrustLimitInput->setKeyboardTracking(false);
+    m_thrustLimitInput->setMinimumWidth(76);
+    limitRow->addWidget(m_thrustLimitInput);
     controlCard->contentLayout()->addLayout(limitRow);
     stateColumn->addWidget(controlCard);
     topRow->addLayout(stateColumn, 6);
@@ -1010,7 +1017,22 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     connect(m_thrustLimitSlider, &QSlider::valueChanged, this,
             [this](const int value)
             {
-                m_thrustLimitValue->setText(QStringLiteral("%1%").arg(value));
+                if (m_thrustLimitInput != nullptr)
+                {
+                    const QSignalBlocker blocker(m_thrustLimitInput);
+                    m_thrustLimitInput->setValue(value);
+                }
+                emit thrustLimitRequested(ThrustLimitRequest{value});
+                logRequest(QStringLiteral("推力上限请求：%1%").arg(value));
+            });
+    connect(m_thrustLimitInput, qOverload<int>(&QSpinBox::valueChanged), this,
+            [this](const int value)
+            {
+                if (m_thrustLimitSlider != nullptr)
+                {
+                    const QSignalBlocker blocker(m_thrustLimitSlider);
+                    m_thrustLimitSlider->setValue(value);
+                }
                 emit thrustLimitRequested(ThrustLimitRequest{value});
                 logRequest(QStringLiteral("推力上限请求：%1%").arg(value));
             });
@@ -1128,16 +1150,14 @@ void DashboardPage::refreshView()
                                                                  : QStringLiteral("statusWarn"));
         setTone(m_controlPermission, m_snapshot.canControl ? "good" : "warn");
     }
-    if (m_thrustLimitSlider != nullptr)
+    if (m_thrustLimitSlider != nullptr && m_thrustLimitInput != nullptr)
     {
-        const QSignalBlocker blocker(m_thrustLimitSlider);
-        m_thrustLimitSlider->setValue(qBound(0, m_snapshot.thrustLimitPercent, 100));
-    }
-    if (m_thrustLimitValue != nullptr)
-    {
-        m_thrustLimitValue->setText(available
-                                        ? QStringLiteral("%1%").arg(m_snapshot.thrustLimitPercent)
-                                        : QStringLiteral("--"));
+        const int limit = qBound(0, m_snapshot.thrustLimitPercent, 100);
+        const QSignalBlocker sliderBlocker(m_thrustLimitSlider);
+        const QSignalBlocker inputBlocker(m_thrustLimitInput);
+        m_thrustLimitSlider->setValue(limit);
+        m_thrustLimitInput->setValue(limit);
+        m_thrustLimitInput->setEnabled(available);
     }
 
     QVector<double> rpmValues;
