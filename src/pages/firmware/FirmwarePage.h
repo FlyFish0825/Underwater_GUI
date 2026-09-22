@@ -12,6 +12,7 @@
 class QLabel;
 class QComboBox;
 class QBoxLayout;
+class QCheckBox;
 class QFrame;
 class QLineEdit;
 class QResizeEvent;
@@ -65,6 +66,7 @@ class FirmwarePage final : public QWidget
     bool loadFirmwareFile(const QString &path);
     void selectNode(int index);
     void selectTableRow(int row, int column);
+    void setUpgradeMode(int mode);
     void sendCommonCommand(BootCommand command, const QString &label, quint8 byte2 = 0,
                            const QByteArray &params = QByteArray());
     void showCommandCenter();
@@ -102,6 +104,9 @@ class FirmwarePage final : public QWidget
     bool m_logPaused = false;
     QFrame *m_dropZone = nullptr;
     QFrame *m_connectionBar = nullptr;
+    QFrame *m_multiModePanel = nullptr;
+    QFrame *m_protocolModePanel = nullptr;
+    QLabel *m_demoBanner = nullptr;
     QTableWidget *m_nodeTable = nullptr;
     QComboBox *m_serialDeviceCombo = nullptr;
     QComboBox *m_transferModeCombo = nullptr;
@@ -131,6 +136,10 @@ class FirmwarePage final : public QWidget
     QStringList m_recordedLogs;
     bool m_logRecording = false;
     QComboBox *m_targetNodeCombo = nullptr;
+    QComboBox *m_canaryNodeCombo = nullptr;
+    QComboBox *m_guardNodeCombo = nullptr;
+    QVector<QCheckBox *> m_multiNodeChecks;
+    int m_upgradeMode = 0;
     QLabel *m_stateNode = nullptr;
     QLabel *m_stateDevice = nullptr;
     QLabel *m_stateBootloader = nullptr;

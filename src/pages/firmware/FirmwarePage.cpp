@@ -12,6 +12,8 @@
 
 #include <QDateTime>
 #include <QApplication>
+#include <QButtonGroup>
+#include <QCheckBox>
 #include <QScrollArea>
 #include <QCryptographicHash>
 #include <QDragEnterEvent>
@@ -375,6 +377,31 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                                    QStringLiteral("选择固件与目标节点后，由升级控制器自动执行安全下载和验证。"),
                                    QStringLiteral("正常升级与协议调试相互隔离")));
 
+    auto *modeBar = new QFrame;
+    modeBar->setObjectName(QStringLiteral("connectionBar"));
+    auto *modeLayout = new QHBoxLayout(modeBar);
+    modeLayout->setContentsMargins(12, 5, 12, 5);
+    modeLayout->setSpacing(6);
+    modeLayout->addWidget(makeLabel(QStringLiteral("升级模式："), QStringLiteral("sectionTitle")));
+    auto *modeGroup = new QButtonGroup(this);
+    modeGroup->setExclusive(true);
+    const QStringList modeNames = {QStringLiteral("单节点安全升级"),
+                                   QStringLiteral("多节点自治升级"),
+                                   QStringLiteral("协议调试模式")};
+    for (int mode = 0; mode < modeNames.size(); ++mode)
+    {
+        auto *button = makeButton(modeNames.at(mode), QStringLiteral("softButton"));
+        button->setCheckable(true);
+        button->setChecked(mode == 0);
+        modeGroup->addButton(button, mode);
+        modeLayout->addWidget(button);
+    }
+    modeLayout->addStretch();
+    m_demoBanner = makeLabel(QStringLiteral("🧪 演示/离线模式 · 不会发送任何 CAN 控制命令"),
+                             QStringLiteral("statusIdle"));
+    modeLayout->addWidget(m_demoBanner);
+    root->addWidget(modeBar);
+
     auto *mainRow = new QHBoxLayout;
     m_mainRowLayout = mainRow;
     mainRow->setSpacing(8);
@@ -552,6 +579,57 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                                QStringLiteral("mutedLabel"));
     m_serialStatus->setTextFormat(Qt::RichText);
     connectionRow->addWidget(m_serialStatus, 1);
+
+    auto *multiCard = new CardWidget(QStringLiteral("多节点自治升级配置"), IconKind::Firmware);
+    m_multiModePanel = multiCard;
+    multiCard->contentLayout()->setContentsMargins(10, 6, 10, 8);
+    auto *multiNodes = new QGridLayout;
+    multiNodes->addWidget(makeLabel(QStringLiteral("目标节点"), QStringLiteral("mutedLabel")), 0, 0);
+    for (int node = 1; node <= 8; ++node)
+    {
+        auto *check = new QCheckBox(QStringLiteral("Node%1 %2").arg(node).arg(thrusterDisplayName(node - 1)));
+        check->setChecked(node == 1);
+        m_multiNodeChecks.append(check);
+        multiNodes->addWidget(check, 1 + (node - 1) / 4, (node - 1) % 4);
+    }
+    multiCard->contentLayout()->addLayout(multiNodes);
+    auto *roles = new QHBoxLayout;
+    roles->addWidget(makeLabel(QStringLiteral("Canary"), QStringLiteral("mutedLabel")));
+    m_canaryNodeCombo = new QComboBox;
+    roles->addWidget(m_canaryNodeCombo);
+    roles->addWidget(makeLabel(QStringLiteral("Guard"), QStringLiteral("mutedLabel")));
+    m_guardNodeCombo = new QComboBox;
+    roles->addWidget(m_guardNodeCombo);
+    for (int node = 1; node <= 8; ++node)
+    {
+        const QString nodeName = QStringLiteral("Node%1 %2").arg(node).arg(thrusterDisplayName(node - 1));
+        m_canaryNodeCombo->addItem(nodeName, node);
+        m_guardNodeCombo->addItem(nodeName, node);
+    }
+    m_guardNodeCombo->setCurrentIndex(7);
+    roles->addSpacing(14);
+    for (const QString &policy : {QStringLiteral("Peer Recovery"),
+                                  QStringLiteral("Guard Rollback"),
+                                  QStringLiteral("Distributed Verify")})
+    {
+        auto *option = new QCheckBox(policy);
+        option->setChecked(true);
+        roles->addWidget(option);
+    }
+    roles->addStretch();
+    multiCard->contentLayout()->addLayout(roles);
+    right->addWidget(m_multiModePanel);
+
+    auto *protocolCard = new CardWidget(QStringLiteral("协议调试模式"), IconKind::Action);
+    m_protocolModePanel = protocolCard;
+    protocolCard->contentLayout()->setContentsMargins(10, 6, 10, 8);
+    auto *protocolRow = new QHBoxLayout;
+    protocolRow->addWidget(makeLabel(QStringLiteral("高级命令与原始参数仅用于协议联调，正常升级无需手动发送。"),
+                                     QStringLiteral("mutedLabel")), 1);
+    auto *openProtocol = makeButton(QStringLiteral("打开协议调试控制台"), QStringLiteral("softButton"));
+    protocolRow->addWidget(openProtocol);
+    protocolCard->contentLayout()->addLayout(protocolRow);
+    right->addWidget(m_protocolModePanel);
 
     auto *targetCard =
         new CardWidget(QStringLiteral("节点升级状态（8）"), IconKind::Firmware);
@@ -812,6 +890,10 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             &FirmwarePage::selectNode);
     connect(m_nodeTable, &QTableWidget::cellClicked, this, &FirmwarePage::selectTableRow);
     connect(advanced, &QPushButton::clicked, this, &FirmwarePage::showCommandCenter);
+    connect(openProtocol, &QPushButton::clicked, this, &FirmwarePage::showCommandCenter);
+    connect(modeGroup, qOverload<int>(&QButtonGroup::buttonClicked), this,
+            &FirmwarePage::setUpgradeMode);
+    setUpgradeMode(0);
     connect(refreshSerial, &QPushButton::clicked, this, &FirmwarePage::refreshSerialDevices);
     connect(m_serialConnectButton, &QPushButton::clicked, this,
             &FirmwarePage::toggleSerialConnection);
@@ -962,6 +1044,34 @@ void FirmwarePage::closeAuxiliaryWindows()
         dialog->close();
         delete dialog;
         m_recordingDialog = nullptr;
+    }
+}
+
+void FirmwarePage::setUpgradeMode(const int mode)
+{
+    m_upgradeMode = qBound(0, mode, 2);
+    if (m_multiModePanel != nullptr)
+        m_multiModePanel->setVisible(m_upgradeMode == 1);
+    if (m_protocolModePanel != nullptr)
+        m_protocolModePanel->setVisible(m_upgradeMode == 2);
+    if (m_updateButton != nullptr)
+    {
+        if (m_upgradeMode == 0)
+        {
+            m_updateButton->setText(QStringLiteral("开始安全升级"));
+            m_updateButton->setToolTip(QStringLiteral("对当前目标节点执行完整 Bootloader 下载"));
+        }
+        else if (m_upgradeMode == 1)
+        {
+            m_updateButton->setText(QStringLiteral("多节点升级待接入"));
+            m_updateButton->setToolTip(QStringLiteral("当前仅配置角色与策略，不发送协议命令"));
+        }
+        else
+        {
+            m_updateButton->setText(QStringLiteral("开始安全升级"));
+        }
+        m_updateButton->setVisible(m_upgradeMode != 2);
+        m_updateButton->setEnabled(m_upgradeMode == 0);
     }
 }
 
