@@ -1071,6 +1071,10 @@ void FirmwarePage::updateSafetyLock()
         return;
     const int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
     const bool connected = m_communication != nullptr && m_communication->isOpen();
+    if (m_demoBanner != nullptr)
+        m_demoBanner->setText(connected
+                                  ? QStringLiteral("实机模式 · CAN 控制命令已启用")
+                                  : QStringLiteral("🧪 演示/离线模式 · 不会发送任何 CAN 控制命令"));
     const bool nodeOnline = index >= 0 && index < m_snapshot.nodes.size()
                             && m_snapshot.nodes.at(index).online;
     const bool versionValid = m_stateBootloader != nullptr
