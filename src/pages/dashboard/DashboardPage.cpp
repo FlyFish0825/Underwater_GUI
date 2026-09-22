@@ -73,6 +73,15 @@ QString formatAxisValue(const double value)
     return QStringLiteral("%1%2").arg(sign).arg(value, 0, 'f', 1);
 }
 
+QString formatThrusterCurrent(const double currentA)
+{
+    if (qAbs(currentA) < 0.1)
+    {
+        return QStringLiteral("%1 mA").arg(currentA * 1000.0, 0, 'f', 1);
+    }
+    return QStringLiteral("%1 A").arg(currentA, 0, 'f', 4);
+}
+
 QPushButton *axisButton(const QString &text, QWidget *parent)
 {
     auto *button = rov::makeButton(text, QStringLiteral("softButton"), parent);
@@ -515,8 +524,7 @@ ThrusterCard *thrusterTile(const rov::ThrusterTelemetry &item, QLabel *&rpmValue
         layout->addLayout(row);
     };
     addValueRow(QStringLiteral("转速"), rpmValue, QString::number(item.rpm, 'f', 0));
-    addValueRow(QStringLiteral("电流"), currentValue,
-                QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 4));
+    addValueRow(QStringLiteral("电流"), currentValue, formatThrusterCurrent(item.currentA));
     addValueRow(QStringLiteral("温度"), temperatureValue,
                 QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 1));
     return tile;
@@ -1137,8 +1145,7 @@ void DashboardPage::refreshView()
             m_thrusterRpmValues.at(i)->setText(itemValid ? QString::number(item.rpm, 'f', 0)
                                                          : QStringLiteral("--"));
             m_thrusterCurrentValues.at(i)->setText(
-                itemValid ? QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 4)
-                          : QStringLiteral("--"));
+                itemValid ? formatThrusterCurrent(item.currentA) : QStringLiteral("--"));
             m_thrusterTemperatureValues.at(i)->setText(
                 itemValid ? QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 1)
                           : QStringLiteral("--"));
