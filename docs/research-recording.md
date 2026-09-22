@@ -42,7 +42,7 @@ JSONL 和 CSV 在采集过程中同时追加写入，因此“导出”不需要
 
 在原始帧之外，记录器会调用同一套 `ObserverMotorProtocol` 解码，并附加：
 
-- 普通反馈：节点、转速、`Iq`、母线电压、温度、状态、反馈序号；
+- 普通反馈：节点、转速、估算母线电流（0～10 A 无符号满量程）、母线电压、内部温度（-20～150 ℃ 无符号满量程）、状态、反馈序号；
 - 调试反馈：`Iu/Iv/Iw`、`Id/Iq`、`Ud/Uq`、PLL 电速度、观测器角度和状态标志；
 - 控制帧：命令、节点掩码、运行掩码以及 Node1~Node8 的目标转速。
 
@@ -84,4 +84,3 @@ flowchart LR
 - `src/app/MainWindow.cpp`：在页面可见性判断之前旁路记录原始帧，并连接总览请求；
 - `src/pages/dashboard/DashboardPage.*`：只提供开始/停止/打开目录和低频状态显示；
 - `tests/ResearchDataRecorderTest.cpp`：验证电机、输入、深度、预留 IMU 列和元数据。
-
