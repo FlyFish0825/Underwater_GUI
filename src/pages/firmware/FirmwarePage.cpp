@@ -28,6 +28,7 @@
 #include <QHeaderView>
 #include <QLineEdit>
 #include <QLocale>
+#include <QMenu>
 #include <QMimeData>
 #include <QProgressBar>
 #include <QPushButton>
@@ -487,32 +488,19 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     nodeBody->setSpacing(10);
     auto *commandColumn = new QVBoxLayout;
     commandColumn->setSpacing(5);
-    commandColumn->addWidget(
-        makeLabel(QStringLiteral("常用命令"), QStringLiteral("mutedLabel")));
-    auto *commonGrid = new QGridLayout;
-    const auto addCommon = [this, commonGrid](const QString &text, BootCommand command, int row, int col)
-    {
-        auto *button = makeButton(text, QStringLiteral("softButton"));
-        commonGrid->addWidget(button, row, col);
-        connect(button, &QPushButton::clicked, this,
-                [this, command, text]() { sendCommonCommand(command, text); });
-    };
-    addCommon(QStringLiteral("读取版本"), BootCommand::GetVersion, 0, 0);
-    addCommon(QStringLiteral("设备 ID"), BootCommand::GetDeviceId, 0, 1);
-    addCommon(QStringLiteral("设备信息"), BootCommand::GetInfo, 1, 0);
-    addCommon(QStringLiteral("运行状态"), BootCommand::GetStatus, 1, 1);
-    addCommon(QStringLiteral("进入 Boot"), BootCommand::EnterBoot, 2, 0);
-    addCommon(QStringLiteral("复位节点"), BootCommand::Reset, 2, 1);
-    addCommon(QStringLiteral("中止操作"), BootCommand::Abort, 3, 0);
-    auto *jump = makeButton(QStringLiteral("试运行 APP"), QStringLiteral("softButton"));
-    commonGrid->addWidget(jump, 3, 1);
-    connect(jump, &QPushButton::clicked, this,
-            [this]() { sendCommonCommand(BootCommand::JumpApp, QStringLiteral("试运行 APP"), 0x01U); });
-    commonGrid->setHorizontalSpacing(5);
-    commonGrid->setVerticalSpacing(5);
-    commandColumn->addLayout(commonGrid);
-    auto *advanced = makeButton(QStringLiteral("高级命令…"), QStringLiteral("softButton"));
-    commandColumn->addWidget(advanced);
+    commandColumn->addWidget(makeLabel(QStringLiteral("节点操作"), QStringLiteral("mutedLabel")));
+    auto *refreshNode = makeButton(QStringLiteral("刷新状态"), QStringLiteral("softButton"));
+    commandColumn->addWidget(refreshNode);
+    auto *more = makeButton(QStringLiteral("更多…"), QStringLiteral("softButton"));
+    auto *moreMenu = new QMenu(more);
+    QAction *enterBootAction = moreMenu->addAction(QStringLiteral("进入 Bootloader"));
+    QAction *trialAction = moreMenu->addAction(QStringLiteral("试运行验证"));
+    QAction *resetAction = moreMenu->addAction(QStringLiteral("复位节点"));
+    moreMenu->addSeparator();
+    QAction *readFlashAction = moreMenu->addAction(QStringLiteral("读取 Flash"));
+    QAction *protocolAction = moreMenu->addAction(QStringLiteral("协议调试"));
+    more->setMenu(moreMenu);
+    commandColumn->addWidget(more);
     commandColumn->addStretch();
     nodeBody->addLayout(commandColumn, 1);
     auto *stateColumn = new QVBoxLayout;
@@ -532,10 +520,10 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     addState(QStringLiteral("设备"), m_stateDevice, 1);
     addState(QStringLiteral("Bootloader"), m_stateBootloader, 2);
     addState(QStringLiteral("APP"), m_stateApp, 3);
-    addState(QStringLiteral("Config"), m_stateConfig, 4);
+    addState(QStringLiteral("APP Valid"), m_stateConfig, 4);
     addState(QStringLiteral("Status"), m_stateStatus, 5);
     addState(QStringLiteral("Last Error"), m_stateError, 6);
-    addState(QStringLiteral("Progress"), m_stateProgress, 7);
+    addState(QStringLiteral("响应/进度"), m_stateProgress, 7);
     // 完成消息可能包含较长的验证结果，必须让值列吸收可用宽度并在卡片内换行，
     // 避免 QLabel 的单行 sizeHint 把“节点控制”卡片和整页横向撑宽。
     state->setColumnStretch(1, 1);
@@ -685,20 +673,10 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
         progressLayout->addLayout(row, i / 2, i % 2);
     }
     auto *actions = new QHBoxLayout;
-    auto *enterBootButton = makeButton(QStringLiteral("进入 Boot"), QStringLiteral("softButton"));
-    auto *eraseButton = makeButton(QStringLiteral("擦除"), QStringLiteral("softButton"));
-    actions->addWidget(enterBootButton);
-    actions->addWidget(eraseButton);
-    m_programButton = makeButton(QStringLiteral("编程"), QStringLiteral("softButton"));
-    m_programButton->setToolTip(QStringLiteral("按 Legacy 协议完整下载 BIN：擦除、写入、校验并启动 APP"));
-    actions->addWidget(m_programButton);
-    auto *verify = makeButton(QStringLiteral("校验"), QStringLiteral("softButton"));
-    actions->addWidget(verify);
-    auto *resetButton = makeButton(QStringLiteral("重启"), QStringLiteral("softButton"));
-    actions->addWidget(resetButton);
+    actions->addStretch();
     m_updateButton = makeButton(QStringLiteral("下载到选中节点"), QStringLiteral("primaryButton"));
     m_updateButton->setToolTip(QStringLiteral("对当前目标节点执行完整 Bootloader 下载"));
-    actions->addWidget(m_updateButton, 1);
+    actions->addWidget(m_updateButton);
     progressLayout->addLayout(actions, 4, 0, 1, 2);
     targetCard->contentLayout()->addLayout(progressLayout);
     targetCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
@@ -789,38 +767,23 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     mainRow->addLayout(right, 7);
     root->addLayout(mainRow, 1);
 
-    connect(verify, &QPushButton::clicked, this,
+    connect(refreshNode, &QPushButton::clicked, this,
             [this]()
             {
-                emit verifyRequested();
-                if (m_firmwarePath.isEmpty())
-                {
-                    logRequest(QStringLiteral("校验失败：请先选择 .bin 固件文件"));
-                    return;
-                }
-                QFile file(m_firmwarePath);
-                if (!file.open(QIODevice::ReadOnly))
-                {
-                    logRequest(QStringLiteral("校验失败：无法读取固件：%1").arg(file.errorString()));
-                    return;
-                }
-                const quint32 crc = BootloaderProtocol::crc32Mpeg2(file.readAll());
-                QByteArray params;
-                params.append(static_cast<char>(crc & 0xFFU));
-                params.append(static_cast<char>((crc >> 8U) & 0xFFU));
-                params.append(static_cast<char>((crc >> 16U) & 0xFFU));
-                params.append(static_cast<char>((crc >> 24U) & 0xFFU));
-                sendCommonCommand(BootCommand::Verify, QStringLiteral("校验固件"), 0, params);
+                sendCommonCommand(BootCommand::GetVersion, QStringLiteral("刷新 Bootloader 版本"));
+                sendCommonCommand(BootCommand::GetInfo, QStringLiteral("刷新设备信息"));
+                sendCommonCommand(BootCommand::GetStatus, QStringLiteral("刷新运行状态"));
             });
-    connect(enterBootButton, &QPushButton::clicked, this,
-            [this]() { sendCommonCommand(BootCommand::EnterBoot, QStringLiteral("进入 Boot")); });
-    connect(eraseButton, &QPushButton::clicked, this,
-            [this]() { sendCommonCommand(BootCommand::Erase, QStringLiteral("擦除 APP")); });
-    connect(resetButton, &QPushButton::clicked, this,
-            [this]() { sendCommonCommand(BootCommand::Reset, QStringLiteral("重启节点")); });
+    connect(enterBootAction, &QAction::triggered, this,
+            [this]() { sendCommonCommand(BootCommand::EnterBoot, QStringLiteral("进入 Bootloader")); });
+    connect(trialAction, &QAction::triggered, this,
+            [this]() { sendCommonCommand(BootCommand::JumpApp, QStringLiteral("试运行验证"), 0x01U); });
+    connect(resetAction, &QAction::triggered, this,
+            [this]() { sendCommonCommand(BootCommand::Reset, QStringLiteral("复位节点")); });
+    connect(readFlashAction, &QAction::triggered, this, &FirmwarePage::showCommandCenter);
+    connect(protocolAction, &QAction::triggered, this, &FirmwarePage::showCommandCenter);
     dropZone->setFileHandler([this](const QString &path) { loadFirmwareFile(path); });
     connect(browse, &QPushButton::clicked, this, &FirmwarePage::browseFirmwareFile);
-    connect(m_programButton, &QPushButton::clicked, this, &FirmwarePage::startFirmwareDownload);
     connect(m_updateButton, &QPushButton::clicked, this, &FirmwarePage::startFirmwareDownload);
     connect(clearLog, &QPushButton::clicked, this,
             [this]()
@@ -889,7 +852,6 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     connect(m_targetNodeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &FirmwarePage::selectNode);
     connect(m_nodeTable, &QTableWidget::cellClicked, this, &FirmwarePage::selectTableRow);
-    connect(advanced, &QPushButton::clicked, this, &FirmwarePage::showCommandCenter);
     connect(openProtocol, &QPushButton::clicked, this, &FirmwarePage::showCommandCenter);
     connect(modeGroup, qOverload<int>(&QButtonGroup::buttonClicked), this,
             &FirmwarePage::setUpgradeMode);
@@ -1323,8 +1285,6 @@ void FirmwarePage::startFirmwareDownload()
     m_snapshot.nodes[index].progressPercent = 0;
     if (m_nodeTable != nullptr && m_nodeTable->item(index, 5) != nullptr)
         m_nodeTable->item(index, 5)->setText(QStringLiteral("准备下载"));
-    if (m_programButton != nullptr)
-        m_programButton->setEnabled(false);
     if (m_updateButton != nullptr)
         m_updateButton->setEnabled(false);
     logRequest(QStringLiteral("已启动 Node %1 的正式 Bootloader 下载 · 数据面：%2")
@@ -1385,8 +1345,6 @@ void FirmwarePage::finishFirmwareDownload(const bool success, const QString &mes
         if (!success && index < m_progressStates.size() && m_progressStates.at(index) != nullptr)
             m_progressStates.at(index)->setText(QStringLiteral("失败"));
     }
-    if (m_programButton != nullptr)
-        m_programButton->setEnabled(true);
     if (m_updateButton != nullptr)
         m_updateButton->setEnabled(true);
     if (m_stateProgress != nullptr)

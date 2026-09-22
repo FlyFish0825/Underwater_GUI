@@ -150,7 +150,6 @@ class FirmwarePage final : public QWidget
     QLabel *m_stateProgress = nullptr;
     QVector<AppProgressBar *> m_progressBars;
     QVector<QLabel *> m_progressStates;
-    QPushButton *m_programButton = nullptr;
     QPushButton *m_updateButton = nullptr;
 };
 
