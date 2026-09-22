@@ -670,6 +670,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     progressLayout->setHorizontalSpacing(10);
     progressLayout->setVerticalSpacing(3);
     m_progressBars.clear();
+    m_progressPercentValues.clear();
     m_progressStates.clear();
     for (int i = 0; i < 8; ++i)
     {
@@ -683,9 +684,16 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
         bar->setRange(0, 100);
         bar->setValue(0);
         row->addWidget(bar, 2);
+        auto *percentValue = makeLabel(QStringLiteral("0%"), QStringLiteral("bodyValue"));
+        percentValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        percentValue->setFixedWidth(42);
+        row->addWidget(percentValue);
         auto *barState = makeLabel(QStringLiteral("空闲"), QStringLiteral("statusIdle"));
+        barState->setAlignment(Qt::AlignCenter);
+        barState->setMinimumWidth(88);
         row->addWidget(barState);
         m_progressBars.append(bar);
+        m_progressPercentValues.append(percentValue);
         m_progressStates.append(barState);
         progressLayout->addLayout(row, i / 2, i % 2);
     }
@@ -1147,6 +1155,11 @@ void FirmwarePage::updateNodePhase(const QString &phase)
         state = QStringLiteral("升级完成");
     else if (phase.contains(QStringLiteral("失败")))
         state = QStringLiteral("失败");
+    const int percent = row < m_snapshot.nodes.size()
+                            ? qBound(0, m_snapshot.nodes.at(row).progressPercent, 100)
+                            : 0;
+    if (state == QStringLiteral("下载中") && percent < 100)
+        state = QStringLiteral("升级中 %1%").arg(percent);
     if (m_nodeTable != nullptr && m_nodeTable->item(row, 6) != nullptr)
         m_nodeTable->item(row, 6)->setText(state);
     if (row < m_progressStates.size() && m_progressStates.at(row) != nullptr)
@@ -1460,6 +1473,13 @@ void FirmwarePage::startFirmwareDownload()
     m_snapshot.nodes[index].progressPercent = 0;
     if (m_nodeTable != nullptr && m_nodeTable->item(index, 6) != nullptr)
         m_nodeTable->item(index, 6)->setText(QStringLiteral("等待升级"));
+    if (index < m_progressBars.size() && m_progressBars.at(index) != nullptr)
+        m_progressBars.at(index)->setValue(0);
+    if (index < m_progressPercentValues.size()
+        && m_progressPercentValues.at(index) != nullptr)
+        m_progressPercentValues.at(index)->setText(QStringLiteral("0%"));
+    if (index < m_progressStates.size() && m_progressStates.at(index) != nullptr)
+        m_progressStates.at(index)->setText(QStringLiteral("等待升级"));
     if (m_updateButton != nullptr)
         m_updateButton->setEnabled(false);
     updateSafetyLock();
@@ -1481,25 +1501,33 @@ void FirmwarePage::updateDownloadProgress(const quint8 target, const int percent
     {
         if (nodeIdFromText(m_snapshot.nodes.at(row).nodeId) != target)
             continue;
-        m_snapshot.nodes[row].progressPercent = percent;
+        const int boundedPercent = qBound(0, percent, 100);
+        m_snapshot.nodes[row].progressPercent = boundedPercent;
         if (m_nodeTable != nullptr && m_nodeTable->item(row, 6) != nullptr)
-            m_nodeTable->item(row, 6)->setText(percent >= 100 ? QStringLiteral("升级完成")
-                                                               : QStringLiteral("下载中 %1%").arg(percent));
+            m_nodeTable->item(row, 6)->setText(
+                boundedPercent >= 100 ? QStringLiteral("升级完成")
+                                      : QStringLiteral("升级中 %1%").arg(boundedPercent));
         if (row < m_progressBars.size() && m_progressBars.at(row) != nullptr)
-            m_progressBars.at(row)->setValue(percent);
+            m_progressBars.at(row)->setValue(boundedPercent);
+        if (row < m_progressPercentValues.size()
+            && m_progressPercentValues.at(row) != nullptr)
+            m_progressPercentValues.at(row)->setText(
+                QStringLiteral("%1%").arg(boundedPercent));
         if (row < m_progressStates.size() && m_progressStates.at(row) != nullptr)
         {
-            m_progressStates.at(row)->setText(percent >= 100 ? QStringLiteral("升级完成")
-                                                               : QStringLiteral("%1%").arg(percent));
+            m_progressStates.at(row)->setText(
+                boundedPercent >= 100 ? QStringLiteral("升级完成")
+                                      : QStringLiteral("升级中 %1%").arg(boundedPercent));
             m_progressStates.at(row)->setProperty("class",
-                                                  percent >= 100 ? QStringLiteral("statusGood")
-                                                                 : QStringLiteral("statusBusy"));
+                                                  boundedPercent >= 100
+                                                      ? QStringLiteral("statusGood")
+                                                      : QStringLiteral("statusBusy"));
         }
         if (m_targetNodeCombo != nullptr && m_targetNodeCombo->currentIndex() == row
             && m_stateProgress != nullptr)
         {
             m_stateProgress->setText(QStringLiteral("%1%（%2/%3 包）")
-                                         .arg(percent)
+                                         .arg(boundedPercent)
                                          .arg(sequence)
                                          .arg(totalPackets));
         }
@@ -1518,8 +1546,14 @@ void FirmwarePage::finishFirmwareDownload(const bool success, const QString &mes
         if (m_nodeTable != nullptr && m_nodeTable->item(index, 6) != nullptr)
             m_nodeTable->item(index, 6)->setText(success ? QStringLiteral("升级完成")
                                                          : QStringLiteral("失败"));
-        if (!success && index < m_progressStates.size() && m_progressStates.at(index) != nullptr)
-            m_progressStates.at(index)->setText(QStringLiteral("失败"));
+        if (success && index < m_progressBars.size() && m_progressBars.at(index) != nullptr)
+            m_progressBars.at(index)->setValue(100);
+        if (success && index < m_progressPercentValues.size()
+            && m_progressPercentValues.at(index) != nullptr)
+            m_progressPercentValues.at(index)->setText(QStringLiteral("100%"));
+        if (index < m_progressStates.size() && m_progressStates.at(index) != nullptr)
+            m_progressStates.at(index)->setText(success ? QStringLiteral("升级完成")
+                                                        : QStringLiteral("失败"));
     }
     if (m_updateButton != nullptr)
         m_updateButton->setEnabled(true);
