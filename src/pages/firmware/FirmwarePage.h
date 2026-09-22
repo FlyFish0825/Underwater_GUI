@@ -67,6 +67,9 @@ class FirmwarePage final : public QWidget
     void selectNode(int index);
     void selectTableRow(int row, int column);
     void setUpgradeMode(int mode);
+    void updateSafetyLock();
+    void updateNodePhase(const QString &phase);
+    bool confirmDangerousOperation(BootCommand command, quint8 target);
     void sendCommonCommand(BootCommand command, const QString &label, quint8 byte2 = 0,
                            const QByteArray &params = QByteArray());
     void showCommandCenter();
@@ -107,6 +110,7 @@ class FirmwarePage final : public QWidget
     QFrame *m_multiModePanel = nullptr;
     QFrame *m_protocolModePanel = nullptr;
     QLabel *m_demoBanner = nullptr;
+    QLabel *m_fileValidation = nullptr;
     QTableWidget *m_nodeTable = nullptr;
     QComboBox *m_serialDeviceCombo = nullptr;
     QComboBox *m_transferModeCombo = nullptr;
@@ -120,6 +124,7 @@ class FirmwarePage final : public QWidget
     QPointer<BootloaderCommandDialog> m_commandDialog;
     QStringList m_runtimeLog;
     QString m_firmwarePath;
+    bool m_firmwareValid = false;
     QTimer *m_heartbeatWatchdog = nullptr;
     QTimer *m_deviceScanTimer = nullptr;
     QTimer *m_bootProbeTimer = nullptr;

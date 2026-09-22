@@ -26,10 +26,12 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLineEdit>
 #include <QLocale>
 #include <QMenu>
 #include <QMimeData>
+#include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -49,6 +51,8 @@
 
 namespace
 {
+
+constexpr qint64 kAppPartitionSize = 106 * 1024;
 
 bool isSupportedFirmwarePath(const QString &path)
 {
@@ -450,6 +454,9 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     m_description = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
     m_description->setWordWrap(true);
     info->addWidget(m_description, 5, 1);
+    m_fileValidation = makeLabel(QStringLiteral("请选择 BIN 固件"), QStringLiteral("statusIdle"));
+    m_fileValidation->setWordWrap(true);
+    info->addWidget(m_fileValidation, 6, 0, 1, 2);
     auto *fileDetails = new QWidget;
     fileDetails->setObjectName(QStringLiteral("firmwareFileDetails"));
     fileDetails->setStyleSheet(QStringLiteral("QWidget#firmwareFileDetails { background: white; }"));
@@ -553,7 +560,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     connectionRow->addWidget(m_serialDeviceCombo, 1);
     auto *refreshSerial = makeButton(QStringLiteral("刷新设备"), QStringLiteral("softButton"));
     connectionRow->addWidget(refreshSerial);
-    m_serialConnectButton = makeButton(QStringLiteral("接管串口"), QStringLiteral("primaryButton"));
+    m_serialConnectButton = makeButton(QStringLiteral("进入实机模式"), QStringLiteral("primaryButton"));
     connectionRow->addWidget(m_serialConnectButton);
     connectionRow->addWidget(makeLabel(QStringLiteral("升级总线"), QStringLiteral("mutedLabel")));
     m_transferModeCombo = new QComboBox;
@@ -842,6 +849,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             {
                 if (m_stateProgress != nullptr)
                     m_stateProgress->setText(phase);
+                updateNodePhase(phase);
             });
     connect(m_downloadController, &BootloaderDownloadController::progressChanged, this,
             &FirmwarePage::updateDownloadProgress);
@@ -864,9 +872,12 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             {
                 m_heartbeatCount = 0;
                 m_heartbeatWatchdog->start();
-                m_serialConnectButton->setText(QStringLiteral("断开串口"));
+                m_serialConnectButton->setText(QStringLiteral("退出实机模式"));
                 m_serialStatus->setText(
                     connectionStatusText(true, QStringLiteral("已接管 %1 · 等待下位机心跳").arg(port)));
+                if (m_demoBanner != nullptr)
+                    m_demoBanner->setText(QStringLiteral("实机模式 · CAN 控制命令已启用"));
+                updateSafetyLock();
                 logRequest(QStringLiteral("已打开 %1").arg(port));
             });
     connect(m_communication, &BootloaderCommunicationService::closed, this,
@@ -874,9 +885,10 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             {
                 if (m_heartbeatWatchdog != nullptr)
                     m_heartbeatWatchdog->stop();
-                m_serialConnectButton->setText(QStringLiteral("接管串口"));
+                m_serialConnectButton->setText(QStringLiteral("进入实机模式"));
                 m_serialStatus->setText(connectionStatusText(false, QStringLiteral("未连接 · VID_0483 PID_5740")));
                 logRequest(QStringLiteral("串口已断开"));
+                updateSafetyLock();
             });
     connect(m_communication, &BootloaderCommunicationService::errorOccurred, this,
             [this](const QString &message)
@@ -1033,8 +1045,87 @@ void FirmwarePage::setUpgradeMode(const int mode)
             m_updateButton->setText(QStringLiteral("开始安全升级"));
         }
         m_updateButton->setVisible(m_upgradeMode != 2);
-        m_updateButton->setEnabled(m_upgradeMode == 0);
     }
+    updateSafetyLock();
+}
+
+void FirmwarePage::updateSafetyLock()
+{
+    if (m_updateButton == nullptr)
+        return;
+    const int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
+    const bool connected = m_communication != nullptr && m_communication->isOpen();
+    const bool nodeOnline = index >= 0 && index < m_snapshot.nodes.size()
+                            && m_snapshot.nodes.at(index).online;
+    const bool versionValid = m_stateBootloader != nullptr
+                              && m_stateBootloader->text().startsWith(QLatin1Char('v'));
+    const bool idle = m_downloadController == nullptr || !m_downloadController->isRunning();
+    const bool enabled = m_upgradeMode == 0 && connected && m_firmwareValid && nodeOnline
+                         && versionValid && idle;
+    m_updateButton->setEnabled(enabled);
+
+    QStringList missing;
+    if (!connected)
+        missing.append(QStringLiteral("CAN 未连接"));
+    if (!m_firmwareValid)
+        missing.append(QStringLiteral("固件未通过安全检查"));
+    if (!nodeOnline)
+        missing.append(QStringLiteral("节点离线"));
+    if (!versionValid)
+        missing.append(QStringLiteral("版本未读取"));
+    if (!idle)
+        missing.append(QStringLiteral("升级任务进行中"));
+    if (m_upgradeMode == 1)
+    {
+        missing.clear();
+        missing.append(QStringLiteral("自治协调器尚未接入，仅允许配置角色与策略"));
+    }
+    m_updateButton->setToolTip(enabled ? QStringLiteral("安全条件已满足，可开始升级")
+                                       : missing.join(QStringLiteral("；")));
+}
+
+void FirmwarePage::updateNodePhase(const QString &phase)
+{
+    const int row = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
+    if (row < 0 || row >= m_snapshot.nodes.size())
+        return;
+    QString state = QStringLiteral("检测中");
+    if (phase.contains(QStringLiteral("擦除")))
+        state = QStringLiteral("擦除中");
+    else if (phase.contains(QStringLiteral("发送")) || phase.contains(QStringLiteral("写入")))
+        state = QStringLiteral("下载中");
+    else if (phase.contains(QStringLiteral("校验")))
+        state = QStringLiteral("校验中");
+    else if (phase.contains(QStringLiteral("Trial"), Qt::CaseInsensitive)
+             || phase.contains(QStringLiteral("试运行")))
+        state = QStringLiteral("试运行");
+    else if (phase.contains(QStringLiteral("完成")))
+        state = QStringLiteral("升级完成");
+    else if (phase.contains(QStringLiteral("失败")))
+        state = QStringLiteral("失败");
+    if (m_nodeTable != nullptr && m_nodeTable->item(row, 5) != nullptr)
+        m_nodeTable->item(row, 5)->setText(state);
+    if (row < m_progressStates.size() && m_progressStates.at(row) != nullptr)
+        m_progressStates.at(row)->setText(state);
+}
+
+bool FirmwarePage::confirmDangerousOperation(const BootCommand command, const quint8 target)
+{
+    QString expected;
+    if (command == BootCommand::Erase)
+        expected = QStringLiteral("ERASE");
+    else if (command == BootCommand::Reset)
+        expected = QStringLiteral("RESET NODE%1").arg(target);
+    else if (command == BootCommand::ReleaseGuard)
+        expected = QStringLiteral("RELEASE GUARD");
+    else
+        return true;
+
+    bool accepted = false;
+    const QString input = QInputDialog::getText(window(), QStringLiteral("确认危险操作"),
+                                                QStringLiteral("请输入 %1 以继续：").arg(expected),
+                                                QLineEdit::Normal, QString(), &accepted);
+    return accepted && input.trimmed().compare(expected, Qt::CaseInsensitive) == 0;
 }
 
 QWidget *FirmwarePage::connectionBar() const
@@ -1052,8 +1143,12 @@ void FirmwarePage::setSnapshot(const FirmwareSnapshot &snapshot)
     m_snapshot = snapshot;
     // 演示快照没有真实文件路径；真正拖入/选择文件后由 m_firmwarePath 覆盖。
     if (m_snapshot.fileName.isEmpty())
+    {
         m_firmwarePath.clear();
+        m_firmwareValid = false;
+    }
     refreshView();
+    updateSafetyLock();
 }
 
 void FirmwarePage::browseFirmwareFile()
@@ -1067,6 +1162,7 @@ void FirmwarePage::browseFirmwareFile()
 
 bool FirmwarePage::loadFirmwareFile(const QString &path)
 {
+    m_firmwareValid = false;
     const QFileInfo fileInfo(path);
     if (!fileInfo.exists() || !fileInfo.isFile() || !fileInfo.isReadable())
     {
@@ -1087,16 +1183,11 @@ bool FirmwarePage::loadFirmwareFile(const QString &path)
         return false;
     }
 
-    QCryptographicHash hash(QCryptographicHash::Sha256);
-    while (!file.atEnd())
+    const QByteArray image = file.readAll();
+    if (file.error() != QFile::NoError)
     {
-        const QByteArray chunk = file.read(1024 * 1024);
-        if (chunk.isEmpty() && !file.atEnd())
-        {
-            logRequest(QStringLiteral("错误：读取固件失败：%1").arg(file.errorString()));
-            return false;
-        }
-        hash.addData(chunk);
+        logRequest(QStringLiteral("错误：读取固件失败：%1").arg(file.errorString()));
+        return false;
     }
     file.close();
 
@@ -1104,20 +1195,43 @@ bool FirmwarePage::loadFirmwareFile(const QString &path)
     m_snapshot.fileName = fileInfo.fileName();
     m_snapshot.fileVersion = firmwareVersionFromName(fileInfo.completeBaseName());
     m_snapshot.fileSize = humanFileSize(fileInfo.size());
-    m_snapshot.checksum = shortSha256(hash.result());
-    m_snapshot.fileDescription = QStringLiteral("已载入本地固件，可用于正式 Bootloader 下载。\n"
-                                                 "Legacy 流程支持 .bin；正式下载全程使用 Classic CAN（1 Mbit/s）。\n"
-                                                 "路径：%1")
-                                     .arg(m_firmwarePath);
+    m_snapshot.checksum = QStringLiteral("%1")
+                              .arg(BootloaderProtocol::crc32Mpeg2(image), 8, 16, QLatin1Char('0'))
+                              .toUpper();
+    const bool isBin = fileInfo.suffix().compare(QStringLiteral("bin"), Qt::CaseInsensitive) == 0;
+    m_firmwareValid = isBin && !image.isEmpty() && image.size() <= kAppPartitionSize;
+    QString validationText;
+    if (!isBin)
+        validationText = QStringLiteral("错误：正式升级只接受 BIN 固件");
+    else if (image.isEmpty())
+        validationText = QStringLiteral("错误：固件文件为空");
+    else if (image.size() > kAppPartitionSize)
+        validationText = QStringLiteral("错误：固件超过 APP 分区（%1 / 106 KiB）")
+                             .arg(humanFileSize(image.size()));
+    else
+        validationText = QStringLiteral("固件合法 · APP 分区 · 可开始安全升级");
+    m_snapshot.fileDescription = QStringLiteral("路径：%1").arg(m_firmwarePath);
     refreshView();
+    if (m_fileValidation != nullptr)
+    {
+        m_fileValidation->setText(validationText);
+        m_fileValidation->setProperty("class", m_firmwareValid ? QStringLiteral("statusGood")
+                                                               : QStringLiteral("statusDanger"));
+        m_fileValidation->style()->unpolish(m_fileValidation);
+        m_fileValidation->style()->polish(m_fileValidation);
+    }
     if (m_dropTitle != nullptr)
         m_dropTitle->setText(QStringLiteral("已加载：%1").arg(m_snapshot.fileName));
     if (m_dropHint != nullptr)
         m_dropHint->setText(QStringLiteral("拖入其他文件可替换 · %1").arg(m_snapshot.fileVersion));
-    logRequest(QStringLiteral("已载入固件：%1 · %2 · SHA-256 %3")
-                   .arg(m_snapshot.fileName, m_snapshot.fileSize, m_snapshot.checksum));
+    logRequest(QStringLiteral("已载入固件：%1 · %2 · CRC32 %3 · %4")
+                   .arg(m_snapshot.fileName, m_snapshot.fileSize, m_snapshot.checksum,
+                        validationText));
+    if (!m_firmwareValid)
+        logRequest(validationText);
     emit firmwareFileSelected(FirmwareFileRequest{m_firmwarePath});
-    return true;
+    updateSafetyLock();
+    return m_firmwareValid;
 }
 
 void FirmwarePage::refreshView()
@@ -1186,6 +1300,7 @@ void FirmwarePage::selectNode(int index)
     m_stateStatus->setText(QStringLiteral("--"));
     m_stateError->setText(QStringLiteral("--"));
     m_stateProgress->setText(QStringLiteral("--"));
+    updateSafetyLock();
 }
 
 void FirmwarePage::selectTableRow(int row, int column)
@@ -1223,6 +1338,11 @@ void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, 
         return;
     }
     const quint8 target = nodeIdFromText(m_snapshot.nodes.at(index).nodeId);
+    if (!confirmDangerousOperation(command, target))
+    {
+        logRequest(QStringLiteral("已取消危险操作：%1").arg(label));
+        return;
+    }
     if (m_bootloader->sendHostCommand(target, command, byte2, params))
     {
         const QString raw = BootloaderProtocol::encodeHostControl(target, command, byte2, params)
@@ -1253,6 +1373,14 @@ void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, 
 
 void FirmwarePage::startFirmwareDownload()
 {
+    updateSafetyLock();
+    if (m_updateButton == nullptr || !m_updateButton->isEnabled())
+    {
+        logRequest(QStringLiteral("安全锁未解除：%1")
+                       .arg(m_updateButton == nullptr ? QStringLiteral("升级入口不可用")
+                                                      : m_updateButton->toolTip()));
+        return;
+    }
     if (m_downloadController == nullptr || m_communication == nullptr
         || !m_communication->isOpen())
     {
@@ -1287,6 +1415,7 @@ void FirmwarePage::startFirmwareDownload()
         m_nodeTable->item(index, 5)->setText(QStringLiteral("准备下载"));
     if (m_updateButton != nullptr)
         m_updateButton->setEnabled(false);
+    updateSafetyLock();
     logRequest(QStringLiteral("已启动 Node %1 的正式 Bootloader 下载 · 数据面：%2")
                    .arg(target)
                    .arg(canFd ? QStringLiteral("CAN FD+BRS") : QStringLiteral("Classic CAN")));
@@ -1349,6 +1478,8 @@ void FirmwarePage::finishFirmwareDownload(const bool success, const QString &mes
         m_updateButton->setEnabled(true);
     if (m_stateProgress != nullptr)
         m_stateProgress->setText(message);
+    updateNodePhase(success ? QStringLiteral("升级完成") : QStringLiteral("失败"));
+    updateSafetyLock();
 }
 
 void FirmwarePage::showCommandCenter()
@@ -1393,6 +1524,11 @@ void FirmwarePage::showCommandCenter()
                 // 手动输入了 Byte2=0x00，也强制改为 Trial Jump。
                 if (command == BootCommand::JumpApp)
                     byte2 = 0x01U;
+                if (!confirmDangerousOperation(command, target))
+                {
+                    logRequest(QStringLiteral("已取消危险操作：%1").arg(bootCommandName(command)));
+                    return;
+                }
                 if (m_bootloader != nullptr && m_communication != nullptr && m_communication->isOpen()
                     && m_bootloader->sendHostCommand(target, command, byte2, params))
                 {
@@ -1419,6 +1555,11 @@ void FirmwarePage::showCommandCenter()
     connect(m_commandDialog, &BootloaderCommandDialog::peerCommandRequested, this,
             [this](quint8 target, BootCommand command, quint8 source, quint16 session, quint16 value)
             {
+                if (!confirmDangerousOperation(command, target))
+                {
+                    logRequest(QStringLiteral("已取消危险操作：%1").arg(bootCommandName(command)));
+                    return;
+                }
                 if (m_bootloader != nullptr && m_communication != nullptr && m_communication->isOpen()
                     && m_bootloader->sendPeerCommand(target, command, source, session, value))
                 {
@@ -1465,10 +1606,15 @@ void FirmwarePage::handleBootResponse(const BootResponse &response)
                 else
                     m_stateError->setText(QStringLiteral("无"));
                 if (response.command == BootCommand::GetVersion && response.data.size() >= 3)
+                {
                     m_stateBootloader->setText(QStringLiteral("v%1.%2.%3")
                                                    .arg(static_cast<quint8>(response.data.at(0)))
                                                    .arg(static_cast<quint8>(response.data.at(1)))
                                                    .arg(static_cast<quint8>(response.data.at(2))));
+                    m_snapshot.nodes[row].currentVersion = m_stateBootloader->text();
+                    if (m_nodeTable != nullptr && m_nodeTable->item(row, 2) != nullptr)
+                        m_nodeTable->item(row, 2)->setText(m_stateBootloader->text());
+                }
                 else if (response.command == BootCommand::GetInfo && response.data.size() >= 4)
                 {
                     m_stateApp->setText(static_cast<quint8>(response.data.at(2)) ? QStringLiteral("Valid")
@@ -1489,6 +1635,7 @@ void FirmwarePage::handleBootResponse(const BootResponse &response)
                     m_stateProgress->setText(QStringLiteral("%1 %").arg(static_cast<quint8>(response.data.at(2))));
                 }
             }
+            updateSafetyLock();
             break;
         }
     }
@@ -1651,6 +1798,12 @@ void FirmwarePage::toggleSerialConnection()
         logRequest(QStringLiteral("请先刷新并选择 VID_0483 PID_5740 设备"));
         return;
     }
+    const QMessageBox::StandardButton answer = QMessageBox::question(
+        window(), QStringLiteral("进入实机模式"),
+        QStringLiteral("进入实机模式后将允许发送 CAN 控制命令。\n请确认设备、总线和急停条件均已检查。"),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes)
+        return;
     m_communication->open(m_serialDevices.at(index));
 }
 
