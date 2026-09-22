@@ -565,10 +565,6 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     m_serialDeviceCombo = new QComboBox;
     m_serialDeviceCombo->setMinimumWidth(250);
     connectionRow->addWidget(m_serialDeviceCombo, 1);
-    auto *refreshSerial = makeButton(QStringLiteral("刷新设备"), QStringLiteral("softButton"));
-    connectionRow->addWidget(refreshSerial);
-    m_serialConnectButton = makeButton(QStringLiteral("进入实机模式"), QStringLiteral("primaryButton"));
-    connectionRow->addWidget(m_serialConnectButton);
     connectionRow->addWidget(makeLabel(QStringLiteral("升级总线"), QStringLiteral("mutedLabel")));
     m_transferModeCombo = new QComboBox;
     m_transferModeCombo->setToolTip(
@@ -577,7 +573,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     m_transferModeCombo->setCurrentIndex(0);
     m_transferModeCombo->setMinimumWidth(150);
     connectionRow->addWidget(m_transferModeCombo);
-    m_serialStatus = makeLabel(connectionStatusText(false, QStringLiteral("未连接 · VID_0483 PID_5740")),
+    m_serialStatus = makeLabel(connectionStatusText(
+                                   false, QStringLiteral("后台扫描中 · VID_0483 PID_5740")),
                                QStringLiteral("mutedLabel"));
     m_serialStatus->setTextFormat(Qt::RichText);
     connectionRow->addWidget(m_serialStatus, 1);
@@ -881,15 +878,11 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     connect(m_guardNodeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this]() { updateNodeRoles(); });
     setUpgradeMode(0);
-    connect(refreshSerial, &QPushButton::clicked, this, &FirmwarePage::refreshSerialDevices);
-    connect(m_serialConnectButton, &QPushButton::clicked, this,
-            &FirmwarePage::toggleSerialConnection);
     connect(m_communication, &BootloaderCommunicationService::opened, this,
             [this](const QString &port)
             {
                 m_heartbeatCount = 0;
                 m_heartbeatWatchdog->start();
-                m_serialConnectButton->setText(QStringLiteral("退出实机模式"));
                 m_serialStatus->setText(
                     connectionStatusText(true, QStringLiteral("已接管 %1 · 等待下位机心跳").arg(port)));
                 if (m_demoBanner != nullptr)
@@ -902,8 +895,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             {
                 if (m_heartbeatWatchdog != nullptr)
                     m_heartbeatWatchdog->stop();
-                m_serialConnectButton->setText(QStringLiteral("进入实机模式"));
-                m_serialStatus->setText(connectionStatusText(false, QStringLiteral("未连接 · VID_0483 PID_5740")));
+                m_serialStatus->setText(connectionStatusText(
+                    false, QStringLiteral("连接已断开 · 后台扫描并自动重连")));
                 for (int row = 0; row < m_snapshot.nodes.size(); ++row)
                 {
                     m_snapshot.nodes[row].online = false;
@@ -1908,9 +1901,10 @@ void FirmwarePage::refreshSerialDevices()
     if (m_serialDevices.isEmpty())
     {
         m_serialDeviceCombo->addItem(QStringLiteral("未发现 VID_0483 PID_5740 设备"));
-        m_serialStatus->setText(connectionStatusText(false, QStringLiteral("未发现 Lamost USB CDC 虚拟串口")));
+        m_serialStatus->setText(connectionStatusText(
+            false, QStringLiteral("后台扫描中 · 未发现 Lamost USB CDC 虚拟串口")));
         if (devicesChanged)
-            logRequest(QStringLiteral("刷新设备：未发现 VID_0483 PID_5740"));
+            logRequest(QStringLiteral("后台扫描：未发现 VID_0483 PID_5740"));
     }
     else
     {
@@ -1918,7 +1912,7 @@ void FirmwarePage::refreshSerialDevices()
             connectionStatusText(false, QStringLiteral("发现 %1 个匹配设备，正在自动连接")
                                             .arg(m_serialDevices.size())));
         if (devicesChanged)
-            logRequest(QStringLiteral("刷新设备：发现 %1 个匹配设备").arg(m_serialDevices.size()));
+            logRequest(QStringLiteral("后台扫描：发现 %1 个匹配设备").arg(m_serialDevices.size()));
         if (m_communication != nullptr && !m_communication->isOpen())
         {
             m_serialStatus->setText(connectionStatusText(
@@ -1926,24 +1920,6 @@ void FirmwarePage::refreshSerialDevices()
             m_communication->open(m_serialDevices.first());
         }
     }
-}
-
-void FirmwarePage::toggleSerialConnection()
-{
-    if (m_communication == nullptr)
-        return;
-    if (m_communication->isOpen())
-    {
-        m_communication->close();
-        return;
-    }
-    const int index = m_serialDeviceCombo == nullptr ? -1 : m_serialDeviceCombo->currentIndex();
-    if (index < 0 || index >= m_serialDevices.size())
-    {
-        logRequest(QStringLiteral("请先刷新并选择 VID_0483 PID_5740 设备"));
-        return;
-    }
-    m_communication->open(m_serialDevices.at(index));
 }
 
 bool FirmwarePage::matchesRuntimeLogFilter(const QString &message) const
