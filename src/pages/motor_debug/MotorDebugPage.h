@@ -57,7 +57,6 @@ class MotorDebugPage final : public QWidget
     void restoreCurveWindow(QWidget *window);
     void sendSpeedControl(bool runCommand, bool enabled);
     void refreshView();
-    void logRequest(const QString &message);
 
     MotorDebugSnapshot m_snapshot;
     QVector<DebugSeries> m_availableSeries;
@@ -82,7 +81,6 @@ class MotorDebugPage final : public QWidget
     QSpinBox *m_speedInput = nullptr;
     QPushButton *m_runButton = nullptr;
     QTimer *m_speedDispatchTimer = nullptr;
-    QLabel *m_requestLog = nullptr;
     QPoint m_curveDragStartGlobal;
     QPoint m_curveDragOffset;
     QWidget *m_curveDragWindow = nullptr;

@@ -251,7 +251,30 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                                       QStringLiteral("多窗口曲线观察、转速控制与参数调节。"),
                                       QStringLiteral("实时节点反馈"));
     pageHeader->setObjectName(QStringLiteral("motorDebugPageHeader"));
-    root->addWidget(pageHeader);
+
+    auto *captureCard = new CardWidget(QStringLiteral("采集与分析"), IconKind::File);
+    captureCard->contentLayout()->setContentsMargins(10, 6, 10, 6);
+    auto *captureLayout = new QHBoxLayout;
+    auto *sampleRate = new AppComboBox;
+    sampleRate->addItems(
+        {QStringLiteral("1 kHz"), QStringLiteral("5 kHz"), QStringLiteral("10 kHz")});
+    auto *duration = new AppComboBox;
+    duration->addItems({QStringLiteral("10 s"), QStringLiteral("30 s"), QStringLiteral("60 s")});
+    captureLayout->addWidget(makeMetricLabel(QStringLiteral("采样率")));
+    captureLayout->addWidget(sampleRate);
+    captureLayout->addWidget(makeMetricLabel(QStringLiteral("时长")));
+    captureLayout->addWidget(duration);
+    captureLayout->addStretch();
+    auto *capture = makeButton(QStringLiteral("立即采集"), QStringLiteral("softButton"));
+    captureLayout->addWidget(capture);
+    captureCard->contentLayout()->addLayout(captureLayout);
+
+    auto *pageTopLayout = new QHBoxLayout;
+    pageTopLayout->setContentsMargins(0, 0, 0, 0);
+    pageTopLayout->setSpacing(10);
+    pageTopLayout->addWidget(pageHeader, 0, Qt::AlignTop);
+    pageTopLayout->addWidget(captureCard, 1, Qt::AlignTop);
+    root->addLayout(pageTopLayout);
 
     auto *curveCard = new CardWidget(QStringLiteral("实时曲线工作区"), IconKind::Waveform);
     m_curveCard = curveCard;
@@ -368,10 +391,6 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                                                  : QStringLiteral("调参模式"));
             });
 
-    auto *rightSplitter = new QSplitter(Qt::Vertical);
-    rightSplitter->setObjectName(QStringLiteral("motorDebugControlSplitter"));
-    rightSplitter->setChildrenCollapsible(false);
-    rightSplitter->setHandleWidth(8);
     auto *speedCard = new CardWidget(QStringLiteral("基础转速控制"), IconKind::Settings);
     speedCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
     speedCard->contentLayout()->setSpacing(6);
@@ -415,43 +434,13 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     speedButtons->addWidget(applySpeed);
     speedButtons->addWidget(m_runButton);
     speedCard->contentLayout()->addLayout(speedButtons);
-    rightSplitter->addWidget(speedCard);
-
-    auto *captureCard = new CardWidget(QStringLiteral("采集与分析"), IconKind::File);
-    captureCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
-    auto *captureLayout = new QHBoxLayout;
-    auto *sampleRate = new AppComboBox;
-    sampleRate->addItems(
-        {QStringLiteral("1 kHz"), QStringLiteral("5 kHz"), QStringLiteral("10 kHz")});
-    auto *duration = new AppComboBox;
-    duration->addItems({QStringLiteral("10 s"), QStringLiteral("30 s"), QStringLiteral("60 s")});
-    captureLayout->addWidget(makeMetricLabel(QStringLiteral("采样率")));
-    captureLayout->addWidget(sampleRate);
-    captureLayout->addWidget(makeMetricLabel(QStringLiteral("时长")));
-    captureLayout->addWidget(duration);
-    captureLayout->addStretch();
-    auto *capture = makeButton(QStringLiteral("立即采集"), QStringLiteral("softButton"));
-    captureLayout->addWidget(capture);
-    captureCard->contentLayout()->addLayout(captureLayout);
-    rightSplitter->addWidget(captureCard);
-    rightSplitter->setStretchFactor(0, 1);
-    rightSplitter->setStretchFactor(1, 1);
-    rightSplitter->setSizes({130, 130});
-
-    auto *logCard = new CardWidget(QStringLiteral("最近数据 / 日志"), IconKind::List);
-    logCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
-    m_requestLog = makeLabel(QStringLiteral("暂无请求。"), QStringLiteral("mutedLabel"));
-    m_requestLog->setWordWrap(true);
-    logCard->contentLayout()->addWidget(m_requestLog);
-    rightSplitter->addWidget(logCard);
-    rightSplitter->setStretchFactor(2, 1);
 
     auto *controlSplitter = new QSplitter(Qt::Horizontal);
     controlSplitter->setObjectName(QStringLiteral("motorDebugControlAreaSplitter"));
     controlSplitter->setChildrenCollapsible(false);
     controlSplitter->setHandleWidth(8);
     controlSplitter->addWidget(statusCard);
-    controlSplitter->addWidget(rightSplitter);
+    controlSplitter->addWidget(speedCard);
     controlSplitter->setStretchFactor(0, 1);
     controlSplitter->setStretchFactor(1, 1);
     controlSplitter->setSizes({430, 520});
@@ -500,7 +489,6 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                     return;
                 m_snapshot.selectedMotorId = QStringLiteral("thruster%1").arg(index + 1);
                 m_snapshot.selectedMotorLabel = m_motorSelect->currentText();
-                logRequest(QStringLiteral("已选择 %1").arg(m_motorSelect->currentText()));
             });
     connect(m_speedSlider, &QSlider::valueChanged, this,
             [this](const int value)
@@ -561,7 +549,6 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                 request.observerGain = m_observerGain->value();
                 request.currentLimitA = m_currentLimit->value();
                 emit parameterWriteRequested(request);
-                logRequest(QStringLiteral("请求写入参数：%1").arg(request.motorId));
             });
     connect(reset, &QPushButton::clicked, this,
             [this]()
@@ -570,7 +557,6 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                 m_ki->setValue(0.05);
                 m_observerGain->setValue(0.10);
                 m_currentLimit->setValue(20.0);
-                logRequest(QStringLiteral("已恢复默认参数"));
             });
     connect(capture, &QPushButton::clicked, this,
             [this, sampleRate, duration]()
@@ -580,9 +566,6 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                 request.sampleRateHz = sampleRate->currentText().split(' ').first().toInt();
                 request.durationSeconds = duration->currentText().split(' ').first().toInt();
                 emit captureRequested(request);
-                logRequest(QStringLiteral("请求采集：%1 Hz / %2 秒")
-                               .arg(request.sampleRateHz)
-                               .arg(request.durationSeconds));
             });
 
     MotorDebugSnapshot initialSnapshot;
@@ -658,10 +641,7 @@ void MotorDebugPage::addPresetWindow(const QStringList &seriesIds)
 void MotorDebugPage::removeCurveWindow(QWidget *window)
 {
     if (m_curveWindows.size() <= 1)
-    {
-        logRequest(QStringLiteral("至少保留一个曲线窗口"));
         return;
-    }
     if (m_curveDialogs.contains(window))
         restoreCurveWindow(window);
     m_curveGrid->removeWidget(window);
@@ -747,7 +727,6 @@ void MotorDebugPage::autoFitAllCurves()
 {
     for (QWidget *widget : m_curveWindows)
         static_cast<CurveWindowWidget *>(widget)->fitToData();
-    logRequest(QStringLiteral("已自动适配全部曲线比例"));
 }
 
 void MotorDebugPage::detachCurveWindow(QWidget *window, const QPoint &globalPos,
@@ -808,9 +787,6 @@ void MotorDebugPage::sendSpeedControl(const bool runCommand, const bool enabled)
     request.enabled = enabled;
     request.runCommand = runCommand;
     emit speedControlRequested(request);
-    logRequest(runCommand ? (enabled ? QStringLiteral("请求启动电机")
-                                     : QStringLiteral("请求停止电机"))
-                          : QStringLiteral("下发目标转速：%1 rpm").arg(request.targetRpm));
 }
 
 bool MotorDebugPage::eventFilter(QObject *watched, QEvent *event)
@@ -915,14 +891,6 @@ void MotorDebugPage::refreshView()
         available ? QStringLiteral("%1 °C").arg(m_snapshot.temperatureC, 0, 'f', 3)
                   : QStringLiteral("--"));
     m_faultValue->setText(available ? m_snapshot.fault : QStringLiteral("离线"));
-    if (!m_snapshot.recentLog.isEmpty() && m_requestLog != nullptr)
-        m_requestLog->setText(m_snapshot.recentLog.join(QStringLiteral("\n")));
-}
-
-void MotorDebugPage::logRequest(const QString &message)
-{
-    if (m_requestLog != nullptr)
-        m_requestLog->setText(QStringLiteral("最近请求：%1 · 设备离线时不下发").arg(message));
 }
 
 } // namespace rov
