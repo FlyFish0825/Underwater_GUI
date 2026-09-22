@@ -8,7 +8,8 @@
 
 1. `agent/agent.md`：唯一的当前任务执行规则、分层边界、日志策略和验收要求；
 2. `agent/ROV上位机通信协议与分层架构规范_v1.0.md`：Transport、Protocol、Service/Data、UI 的协议分层细节；
-3. `agent/示意图/`：Dashboard、电机调试、Bootloader、机械臂和双目视觉参考图。
+3. `docs/开发说明.md`：工程边界、页面约定、依赖、工具链和验证方法；
+4. `agent/示意图/`：Dashboard、电机调试、Bootloader、机械臂和双目视觉参考图。
 
 不得跳过上述文档自行建立另一套工程结构、主题、页面接口或通信方式。任务卡与规范冲突时，必须先报告冲突和影响范围。
 
@@ -116,13 +117,10 @@ VSCode/clangd 使用 `build/gui/compile_commands.json`。需要手工确认跳�
 
 多人协作请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。所有开发者和 Agent 都必须先阅读 `agent/` 目录中的统一提示词及通信分层规范，从 `main` 创建功能分支，通过 Pull Request 合并；不要直接向 `main` 推送。
 
-## 相关文档
+## 专题文档
 
-- `docs/framework.md`：工程框架和分层边界；
 - `docs/architecture.md`：按总览、局部、细节组织的项目架构图；
 - `docs/plotting.md`：高速多窗口曲线组件调研、许可证和接入方案；
-- `docs/dependencies.md`：实际使用的第三方库、版本、许可证和构建范围；
 - `docs/research-recording.md`：科研数据记录、导出格式、性能策略和传感器接入边界；
-- `docs/ui-contract.md`：页面输入快照与输出请求契约；
-- `docs/toolchain.md`：精确工具链和构建记录；
+- `docs/开发说明.md`：日常开发、依赖、工具链和验证的统一入口；
 - `agent/`：后续开发必须遵守的统一 Agent 提示词、通信规范和参考图。

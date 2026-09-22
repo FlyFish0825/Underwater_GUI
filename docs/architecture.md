@@ -217,7 +217,7 @@ Bootloader 的收发和下载阶段日志保留；普通高频电机反馈不进
 ## 阅读入口
 
 - 协议字段和 CRC：`agent/ROV上位机通信协议与分层架构规范_v1.0.md`；
-- 当前工具链和构建：`docs/toolchain.md`；
+- 当前工具链和构建：`docs/开发说明.md`；
 - 曲线组件选择和窗口设计：`docs/plotting.md`；
 - 科研记录格式和完整性：`docs/research-recording.md`；
 - Agent 开发边界：`agent/agent.md`。

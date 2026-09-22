@@ -102,4 +102,4 @@ QwtPlot / QwtPlotCurve
 
 - Qwt：保留 `Qwt License, Version 1.0`，并在发布说明中声明使用 Qwt；
 - QCustomPlot：若改用，保留 GPL-3.0 文本并评估整个应用的 GPL 兼容性；
-- Qt 本身和现有项目许可证按 `docs/toolchain.md` 与仓库许可证执行。
+- Qt、本工程依赖和许可证按 `docs/开发说明.md` 与仓库许可证执行。

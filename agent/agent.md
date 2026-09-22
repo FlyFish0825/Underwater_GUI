@@ -2,7 +2,7 @@
 
 本文件是本项目唯一的 Agent 开发规范。通信协议细节以同目录的
 `ROV上位机通信协议与分层架构规范_v1.0.md` 和源码为准；工具链版本以
-`docs/toolchain.md` 和 `.vscode/` 为准。旧的集成版提示词已经合并到本文，
+`docs/开发说明.md` 和 `.vscode/` 为准。旧的集成版提示词已经合并到本文，
 不再维护第二份重复规范。
 
 ## 1. 当前工程事实
@@ -49,9 +49,8 @@ CAN ID、DLC、字节偏移或 CRC。
 ## 2. 开始任务前必须读取
 
 1. 本文件；
-2. `README.md`、`docs/toolchain.md`、`docs/ui-contract.md`；
-3. `docs/dependencies.md`，确认实际使用的第三方库和许可证边界；
-4. 与任务相关的 `docs/bootloader/README.md`、`docs/framework.md` 或页面 README；
+2. `README.md`、`docs/开发说明.md`；
+3. 与任务相关的 `docs/bootloader/README.md` 或页面 README；
 5. `agent/ROV上位机通信协议与分层架构规范_v1.0.md`；
 6. 当前源码、CMake 文件、公共主题、参考图和任务卡。
 
