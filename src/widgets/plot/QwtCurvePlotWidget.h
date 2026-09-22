@@ -2,11 +2,13 @@
 
 #include "contracts/motor_debug/MotorDebugContract.h"
 
+#include <QPoint>
+#include <QSize>
 #include <QVector>
 #include <QWidget>
 
 class QwtPlotCurve;
-class QwtPlotPanner;
+class QwtPlotMagnifier;
 class QwtPlotZoomer;
 
 namespace rov
@@ -27,13 +29,24 @@ class QwtCurvePlotWidget final : public QWidget
 
     void setSeries(const QVector<DebugSeries> &series, bool autoFit);
     void fitToData();
+    void setDisplayWindowSeconds(double seconds);
+    void setFollowLatest(bool follow);
+
+  protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
   private:
     class Plot;
     Plot *m_plot = nullptr;
     QwtPlotZoomer *m_zoomer = nullptr;
-    QwtPlotPanner *m_panner = nullptr;
+    QwtPlotMagnifier *m_magnifier = nullptr;
+    QwtPlotMagnifier *m_xMagnifier = nullptr;
+    QwtPlotMagnifier *m_yMagnifier = nullptr;
     QVector<QwtPlotCurve *> m_curves;
+    double m_displayWindowSeconds = 10.0;
+    bool m_followLatest = true;
+
+    void applyDisplayWindow();
 };
 
 } // namespace rov

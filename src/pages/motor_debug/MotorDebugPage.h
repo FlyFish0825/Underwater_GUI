@@ -2,18 +2,25 @@
 
 #include "contracts/motor_debug/MotorDebugContract.h"
 
+#include <QPoint>
 #include <QStringList>
 #include <QWidget>
 
 class QLabel;
 class QComboBox;
+class QCheckBox;
+class QDialog;
 class QDoubleSpinBox;
 class QGridLayout;
 class QPushButton;
 class QSlider;
+class QSplitter;
+class QVBoxLayout;
 
 namespace rov
 {
+
+class CardWidget;
 
 class MotorDebugPage final : public QWidget
 {
@@ -21,6 +28,7 @@ class MotorDebugPage final : public QWidget
 
   public:
     explicit MotorDebugPage(QWidget *parent = nullptr);
+    ~MotorDebugPage() override;
 
     void setSnapshot(const MotorDebugSnapshot &snapshot);
     quint8 selectedNodeId() const;
@@ -29,6 +37,10 @@ class MotorDebugPage final : public QWidget
     void parameterWriteRequested(const MotorParameterRequest &request);
     void captureRequested(const MotorCaptureRequest &request);
     void speedControlRequested(const MotorSpeedControlRequest &request);
+    void historyLimitChanged(int limit);
+
+  protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
   private:
     void addCurveWindow(int seriesIndex = 0);
@@ -37,6 +49,8 @@ class MotorDebugPage final : public QWidget
     void relayoutCurveWindows();
     void refreshCurveWindows();
     void autoFitAllCurves();
+    void toggleCurveWindow();
+    void restoreCurveWindow();
     void refreshView();
     void logRequest(const QString &message);
 
@@ -44,6 +58,11 @@ class MotorDebugPage final : public QWidget
     QVector<DebugSeries> m_availableSeries;
     QVector<QWidget *> m_curveWindows;
     QGridLayout *m_curveGrid = nullptr;
+    CardWidget *m_curveCard = nullptr;
+    QWidget *m_curveCardHost = nullptr;
+    QVBoxLayout *m_curveCardHostLayout = nullptr;
+    QSplitter *m_curveSplitter = nullptr;
+    QDialog *m_curveDialog = nullptr;
     QComboBox *m_motorSelect = nullptr;
     QLabel *m_stateValue = nullptr;
     QLabel *m_rpmValue = nullptr;
@@ -59,6 +78,12 @@ class MotorDebugPage final : public QWidget
     QLabel *m_speedValue = nullptr;
     QPushButton *m_runButton = nullptr;
     QLabel *m_requestLog = nullptr;
+    QWidget *m_curveDragHandle = nullptr;
+    QPoint m_curveDragStartGlobal;
+    QPoint m_curveDragOffset;
+    bool m_curveDragActive = false;
+    double m_displayWindowSeconds = 10.0;
+    bool m_followLatest = true;
     bool m_running = false;
 };
 

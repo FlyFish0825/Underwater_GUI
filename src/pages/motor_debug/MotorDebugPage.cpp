@@ -5,14 +5,21 @@
 #include "ui/common/UiPrimitives.h"
 #include "widgets/plot/QwtCurvePlotWidget.h"
 
+#include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QDoubleSpinBox>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMoveEvent>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QSlider>
+#include <QSplitter>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <utility>
@@ -20,16 +27,52 @@
 namespace
 {
 
+class CurveFloatingDialog final : public QDialog
+{
+  public:
+    explicit CurveFloatingDialog(QWidget *owner)
+        : QDialog(owner, Qt::Tool | Qt::WindowTitleHint | Qt::WindowMinMaxButtonsHint
+                             | Qt::WindowCloseButtonHint)
+    {
+        setAttribute(Qt::WA_NativeWindow, true);
+        setAttribute(Qt::WA_QuitOnClose, false);
+        setWindowModality(Qt::NonModal);
+        m_resumePainting.setSingleShot(true);
+        m_resumePainting.setInterval(90);
+        connect(&m_resumePainting, &QTimer::timeout, this,
+                [this]()
+                {
+                    setUpdatesEnabled(true);
+                    update();
+                });
+    }
+
+  protected:
+    void moveEvent(QMoveEvent *event) override
+    {
+        QDialog::moveEvent(event);
+        if (!isVisible())
+            return;
+        // Native Windows movement is smoother when the dense live plot is
+        // painted once after the move instead of at every intermediate point.
+        setUpdatesEnabled(false);
+        m_resumePainting.start();
+    }
+
+  private:
+    QTimer m_resumePainting;
+};
+
 class CurveWindowWidget final : public QFrame
 {
   public:
     explicit CurveWindowWidget(const int number, QWidget *parent = nullptr) : QFrame(parent)
     {
         setObjectName(QStringLiteral("card"));
-        setMinimumHeight(278);
+        setMinimumHeight(228);
         auto *root = new QVBoxLayout(this);
-        root->setContentsMargins(10, 8, 10, 8);
-        root->setSpacing(6);
+        root->setContentsMargins(8, 6, 8, 6);
+        root->setSpacing(5);
 
         auto *toolbar = new QHBoxLayout;
         toolbar->setSpacing(6);
@@ -102,9 +145,13 @@ class CurveWindowWidget final : public QFrame
         if (index < 0 || index >= m_catalog.size())
             return;
         m_selectedIndex = index;
-        if (!m_selectedIndexes.contains(index))
-            m_selectedIndexes.append(index);
-        refreshPlot(false);
+        // A combo-box selection represents the variable shown by this
+        // window. Preset groups can still create multi-series windows, but
+        // choosing a variable here must replace the previous selection.
+        m_selectedIndexes = {index};
+        // A new variable has a different natural range; fit it once. Future
+        // snapshot refreshes keep the user's manually adjusted view.
+        refreshPlot(true);
     }
 
     void updateSeries(const QVector<rov::DebugSeries> &series)
@@ -116,6 +163,16 @@ class CurveWindowWidget final : public QFrame
     void fitToData()
     {
         m_plot->fitToData();
+    }
+
+    void setDisplayWindowSeconds(const double seconds)
+    {
+        m_plot->setDisplayWindowSeconds(seconds);
+    }
+
+    void setFollowLatest(const bool follow)
+    {
+        m_plot->setFollowLatest(follow);
     }
 
   private:
@@ -177,15 +234,18 @@ namespace rov
 MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
 {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(10, 8, 10, 8);
-    root->setSpacing(8);
-    root->addWidget(makePageHeader(QStringLiteral("电机调试"),
-                                   QStringLiteral("多窗口曲线观察、转速控制与参数调节。"),
-                                   QStringLiteral("演示 · 预览数据")));
+    root->setContentsMargins(10, 6, 10, 6);
+    root->setSpacing(6);
+    auto *pageHeader = makePageHeader(QStringLiteral("电机调试"),
+                                      QStringLiteral("多窗口曲线观察、转速控制与参数调节。"),
+                                      QStringLiteral("演示 · 预览数据"));
+    pageHeader->setObjectName(QStringLiteral("motorDebugPageHeader"));
+    root->addWidget(pageHeader);
 
     auto *curveCard = new CardWidget(QStringLiteral("实时曲线工作区"), IconKind::Waveform);
-    curveCard->contentLayout()->setContentsMargins(10, 8, 10, 10);
-    curveCard->contentLayout()->setSpacing(7);
+    m_curveCard = curveCard;
+    curveCard->contentLayout()->setContentsMargins(10, 6, 10, 8);
+    curveCard->contentLayout()->setSpacing(5);
     auto *curveToolbar = new QHBoxLayout;
     curveToolbar->setSpacing(7);
     curveToolbar->addWidget(
@@ -199,6 +259,26 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     curveToolbar->addWidget(addSpeed);
     auto *addCurve = makeButton(QStringLiteral("＋ 自定义窗口"), QStringLiteral("primaryButton"));
     curveToolbar->addWidget(addCurve);
+    curveToolbar->addWidget(makeLabel(QStringLiteral("缓冲区"), QStringLiteral("mutedLabel")));
+    auto *historyLimit = new AppComboBox;
+    historyLimit->setMinimumWidth(88);
+    historyLimit->addItem(QStringLiteral("250 点"), 250);
+    historyLimit->addItem(QStringLiteral("500 点"), 500);
+    historyLimit->addItem(QStringLiteral("1000 点"), 1000);
+    historyLimit->addItem(QStringLiteral("2000 点"), 2000);
+    historyLimit->addItem(QStringLiteral("5000 点"), 5000);
+    historyLimit->setCurrentIndex(1);
+    curveToolbar->addWidget(historyLimit);
+    m_curveCard->titleLabel()->setToolTip(QStringLiteral("拖动此标题栏可将实时曲线工作区浮动到另一块屏幕"));
+    m_curveCard->titleLabel()->installEventFilter(this);
+    m_curveCard->titleLabel()->setCursor(Qt::OpenHandCursor);
+    m_curveDragHandle = m_curveCard->findChild<QFrame *>(QStringLiteral("cardHeader"));
+    if (m_curveDragHandle != nullptr)
+    {
+        m_curveDragHandle->installEventFilter(this);
+        m_curveDragHandle->setCursor(Qt::OpenHandCursor);
+        m_curveDragHandle->setMouseTracking(true);
+    }
     curveCard->contentLayout()->addLayout(curveToolbar);
     m_curveGrid = new QGridLayout;
     m_curveGrid->setContentsMargins(0, 0, 0, 0);
@@ -207,10 +287,26 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     m_curveGrid->setColumnStretch(0, 1);
     m_curveGrid->setColumnStretch(1, 1);
     curveCard->contentLayout()->addLayout(m_curveGrid);
-    root->addWidget(curveCard, 1);
 
-    auto *lowerRow = new QHBoxLayout;
-    lowerRow->setSpacing(8);
+    auto *curveFooter = new QHBoxLayout;
+    curveFooter->setContentsMargins(0, 2, 0, 0);
+    curveFooter->setSpacing(7);
+    curveFooter->addStretch();
+    curveFooter->addWidget(makeLabel(QStringLiteral("实时显示窗口"), QStringLiteral("mutedLabel")));
+    auto *displayWindow = new AppComboBox;
+    displayWindow->setMinimumWidth(88);
+    displayWindow->addItem(QStringLiteral("5 秒"), 5.0);
+    displayWindow->addItem(QStringLiteral("10 秒"), 10.0);
+    displayWindow->addItem(QStringLiteral("30 秒"), 30.0);
+    displayWindow->addItem(QStringLiteral("60 秒"), 60.0);
+    displayWindow->addItem(QStringLiteral("120 秒"), 120.0);
+    displayWindow->setCurrentIndex(1);
+    curveFooter->addWidget(displayWindow);
+    auto *followLatest = new QCheckBox(QStringLiteral("跟随最新数据"));
+    followLatest->setChecked(true);
+    followLatest->setToolTip(QStringLiteral("开启后曲线会持续跟随最新数据；关闭后可停留查看当前视图"));
+    curveFooter->addWidget(followLatest);
+    curveCard->contentLayout()->addLayout(curveFooter);
 
     auto *statusCard = new CardWidget(QStringLiteral("电机状态与参数"), IconKind::Motor);
     statusCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
@@ -264,10 +360,11 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     auto *reset = makeButton(QStringLiteral("恢复默认"), QStringLiteral("softButton"));
     statusLayout->addWidget(reset, 6, 2, 1, 2);
     statusCard->contentLayout()->addLayout(statusLayout);
-    lowerRow->addWidget(statusCard, 5);
 
-    auto *rightColumn = new QVBoxLayout;
-    rightColumn->setSpacing(8);
+    auto *rightSplitter = new QSplitter(Qt::Vertical);
+    rightSplitter->setObjectName(QStringLiteral("motorDebugControlSplitter"));
+    rightSplitter->setChildrenCollapsible(false);
+    rightSplitter->setHandleWidth(8);
     auto *speedCard = new CardWidget(QStringLiteral("基础转速控制"), IconKind::Settings);
     speedCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
     speedCard->contentLayout()->setSpacing(6);
@@ -296,7 +393,7 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     speedButtons->addWidget(applySpeed);
     speedButtons->addWidget(m_runButton);
     speedCard->contentLayout()->addLayout(speedButtons);
-    rightColumn->addWidget(speedCard);
+    rightSplitter->addWidget(speedCard);
 
     auto *captureCard = new CardWidget(QStringLiteral("采集与分析"), IconKind::File);
     captureCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
@@ -314,16 +411,37 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     auto *capture = makeButton(QStringLiteral("立即采集"), QStringLiteral("softButton"));
     captureLayout->addWidget(capture);
     captureCard->contentLayout()->addLayout(captureLayout);
-    rightColumn->addWidget(captureCard);
+    rightSplitter->addWidget(captureCard);
+    rightSplitter->setStretchFactor(0, 1);
+    rightSplitter->setStretchFactor(1, 1);
+    rightSplitter->setSizes({130, 130});
 
-    auto *logCard = new CardWidget(QStringLiteral("最近数据 / 日志"), IconKind::List);
-    logCard->contentLayout()->setContentsMargins(10, 8, 10, 8);
-    m_requestLog = makeLabel(QStringLiteral("暂无请求。"), QStringLiteral("mutedLabel"));
-    m_requestLog->setWordWrap(true);
-    logCard->contentLayout()->addWidget(m_requestLog);
-    rightColumn->addWidget(logCard, 1);
-    lowerRow->addLayout(rightColumn, 6);
-    root->addLayout(lowerRow);
+    auto *controlSplitter = new QSplitter(Qt::Horizontal);
+    controlSplitter->setObjectName(QStringLiteral("motorDebugControlAreaSplitter"));
+    controlSplitter->setChildrenCollapsible(false);
+    controlSplitter->setHandleWidth(8);
+    controlSplitter->addWidget(statusCard);
+    controlSplitter->addWidget(rightSplitter);
+    controlSplitter->setStretchFactor(0, 1);
+    controlSplitter->setStretchFactor(1, 1);
+    controlSplitter->setSizes({430, 520});
+    controlSplitter->setMinimumHeight(220);
+
+    m_curveCardHost = new QWidget;
+    m_curveCardHostLayout = new QVBoxLayout(m_curveCardHost);
+    m_curveCardHostLayout->setContentsMargins(0, 0, 0, 0);
+    m_curveCardHostLayout->addWidget(curveCard);
+
+    m_curveSplitter = new QSplitter(Qt::Vertical);
+    m_curveSplitter->setObjectName(QStringLiteral("motorDebugVerticalSplitter"));
+    m_curveSplitter->setChildrenCollapsible(false);
+    m_curveSplitter->setHandleWidth(8);
+    m_curveSplitter->addWidget(m_curveCardHost);
+    m_curveSplitter->addWidget(controlSplitter);
+    m_curveSplitter->setStretchFactor(0, 1);
+    m_curveSplitter->setStretchFactor(1, 0);
+    m_curveSplitter->setSizes({500, 250});
+    root->addWidget(m_curveSplitter, 1);
 
     connect(addCurve, &QPushButton::clicked, this, [this]() { addCurveWindow(); });
     connect(addIabc, &QPushButton::clicked, this,
@@ -339,6 +457,29 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
             addPresetWindow({QStringLiteral("speed_rpm"), QStringLiteral("pll_electrical_speed")});
         });
     connect(fitAll, &QPushButton::clicked, this, &MotorDebugPage::autoFitAllCurves);
+    connect(displayWindow, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this, displayWindow](const int index)
+            {
+                if (index < 0)
+                    return;
+                m_displayWindowSeconds = displayWindow->itemData(index).toDouble();
+                for (QWidget *widget : m_curveWindows)
+                    static_cast<CurveWindowWidget *>(widget)->setDisplayWindowSeconds(
+                        m_displayWindowSeconds);
+            });
+    connect(followLatest, &QCheckBox::toggled, this,
+            [this](const bool follow)
+            {
+                m_followLatest = follow;
+                for (QWidget *widget : m_curveWindows)
+                    static_cast<CurveWindowWidget *>(widget)->setFollowLatest(m_followLatest);
+            });
+    connect(historyLimit, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this, historyLimit](const int index)
+            {
+                if (index >= 0)
+                    emit historyLimitChanged(historyLimit->itemData(index).toInt());
+            });
     connect(m_motorSelect, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](const int index)
             {
@@ -417,6 +558,19 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     addCurveWindow(0);
 }
 
+MotorDebugPage::~MotorDebugPage()
+{
+    if (m_curveDialog == nullptr)
+        return;
+
+    QObject::disconnect(m_curveDialog, nullptr, this, nullptr);
+    m_curveDialog->layout()->removeWidget(m_curveCard);
+    m_curveCard->setParent(m_curveCardHost);
+    m_curveCardHostLayout->addWidget(m_curveCard);
+    delete m_curveDialog;
+    m_curveDialog = nullptr;
+}
+
 void MotorDebugPage::setSnapshot(const MotorDebugSnapshot &snapshot)
 {
     m_snapshot = snapshot;
@@ -443,6 +597,8 @@ void MotorDebugPage::addCurveWindow(const int seriesIndex)
     if (indexes.isEmpty() && seriesIndex >= 0 && seriesIndex < m_availableSeries.size())
         indexes.append(seriesIndex);
     curve->setSeriesCatalog(m_availableSeries, indexes);
+    curve->setDisplayWindowSeconds(m_displayWindowSeconds);
+    curve->setFollowLatest(m_followLatest);
     m_curveWindows.append(curve);
     connect(curve->variableCombo(), qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this, curve](const int index) { curve->selectSeries(index); });
@@ -455,6 +611,8 @@ void MotorDebugPage::addPresetWindow(const QStringList &seriesIds)
 {
     auto *curve = new CurveWindowWidget(m_curveWindows.size() + 1);
     curve->setSeriesCatalog(m_availableSeries, indexesForIds(m_availableSeries, seriesIds));
+    curve->setDisplayWindowSeconds(m_displayWindowSeconds);
+    curve->setFollowLatest(m_followLatest);
     m_curveWindows.append(curve);
     connect(curve->variableCombo(), qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this, curve](const int index) { curve->selectSeries(index); });
@@ -498,6 +656,130 @@ void MotorDebugPage::autoFitAllCurves()
     for (QWidget *widget : m_curveWindows)
         static_cast<CurveWindowWidget *>(widget)->fitToData();
     logRequest(QStringLiteral("已自动适配全部曲线比例"));
+}
+
+void MotorDebugPage::toggleCurveWindow()
+{
+    if (m_curveDialog != nullptr)
+    {
+        restoreCurveWindow();
+        return;
+    }
+
+    QWidget *owner = QApplication::activeWindow();
+    auto *dialog = new CurveFloatingDialog(owner);
+    dialog->setWindowTitle(QStringLiteral("实时曲线工作区"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    dialog->setModal(false);
+    dialog->resize(1100, 700);
+    auto *layout = new QVBoxLayout(dialog);
+    layout->setContentsMargins(8, 8, 8, 8);
+    auto *windowBar = new QHBoxLayout;
+    windowBar->setSpacing(6);
+    windowBar->addWidget(rov::makeLabel(QStringLiteral("实时曲线工作区"),
+                                        QStringLiteral("bodyValue")));
+    windowBar->addStretch();
+    auto *fullScreen = rov::makeButton(QStringLiteral("全屏显示"), QStringLiteral("softButton"),
+                                       dialog);
+    windowBar->addWidget(fullScreen);
+    layout->addLayout(windowBar);
+    m_curveCardHostLayout->removeWidget(m_curveCard);
+    m_curveCard->setParent(dialog);
+    layout->addWidget(m_curveCard);
+    m_curveDialog = dialog;
+    connect(fullScreen, &QPushButton::clicked, dialog,
+            [dialog, fullScreen]()
+            {
+                if (dialog->isFullScreen())
+                {
+                    dialog->showNormal();
+                    fullScreen->setText(QStringLiteral("全屏显示"));
+                }
+                else
+                {
+                    dialog->showFullScreen();
+                    fullScreen->setText(QStringLiteral("退出全屏"));
+                }
+            });
+    connect(dialog, &QDialog::finished, this,
+            [this](const int) { restoreCurveWindow(); });
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
+void MotorDebugPage::restoreCurveWindow()
+{
+    if (m_curveDialog == nullptr)
+        return;
+
+    auto *dialog = m_curveDialog;
+    m_curveDialog = nullptr;
+    dialog->layout()->removeWidget(m_curveCard);
+    m_curveCard->setParent(m_curveCardHost);
+    m_curveCardHostLayout->addWidget(m_curveCard);
+    dialog->hide();
+    dialog->deleteLater();
+    m_curveSplitter->setSizes({500, 250});
+}
+
+bool MotorDebugPage::eventFilter(QObject *watched, QEvent *event)
+{
+    if (m_curveCard != nullptr &&
+        (watched == m_curveCard->titleLabel() || watched == m_curveDragHandle))
+    {
+        if (event->type() == QEvent::MouseButtonPress)
+        {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->button() == Qt::LeftButton)
+            {
+                m_curveDragStartGlobal = mouse->globalPos();
+                m_curveDragOffset = m_curveDialog != nullptr
+                                         ? m_curveDragStartGlobal
+                                               - m_curveDialog->frameGeometry().topLeft()
+                                         : QPoint(80, 24);
+                m_curveDragActive = false;
+                if (m_curveDragHandle != nullptr)
+                    m_curveDragHandle->setCursor(Qt::ClosedHandCursor);
+                m_curveCard->titleLabel()->setCursor(Qt::ClosedHandCursor);
+                return true;
+            }
+        }
+        else if (event->type() == QEvent::MouseMove)
+        {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if ((mouse->buttons() & Qt::LeftButton) != 0)
+            {
+                const bool pastThreshold =
+                    (mouse->globalPos() - m_curveDragStartGlobal).manhattanLength() >=
+                    QApplication::startDragDistance();
+                if (!m_curveDragActive && pastThreshold)
+                {
+                    if (m_curveDialog == nullptr)
+                    {
+                        toggleCurveWindow();
+                        if (m_curveDialog != nullptr)
+                            m_curveDialog->move(mouse->globalPos() - m_curveDragOffset);
+                    }
+                    m_curveDragActive = m_curveDialog != nullptr;
+                }
+                if (m_curveDragActive && m_curveDialog != nullptr)
+                {
+                    m_curveDialog->move(mouse->globalPos() - m_curveDragOffset);
+                    return true;
+                }
+            }
+        }
+        else if (event->type() == QEvent::MouseButtonRelease)
+        {
+            m_curveDragActive = false;
+            if (m_curveDragHandle != nullptr)
+                m_curveDragHandle->setCursor(Qt::OpenHandCursor);
+            m_curveCard->titleLabel()->setCursor(Qt::OpenHandCursor);
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void MotorDebugPage::refreshView()

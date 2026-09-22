@@ -167,16 +167,16 @@ CardWidget::CardWidget(const QString &title, const IconKind icon, QWidget *paren
 
     auto *header = new QFrame(this);
     header->setObjectName(QStringLiteral("cardHeader"));
-    auto *headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(14, 10, 14, 9);
-    headerLayout->setSpacing(8);
+    m_headerLayout = new QHBoxLayout(header);
+    m_headerLayout->setContentsMargins(14, 10, 14, 9);
+    m_headerLayout->setSpacing(8);
     auto *iconWidget = new IconWidget(icon, header);
     iconWidget->setFixedSize(20, 20);
-    headerLayout->addWidget(iconWidget);
+    m_headerLayout->addWidget(iconWidget);
     m_titleLabel = new QLabel(title, header);
     m_titleLabel->setObjectName(QStringLiteral("cardTitle"));
-    headerLayout->addWidget(m_titleLabel);
-    headerLayout->addStretch();
+    m_headerLayout->addWidget(m_titleLabel);
+    m_headerLayout->addStretch();
     outer->addWidget(header);
 
     auto *content = new QWidget(this);
@@ -189,6 +189,11 @@ CardWidget::CardWidget(const QString &title, const IconKind icon, QWidget *paren
 QVBoxLayout *CardWidget::contentLayout() const
 {
     return m_contentLayout;
+}
+
+QHBoxLayout *CardWidget::headerLayout() const
+{
+    return m_headerLayout;
 }
 
 QLabel *CardWidget::titleLabel() const

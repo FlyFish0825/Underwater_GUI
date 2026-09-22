@@ -72,11 +72,27 @@ CSV 和元数据文件，队列满时不阻塞通信线程，而是累计明确�
 使用项目已经锁定的工具链：
 
 ```powershell
-. 'F:\file\BaiduSyncdisk\Project\Underwater_GUI\toolchain\env\activate.ps1'
-& 'F:\file\BaiduSyncdisk\Project\Underwater_GUI\toolchain\env\build-gui.ps1'
+. .\toolchain\env\activate.ps1
+& .\toolchain\env\build-gui.ps1
 ```
 
 编译结果位于 `build/gui/rov_ui.exe`。Qt 和 MinGW 运行库部署使用匹配当前工具链的 `deploy-qt.ps1`。
+
+### 构建前置依赖
+
+发起人的最新主线引入了 Fluent-Qt 公共控件库。该依赖目前没有作为 Git 子模块提交，且 `third_party/` 被 `.gitignore` 忽略，因此每台新机器首次构建前都需要单独放置到固定目录。当前已验证的版本为 `50fc9836d3ac55093833ec5da9bb9d66c9401ee5`：
+
+```powershell
+New-Item -ItemType Directory -Force .\third_party | Out-Null
+git clone https://github.com/calvinhxx/Fluent-QT.git .\third_party\Fluent-Qt
+git -C .\third_party\Fluent-Qt checkout 50fc9836d3ac55093833ec5da9bb9d66c9401ee5
+
+Test-Path .\third_party\Fluent-Qt\CMakeLists.txt
+. .\toolchain\env\activate.ps1
+& .\toolchain\env\build-gui.ps1
+```
+
+如果目录已存在，不要重复 `clone`；只需执行 `git -C .\third_party\Fluent-Qt checkout 50fc9836d3ac55093833ec5da9bb9d66c9401ee5`。若 CMake 报 `Missing Fluent-Qt dependency`，说明依赖目录不存在或目录层级不对，期望路径必须是 `third_party/Fluent-Qt/CMakeLists.txt`。Fluent-Qt 只参与本地编译，不能把它的源码提交进本仓库。
 
 为了生成可重复的界面截图：
 
@@ -163,6 +179,7 @@ USB CDC 的接收入口先按帧头、长度和帧尾分离协议族，再交给
 - `docs/plotting.md`：高速多窗口曲线组件调研、许可证和接入方案；
 - `docs/dependencies.md`：实际使用的第三方库、版本、许可证和构建范围；
 - `docs/research-recording.md`：科研数据记录、导出格式、性能策略和传感器接入边界；
+- `docs/communication/README.md`：通信链路教程、协议族和固件升级数据流；
 - `docs/ui-contract.md`：页面输入快照与输出请求契约；
 - `docs/toolchain.md`：精确工具链和构建记录；
 - `agent/`：后续开发必须遵守的统一 Agent 提示词、通信规范和参考图。

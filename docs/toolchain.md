@@ -22,19 +22,49 @@ Build-time utilities installed on Windows are 7-Zip and Strawberry Perl.
 Qwt is statically linked into the plotting page; there is no separate Qwt DLL
 to deploy. The project uses Qt Core, Gui, Widgets, Concurrent, PrintSupport and
 Qt's Windows platform plugin.
+## Required source dependency
+
+`CMakeLists.txt` expects Fluent-Qt at:
+
+```text
+third_party/Fluent-Qt/CMakeLists.txt
+```
+
+The upstream repository currently does not include a `.gitmodules` entry for
+this dependency, and `third_party/` is ignored so its source must be installed
+locally. The reproducible revision currently used by this project is:
+
+```text
+Repository: https://github.com/calvinhxx/Fluent-QT.git
+Revision:  50fc9836d3ac55093833ec5da9bb9d66c9401ee5
+```
+
+From the repository root, install it once with PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force .\third_party | Out-Null
+git clone https://github.com/calvinhxx/Fluent-QT.git .\third_party\Fluent-Qt
+git -C .\third_party\Fluent-Qt checkout 50fc9836d3ac55093833ec5da9bb9d66c9401ee5
+Test-Path .\third_party\Fluent-Qt\CMakeLists.txt
+```
+
+The expected final check is `True`. Do not run `git add third_party`: the
+dependency is intentionally local and ignored. If it is absent, CMake stops
+with an explicit message before configuration; this is a dependency setup
+failure, not a Qt or compiler failure.
 
 ## Activation
 
 PowerShell:
 
 ```powershell
-. 'F:\file\BaiduSyncdisk\Project\Underwater_GUI\toolchain\env\activate.ps1'
+. .\toolchain\env\activate.ps1
 ```
 
 Command Prompt:
 
 ```bat
-call F:\file\BaiduSyncdisk\Project\Underwater_GUI\toolchain\env\activate.cmd
+call .\toolchain\env\activate.cmd
 ```
 
 The activation scripts put the fixed tools before the machine's existing
@@ -81,3 +111,17 @@ Explorer without first activating a shell.
 The deployment smoke test completed successfully: the test executable starts
 with a clean PATH and `-platform offscreen`, and the default Windows platform
 also initializes successfully.
+
+## Project build
+
+After installing Fluent-Qt and activating the locked toolchain, run from the
+repository root:
+
+```powershell
+& .\toolchain\env\build-gui.ps1
+```
+
+The executable is written to `build/gui/rov_ui.exe`. For a clean deployment,
+run `toolchain/env/deploy-qt.ps1` after the build. If configuration fails at
+`add_subdirectory` with a missing `third_party/Fluent-Qt`, return to the
+dependency installation step above before investigating source compilation.

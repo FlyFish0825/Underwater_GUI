@@ -55,6 +55,7 @@ class MainWindow final : public QMainWindow
     ResearchDataRecorder *m_recorder = nullptr;
     QVector<QVector<double>> m_debugSeriesHistory;
     quint8 m_debugHistoryNodeId = 0;
+    int m_debugHistoryLimit = 500;
     quint16 m_motorControlSequence = 0;
     bool m_screenSignalConnected = false;
 };

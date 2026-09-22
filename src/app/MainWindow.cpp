@@ -227,12 +227,12 @@ rov::DashboardSnapshot dashboardFromMotorFleet(const rov::ObserverMotorFleetSnap
     return snapshot;
 }
 
-void appendHistory(QVector<double> &history, const double value)
+void appendHistory(QVector<double> &history, const double value, const int limit)
 {
     history.append(value);
-    constexpr int kHistoryLimit = 500;
-    if (history.size() > kHistoryLimit)
-        history.remove(0, history.size() - kHistoryLimit);
+    const int boundedLimit = qMax(1, limit);
+    if (history.size() > boundedLimit)
+        history.remove(0, history.size() - boundedLimit);
 }
 
 void addLiveSeries(QVector<rov::DebugSeries> &series, const QString &id, const QString &name,
@@ -249,7 +249,8 @@ void addLiveSeries(QVector<rov::DebugSeries> &series, const QString &id, const Q
 }
 
 rov::MotorDebugSnapshot motorDebugFromNode(const rov::ObserverMotorNodeSnapshot &node,
-                                           QVector<QVector<double>> &history, quint8 &historyNodeId)
+                                           QVector<QVector<double>> &history, quint8 &historyNodeId,
+                                           const int historyLimit)
 {
     rov::MotorDebugSnapshot snapshot;
     snapshot.demo.isDemo = false;
@@ -273,9 +274,9 @@ rov::MotorDebugSnapshot motorDebugFromNode(const rov::ObserverMotorNodeSnapshot 
     }
     if (node.debugMode)
     {
-        appendHistory(history[0], node.phaseCurrentU_A);
-        appendHistory(history[1], node.phaseCurrentV_A);
-        appendHistory(history[2], node.phaseCurrentW_A);
+        appendHistory(history[0], node.phaseCurrentU_A, historyLimit);
+        appendHistory(history[1], node.phaseCurrentV_A, historyLimit);
+        appendHistory(history[2], node.phaseCurrentW_A, historyLimit);
     }
     else
     {
@@ -283,14 +284,14 @@ rov::MotorDebugSnapshot motorDebugFromNode(const rov::ObserverMotorNodeSnapshot 
         history[1].clear();
         history[2].clear();
     }
-    appendHistory(history[3], node.busVoltageV);
-    appendHistory(history[4], node.speedRpm);
+    appendHistory(history[3], node.busVoltageV, historyLimit);
+    appendHistory(history[4], node.speedRpm, historyLimit);
     if (node.debugMode)
-        appendHistory(history[5], node.pllElectricalSpeedRadPerSec);
+        appendHistory(history[5], node.pllElectricalSpeedRadPerSec, historyLimit);
     else
         history[5].clear();
     if (node.debugMode)
-        appendHistory(history[6], node.observerElectricalAngleDeg);
+        appendHistory(history[6], node.observerElectricalAngleDeg, historyLimit);
     else
         history[6].clear();
 
@@ -558,7 +559,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
                 dashboard->setSnapshot(dashboardFromMotorFleet(fleet));
                 const quint8 nodeId = motorDebug->selectedNodeId();
                 motorDebug->setSnapshot(motorDebugFromNode(
-                    m_motorData->nodeSnapshot(nodeId), m_debugSeriesHistory, m_debugHistoryNodeId));
+                    m_motorData->nodeSnapshot(nodeId), m_debugSeriesHistory, m_debugHistoryNodeId,
+                    m_debugHistoryLimit));
+            });
+    connect(motorDebug, &MotorDebugPage::historyLimitChanged, this,
+            [this](const int limit)
+            {
+                m_debugHistoryLimit = qBound(50, limit, 5000);
+                for (QVector<double> &history : m_debugSeriesHistory)
+                {
+                    if (history.size() > m_debugHistoryLimit)
+                        history.remove(0, history.size() - m_debugHistoryLimit);
+                }
             });
     // 机械臂、视觉和设置页保留原有的小屏幕等比保护。
     // 电机调试与固件升级页改由页面内部自适应，避免宽屏下整页缩小后两侧留白。

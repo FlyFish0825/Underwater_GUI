@@ -24,7 +24,14 @@ set(FLUENT_QT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(FLUENT_QT_BUILD_PYSIDE6_BINDINGS OFF CACHE BOOL "" FORCE)
 set(FLUENT_QT_BUILD_WEBASSEMBLY_SUPPORT OFF CACHE BOOL "" FORCE)
 set(FLUENT_QT_INSTALL OFF CACHE BOOL "" FORCE)
-add_subdirectory(third_party/Fluent-Qt EXCLUDE_FROM_ALL)
+set(FLUENT_QT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/Fluent-Qt")
+if(NOT EXISTS "${FLUENT_QT_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "Missing Fluent-Qt dependency. Clone calvinhxx/Fluent-QT into "
+        "third_party/Fluent-Qt and see README.md or docs/toolchain.md.")
+endif()
+add_subdirectory("${FLUENT_QT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/_deps/Fluent-Qt"
+                 EXCLUDE_FROM_ALL)
 
 add_library(rov_ui_common STATIC
     src/ui/common/AnimatedNavButton.cpp

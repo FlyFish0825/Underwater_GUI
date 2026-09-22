@@ -174,6 +174,12 @@ local_config/
 
 # 注意：不要在此处忽略 docs/、协议规范、示意图/、*.md、*.png 等项目资料。
 
+# ---------- 个人本地教程和工作笔记 ----------
+# 共享给团队的正式文档仍放在 docs/ 根目录；以下目录仅用于本机整理资料。
+/docs/communication/
+/docs/local/
+/docs/_local/
+
 
 # The existing Fluent-Qt checkout is machine-provided; Qwt is vendored with
 # its upstream COPYING and is intentionally tracked for reproducible builds.

@@ -687,11 +687,8 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     stateColumn->setSpacing(12);
 
     auto *stateCard = new CardWidget(QStringLiteral("机器人状态"), IconKind::Status);
-    auto *stateUpdateRow = new QHBoxLayout;
-    stateUpdateRow->addStretch();
     m_stateUpdate = makeLabel(QStringLiteral("更新时间：--"), QStringLiteral("mutedLabel"));
-    stateUpdateRow->addWidget(m_stateUpdate);
-    stateCard->contentLayout()->addLayout(stateUpdateRow);
+    stateCard->headerLayout()->addWidget(m_stateUpdate);
     auto *stateGrid = new QGridLayout;
     stateGrid->setSpacing(8);
     stateGrid->addWidget(metricTile(QStringLiteral("深度"), m_depthValue, QStringLiteral("--")), 0,
@@ -715,7 +712,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
         stateGrid->setColumnStretch(column, 1);
     }
     stateCard->contentLayout()->addLayout(stateGrid);
-    stateColumn->addWidget(stateCard);
+    stateColumn->addWidget(stateCard, 1);
 
     auto *controlCard = new CardWidget(QStringLiteral("六自由度手动控制"), IconKind::Action);
     auto *enableRow = new QHBoxLayout;
@@ -841,7 +838,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     m_thrustLimitValue = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
     limitRow->addWidget(m_thrustLimitValue);
     controlCard->contentLayout()->addLayout(limitRow);
-    stateColumn->addWidget(controlCard);
+    stateColumn->addWidget(controlCard, 1);
     topRow->addLayout(stateColumn, 6);
     root->addLayout(topRow, 1);
 
