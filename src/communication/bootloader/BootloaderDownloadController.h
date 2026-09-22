@@ -10,7 +10,7 @@ namespace rov
 {
 
 /**
- * @brief Legacy 单节点固件下载状态机。
+ * @brief Legacy 单节点固件下载与独立 Trial 验证状态机。
  *
  * 严格按照底层协议文档执行：ENTER_BOOT（无 ACK 等待）→ ERASE → WRITE →
  * DATA → WRITE_END → VERIFY → Trial JUMP_APP → APP ENTER_BOOT 返回验证。
@@ -29,6 +29,8 @@ class BootloaderDownloadController final : public QObject
                                           QObject *parent = nullptr);
 
     bool start(quint8 target, const QString &firmwarePath, bool canFd = false);
+    // 复用正式下载末尾的 Trial 闭环，不执行擦除、写入和校验。
+    bool startTrialValidation(quint8 target);
     void cancel();
     bool isRunning() const { return m_phase != Phase::Idle; }
     int totalPackets() const { return m_totalPackets; }
@@ -99,6 +101,7 @@ class BootloaderDownloadController final : public QObject
     BootResponse m_deferredWindowResponse;
     int m_trialEnterBootAttempts = 0;
     int m_trialProbeAttempts = 0;
+    bool m_trialOnly = false;
 };
 
 } // namespace rov

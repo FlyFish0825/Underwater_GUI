@@ -76,6 +76,7 @@ class FirmwarePage final : public QWidget
     void showCommandCenter();
     void handleBootResponse(const BootResponse &response);
     void handlePeerMessage(const PeerControlMessage &message);
+    void startTrialValidation();
     void startFirmwareDownload();
     void cancelFirmwareDownload();
     void updateDownloadProgress(quint8 target, int percent, quint16 sequence, int totalPackets);
@@ -158,6 +159,8 @@ class FirmwarePage final : public QWidget
     QVector<QLabel *> m_progressPercentValues;
     QVector<QLabel *> m_progressStates;
     QPushButton *m_updateButton = nullptr;
+    bool m_trialValidationActive = false;
+    quint8 m_trialValidationTarget = 0;
 };
 
 } // namespace rov

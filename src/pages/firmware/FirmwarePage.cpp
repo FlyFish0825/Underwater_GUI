@@ -510,10 +510,9 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     auto *more = makeButton(QStringLiteral("更多…"), QStringLiteral("softButton"));
     auto *moreMenu = new QMenu(more);
     QAction *enterBootAction = moreMenu->addAction(QStringLiteral("进入 Bootloader"));
-    QAction *trialAction = moreMenu->addAction(QStringLiteral("Trial Jump（协议调试）"));
+    QAction *trialAction = moreMenu->addAction(QStringLiteral("试运行验证"));
     QAction *resetAction = moreMenu->addAction(QStringLiteral("复位节点"));
     moreMenu->addSeparator();
-    QAction *readFlashAction = moreMenu->addAction(QStringLiteral("读取 Flash"));
     QAction *protocolAction = moreMenu->addAction(QStringLiteral("协议调试"));
     more->setMenu(moreMenu);
     commandColumn->addWidget(more);
@@ -802,10 +801,9 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             });
     connect(enterBootAction, &QAction::triggered, this,
             [this]() { sendCommonCommand(BootCommand::EnterBoot, QStringLiteral("进入 Bootloader")); });
-    connect(trialAction, &QAction::triggered, this, &FirmwarePage::showCommandCenter);
+    connect(trialAction, &QAction::triggered, this, &FirmwarePage::startTrialValidation);
     connect(resetAction, &QAction::triggered, this,
             [this]() { sendCommonCommand(BootCommand::Reset, QStringLiteral("复位节点")); });
-    connect(readFlashAction, &QAction::triggered, this, &FirmwarePage::showCommandCenter);
     connect(protocolAction, &QAction::triggered, this, &FirmwarePage::showCommandCenter);
     dropZone->setFileHandler([this](const QString &path) { loadFirmwareFile(path); });
     connect(browse, &QPushButton::clicked, this, &FirmwarePage::browseFirmwareFile);
@@ -1168,11 +1166,10 @@ void FirmwarePage::updateNodePhase(const QString &phase)
 
 bool FirmwarePage::confirmDangerousOperation(const BootCommand command, const quint8 target)
 {
+    Q_UNUSED(target)
     QString expected;
     if (command == BootCommand::Erase)
         expected = QStringLiteral("ERASE");
-    else if (command == BootCommand::Reset)
-        expected = QStringLiteral("RESET NODE%1").arg(target);
     else if (command == BootCommand::ReleaseGuard)
         expected = QStringLiteral("RELEASE GUARD");
     else
@@ -1431,6 +1428,42 @@ void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, 
         logRequest(QStringLiteral("%1：发送失败").arg(label));
 }
 
+void FirmwarePage::startTrialValidation()
+{
+    if (m_downloadController == nullptr || m_communication == nullptr
+        || !m_communication->isOpen())
+    {
+        logRequest(QStringLiteral("试运行验证失败：请先进入实机模式并连接 CAN 网关"));
+        return;
+    }
+    const int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
+    if (index < 0 || index >= m_snapshot.nodes.size())
+    {
+        logRequest(QStringLiteral("试运行验证失败：请先选择目标节点"));
+        return;
+    }
+    if (!m_snapshot.nodes.at(index).online)
+    {
+        logRequest(QStringLiteral("试运行验证失败：目标节点离线"));
+        return;
+    }
+
+    const quint8 target = nodeIdFromText(m_snapshot.nodes.at(index).nodeId);
+    m_trialValidationActive = true;
+    m_trialValidationTarget = target;
+    if (!m_downloadController->startTrialValidation(target))
+    {
+        m_trialValidationActive = false;
+        m_trialValidationTarget = 0;
+        return;
+    }
+    if (m_nodeTable != nullptr && m_nodeTable->item(index, 6) != nullptr)
+        m_nodeTable->item(index, 6)->setText(QStringLiteral("试运行"));
+    if (index < m_progressStates.size() && m_progressStates.at(index) != nullptr)
+        m_progressStates.at(index)->setText(QStringLiteral("试运行"));
+    updateSafetyLock();
+}
+
 void FirmwarePage::startFirmwareDownload()
 {
     updateSafetyLock();
@@ -1538,6 +1571,34 @@ void FirmwarePage::updateDownloadProgress(const quint8 target, const int percent
 void FirmwarePage::finishFirmwareDownload(const bool success, const QString &message)
 {
     const int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
+    if (m_trialValidationActive)
+    {
+        int trialIndex = -1;
+        for (int row = 0; row < m_snapshot.nodes.size(); ++row)
+        {
+            if (nodeIdFromText(m_snapshot.nodes.at(row).nodeId) == m_trialValidationTarget)
+            {
+                trialIndex = row;
+                break;
+            }
+        }
+        if (trialIndex >= 0)
+        {
+            const QString result = success ? QStringLiteral("Trial PASS")
+                                           : QStringLiteral("试运行失败");
+            if (m_nodeTable != nullptr && m_nodeTable->item(trialIndex, 6) != nullptr)
+                m_nodeTable->item(trialIndex, 6)->setText(result);
+            if (trialIndex < m_progressStates.size()
+                && m_progressStates.at(trialIndex) != nullptr)
+                m_progressStates.at(trialIndex)->setText(result);
+        }
+        if (m_stateProgress != nullptr)
+            m_stateProgress->setText(message);
+        m_trialValidationActive = false;
+        m_trialValidationTarget = 0;
+        updateSafetyLock();
+        return;
+    }
     if (index >= 0 && index < m_snapshot.nodes.size())
     {
         m_snapshot.nodes[index].state = success ? FirmwareState::Completed : FirmwareState::Failed;

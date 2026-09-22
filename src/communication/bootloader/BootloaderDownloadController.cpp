@@ -117,6 +117,7 @@ bool BootloaderDownloadController::start(const quint8 target, const QString &fir
         return false;
     }
     m_target = target;
+    m_trialOnly = false;
     m_canFd = canFd;
     m_firmwarePath = QFileInfo(firmwarePath).absoluteFilePath();
     m_firmware = image;
@@ -153,6 +154,34 @@ bool BootloaderDownloadController::start(const quint8 target, const QString &fir
     return true;
 }
 
+bool BootloaderDownloadController::startTrialValidation(const quint8 target)
+{
+    if (isRunning())
+    {
+        emit logMessage(QStringLiteral("已有升级或试运行任务正在进行"));
+        return false;
+    }
+    if (m_service == nullptr || target == 0)
+    {
+        emit logMessage(QStringLiteral("试运行失败：通信服务或目标节点无效"));
+        return false;
+    }
+
+    m_target = target;
+    m_trialOnly = true;
+    m_firmware.clear();
+    m_firmwarePath.clear();
+    m_crc32 = 0;
+    m_sequence = 0;
+    m_totalPackets = 0;
+    m_trialEnterBootAttempts = 0;
+    m_trialProbeAttempts = 0;
+    emit logMessage(QStringLiteral("开始 Node %1 的 APP 试运行验证；复用正式下载的 Trial 返回闭环")
+                        .arg(m_target));
+    sendTrialJump();
+    return isRunning();
+}
+
 void BootloaderDownloadController::cancel()
 {
     if (!isRunning())
@@ -166,9 +195,11 @@ void BootloaderDownloadController::cancel()
         m_service->cancelDataWindow();
         m_service->sendHostCommand(m_target, BootCommand::Abort);
     }
-    emit logMessage(QStringLiteral("已发送 ABORT，用户取消本次下载"));
+    emit logMessage(m_trialOnly ? QStringLiteral("已发送 ABORT，用户取消试运行验证")
+                                : QStringLiteral("已发送 ABORT，用户取消本次下载"));
     emit phaseChanged(QStringLiteral("已取消"));
-    emit finished(false, QStringLiteral("用户取消下载"));
+    emit finished(false, m_trialOnly ? QStringLiteral("用户取消试运行验证")
+                                     : QStringLiteral("用户取消下载"));
 }
 
 void BootloaderDownloadController::step()
@@ -416,7 +447,8 @@ void BootloaderDownloadController::sendTrialJump()
     m_phase = Phase::TrialBooting;
     m_trialEnterBootAttempts = 0;
     m_trialProbeAttempts = 0;
-    emit phaseChanged(QStringLiteral("校验通过，安全试运行 APP"));
+    emit phaseChanged(m_trialOnly ? QStringLiteral("开始安全试运行 APP")
+                                  : QStringLiteral("校验通过，安全试运行 APP"));
     // Byte2=0x01 是 Bootloader 的 Trial Jump：先将 app_valid 置为 0，
     // 开启 Bootloader IWDG，再跳入 APP。禁止使用 Byte2=0x00 的直接跳转。
     if (!sendControl(BootCommand::JumpApp, 0x01U))
@@ -630,7 +662,9 @@ void BootloaderDownloadController::handleResponse(const BootResponse &response)
             fail(QStringLiteral("Trial 已回到 Bootloader，但 APP 仍未标记为可用；看门狗保护已阻止直接启动"));
             return;
         }
-        complete(QStringLiteral("下载成功：Trial 返回验证通过，Bootloader 已标记 APP 可用；当前安全停留 Bootloader，下次复位或上电将自动启动 APP"));
+        complete(m_trialOnly
+                     ? QStringLiteral("APP 试运行验证成功：Trial 返回正常，CAN 通信正常，节点已安全返回 Bootloader")
+                     : QStringLiteral("下载成功：Trial 返回验证通过，Bootloader 已标记 APP 可用；当前安全停留 Bootloader，下次复位或上电将自动启动 APP"));
     }
 }
 
@@ -643,8 +677,11 @@ void BootloaderDownloadController::fail(const QString &message)
     m_phase = Phase::Idle;
     if (m_service != nullptr)
         m_service->cancelDataWindow();
-    emit phaseChanged(QStringLiteral("失败"));
-    emit logMessage(QStringLiteral("下载失败：%1").arg(message));
+    emit phaseChanged(m_trialOnly ? QStringLiteral("试运行失败") : QStringLiteral("失败"));
+    emit logMessage(QStringLiteral("%1：%2")
+                        .arg(m_trialOnly ? QStringLiteral("试运行失败")
+                                         : QStringLiteral("下载失败"),
+                             message));
     emit finished(false, message);
 }
 
@@ -655,9 +692,10 @@ void BootloaderDownloadController::complete(const QString &message)
     m_stepTimer.stop();
     m_responseTimer.stop();
     m_phase = Phase::Idle;
-    emit phaseChanged(QStringLiteral("完成"));
+    emit phaseChanged(m_trialOnly ? QStringLiteral("Trial PASS") : QStringLiteral("完成"));
     emit logMessage(message);
-    emit progressChanged(m_target, 100, static_cast<quint16>(m_totalPackets), m_totalPackets);
+    if (!m_trialOnly)
+        emit progressChanged(m_target, 100, static_cast<quint16>(m_totalPackets), m_totalPackets);
     emit finished(true, message);
 }
 
