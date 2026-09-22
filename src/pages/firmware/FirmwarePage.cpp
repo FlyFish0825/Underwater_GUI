@@ -15,7 +15,6 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QScrollArea>
-#include <QCryptographicHash>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFile>
@@ -168,14 +167,6 @@ QString firmwareVersionFromName(const QString &baseName)
     if (!match.hasMatch())
         return QStringLiteral("未识别");
     return QStringLiteral("v%1.%2.%3").arg(match.captured(1), match.captured(2), match.captured(3));
-}
-
-QString shortSha256(const QByteArray &digest)
-{
-    const QString hex = QString::fromLatin1(digest.toHex()).toLower();
-    if (hex.size() <= 24)
-        return hex;
-    return QStringLiteral("%1…%2").arg(hex.left(12), hex.right(12));
 }
 
 QString firmwareStateText(const rov::FirmwareState state)
@@ -695,10 +686,10 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     logCard->contentLayout()->setSpacing(2);
     auto *clearLog = makeButton(QStringLiteral("清屏"), QStringLiteral("softButton"));
     auto *history = makeButton(QStringLiteral("历史记录"), QStringLiteral("softButton"));
-    m_logRecordButton = makeButton(QStringLiteral("开始记录"), QStringLiteral("softButton"));
-    m_viewRecordedButton = makeButton(QStringLiteral("查看记录"), QStringLiteral("softButton"));
-    m_exportRecordedButton = makeButton(QStringLiteral("导出记录"), QStringLiteral("softButton"));
-    m_viewRecordedButton->setEnabled(false);
+    m_logRecordButton = makeButton(QStringLiteral("自动记录 ✓"), QStringLiteral("softButton"));
+    m_logRecordButton->setCheckable(true);
+    m_logRecordButton->setChecked(true);
+    m_exportRecordedButton = makeButton(QStringLiteral("导出日志"), QStringLiteral("softButton"));
     m_exportRecordedButton->setEnabled(false);
     // 标题栏原有的 stretch 会把这两个按钮推到右侧，与“升级日志”保持同一行。
     auto *logHeaderLayout =
@@ -709,39 +700,40 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
         logHeaderLayout->setContentsMargins(8, 4, 8, 4);
         logHeaderLayout->setSpacing(4);
         logHeaderLayout->addWidget(m_logRecordButton);
-        logHeaderLayout->addWidget(m_viewRecordedButton);
         logHeaderLayout->addWidget(m_exportRecordedButton);
         logHeaderLayout->addWidget(clearLog);
         logHeaderLayout->addWidget(history);
     }
-    for (QPushButton *button : {m_logRecordButton, m_viewRecordedButton, m_exportRecordedButton,
-                                clearLog, history})
+    for (QPushButton *button : {m_logRecordButton, m_exportRecordedButton, clearLog, history})
         button->setMaximumHeight(26);
 
     // 日志筛选只影响当前卡片的显示，不会删除、修改或过滤底层通信数据。
     auto *logFilterLayout = new QHBoxLayout;
     logFilterLayout->setContentsMargins(0, 0, 0, 0);
     logFilterLayout->setSpacing(3);
+    logFilterLayout->addWidget(makeLabel(QStringLiteral("级别"), QStringLiteral("mutedLabel")));
     m_logFilter = new QComboBox;
-    m_logFilter->addItems({QStringLiteral("全部"), QStringLiteral("升级"), QStringLiteral("接收 RX"),
-                           QStringLiteral("发送 TX"), QStringLiteral("警告"), QStringLiteral("错误"),
-                           QStringLiteral("Classic CAN"), QStringLiteral("CAN FD")});
+    m_logFilter->addItems({QStringLiteral("全部"), QStringLiteral("INFO"),
+                           QStringLiteral("WARNING"), QStringLiteral("ERROR")});
     m_logFilter->setToolTip(QStringLiteral("仅筛选日志卡片中显示的内容"));
     m_logFilter->setFixedHeight(26);
     logFilterLayout->addWidget(m_logFilter);
+    logFilterLayout->addWidget(makeLabel(QStringLiteral("节点"), QStringLiteral("mutedLabel")));
     m_logNodeFilter = new QComboBox;
-    m_logNodeFilter->addItem(QStringLiteral("全部节点"), 0);
+    m_logNodeFilter->addItem(QStringLiteral("全部"), 0);
     for (int node = 1; node <= 8; ++node)
-        m_logNodeFilter->addItem(QStringLiteral("节点 %1").arg(node), node);
+        m_logNodeFilter->addItem(QStringLiteral("Node%1").arg(node), node);
     m_logNodeFilter->setToolTip(QStringLiteral("按节点筛选显示日志"));
     m_logNodeFilter->setFixedHeight(26);
     logFilterLayout->addWidget(m_logNodeFilter);
+    logFilterLayout->addWidget(makeLabel(QStringLiteral("CAN ID"), QStringLiteral("mutedLabel")));
     m_logCanIdFilter = new QLineEdit;
-    m_logCanIdFilter->setPlaceholderText(QStringLiteral("CAN ID"));
+    m_logCanIdFilter->setPlaceholderText(QStringLiteral("全部"));
     m_logCanIdFilter->setMaximumWidth(100);
     m_logCanIdFilter->setToolTip(QStringLiteral("例如 0x501 或 501"));
     m_logCanIdFilter->setFixedHeight(26);
     logFilterLayout->addWidget(m_logCanIdFilter);
+    logFilterLayout->addWidget(makeLabel(QStringLiteral("搜索"), QStringLiteral("mutedLabel")));
     m_logSearchFilter = new QLineEdit;
     m_logSearchFilter->setPlaceholderText(QStringLiteral("搜索日志"));
     m_logSearchFilter->setMinimumWidth(120);
@@ -801,7 +793,6 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             });
     connect(history, &QPushButton::clicked, this, &FirmwarePage::showHistory);
     connect(m_logRecordButton, &QPushButton::clicked, this, &FirmwarePage::toggleLogRecording);
-    connect(m_viewRecordedButton, &QPushButton::clicked, this, &FirmwarePage::showRecordedLogs);
     connect(m_exportRecordedButton, &QPushButton::clicked, this, &FirmwarePage::exportRecordedLogs);
     const auto rerenderLog = [this]()
     {
@@ -1695,26 +1686,23 @@ void FirmwarePage::toggleLogRecording()
     if (m_logRecording)
     {
         m_logRecording = false;
-        m_logRecordButton->setText(QStringLiteral("开始记录"));
+        m_logRecordButton->setText(QStringLiteral("自动记录（已暂停）"));
         m_logRecordButton->setObjectName(QStringLiteral("softButton"));
         m_logRecordButton->style()->unpolish(m_logRecordButton);
         m_logRecordButton->style()->polish(m_logRecordButton);
         m_logRecordButton->update();
-        m_viewRecordedButton->setEnabled(!m_recordedLogs.isEmpty());
         m_exportRecordedButton->setEnabled(!m_recordedLogs.isEmpty());
-        logRequest(QStringLiteral("日志记录结束：共 %1 条").arg(m_recordedLogs.size()));
+        logRequest(QStringLiteral("自动记录已暂停：当前共 %1 条").arg(m_recordedLogs.size()));
         return;
     }
 
-    m_recordedLogs.clear();
     m_logRecording = true;
-    m_logRecordButton->setText(QStringLiteral("结束记录"));
-    m_logRecordButton->setObjectName(QStringLiteral("dangerButton"));
+    m_logRecordButton->setText(QStringLiteral("自动记录 ✓"));
+    m_logRecordButton->setObjectName(QStringLiteral("softButton"));
     m_logRecordButton->style()->unpolish(m_logRecordButton);
     m_logRecordButton->style()->polish(m_logRecordButton);
     m_logRecordButton->update();
-    m_viewRecordedButton->setEnabled(false);
-    m_exportRecordedButton->setEnabled(false);
+    m_exportRecordedButton->setEnabled(!m_recordedLogs.isEmpty());
 }
 
 void FirmwarePage::showRecordedLogs()
@@ -1771,15 +1759,10 @@ void FirmwarePage::refreshSerialDevices()
     else
     {
         m_serialStatus->setText(
-            connectionStatusText(false, QStringLiteral("发现 %1 个匹配设备，正在自动连接").arg(m_serialDevices.size())));
+            connectionStatusText(false, QStringLiteral("发现 %1 个匹配设备 · 当前为演示/离线模式")
+                                            .arg(m_serialDevices.size())));
         if (devicesChanged)
             logRequest(QStringLiteral("刷新设备：发现 %1 个匹配设备").arg(m_serialDevices.size()));
-        if (m_communication != nullptr && !m_communication->isOpen())
-        {
-            m_serialStatus->setText(connectionStatusText(
-                false, QStringLiteral("正在自动连接 %1 …").arg(m_serialDevices.first().portName)));
-            m_communication->open(m_serialDevices.first());
-        }
     }
 }
 
@@ -1811,10 +1794,6 @@ bool FirmwarePage::matchesRuntimeLogFilter(const QString &message) const
 {
     const QString filter = m_logFilter == nullptr ? QStringLiteral("全部") : m_logFilter->currentText();
     const QString upper = message.toUpper();
-    const bool isReceive = message.startsWith(QStringLiteral("RX "))
-                           || message.startsWith(QStringLiteral("Peer "))
-                           || message.contains(QStringLiteral("解析到 CAN"));
-    const bool isSend = message.startsWith(QStringLiteral("TX "));
     const bool isError = message.contains(QStringLiteral("错误")) || message.contains(QStringLiteral("失败"))
                          || message.contains(QStringLiteral("超时")) || message.contains(QStringLiteral("未连接"))
                          || message.contains(QStringLiteral("断开")) || message.contains(QStringLiteral("非法"));
@@ -1822,29 +1801,12 @@ bool FirmwarePage::matchesRuntimeLogFilter(const QString &message) const
                            || message.contains(QStringLiteral("未响应")) || message.contains(QStringLiteral("自动探测"))
                            || upper.contains(QStringLiteral("ABORT")) || upper.contains(QStringLiteral("ENTER_BOOT"))
                            || upper.contains(QStringLiteral("JUMP_APP"));
-    const bool isUpgrade = upper.contains(QStringLiteral("SESSION_")) || upper.contains(QStringLiteral("ERASE"))
-                           || upper.contains(QStringLiteral("WRITE")) || upper.contains(QStringLiteral("VERIFY"))
-                           || upper.contains(QStringLiteral("COMMIT")) || upper.contains(QStringLiteral("MISSING_"))
-                           || upper.contains(QStringLiteral("FULL_STREAM")) || upper.contains(QStringLiteral("ROLLBACK"));
-    bool isFd = upper.contains(QStringLiteral("CAN FD"));
-    const QRegularExpression flagsPattern(QStringLiteral("FLAGS=0x([0-9A-F]+)"));
-    const QRegularExpressionMatch flagsMatch = flagsPattern.match(upper);
-    if (flagsMatch.hasMatch())
-        isFd = (flagsMatch.captured(1).toUInt(nullptr, 16) & 0x02U) != 0U;
 
-    if (filter == QStringLiteral("升级") && !isUpgrade)
+    if (filter == QStringLiteral("INFO") && (isWarning || isError))
         return false;
-    if (filter == QStringLiteral("接收 RX") && !isReceive)
+    if (filter == QStringLiteral("WARNING") && (!isWarning || isError))
         return false;
-    if (filter == QStringLiteral("发送 TX") && !isSend)
-        return false;
-    if (filter == QStringLiteral("警告") && !isWarning)
-        return false;
-    if (filter == QStringLiteral("错误") && !isError)
-        return false;
-    if (filter == QStringLiteral("Classic CAN") && isFd)
-        return false;
-    if (filter == QStringLiteral("CAN FD") && !isFd)
+    if (filter == QStringLiteral("ERROR") && !isError)
         return false;
 
     const int node = m_logNodeFilter == nullptr ? 0 : m_logNodeFilter->currentData().toInt();
@@ -1917,6 +1879,8 @@ void FirmwarePage::logRequest(const QString &message)
         constexpr int maxRecordedLogs = 20000;
         while (m_recordedLogs.size() > maxRecordedLogs)
             m_recordedLogs.removeFirst();
+        if (m_exportRecordedButton != nullptr)
+            m_exportRecordedButton->setEnabled(true);
     }
     m_historyStore.append(message);
     emit debugLogAppended(timestamped);

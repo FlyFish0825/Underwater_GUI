@@ -139,7 +139,7 @@ class FirmwarePage final : public QWidget
     QPushButton *m_viewRecordedButton = nullptr;
     QPushButton *m_exportRecordedButton = nullptr;
     QStringList m_recordedLogs;
-    bool m_logRecording = false;
+    bool m_logRecording = true;
     QComboBox *m_targetNodeCombo = nullptr;
     QComboBox *m_canaryNodeCombo = nullptr;
     QComboBox *m_guardNodeCombo = nullptr;
