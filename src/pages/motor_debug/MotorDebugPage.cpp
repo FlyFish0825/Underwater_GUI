@@ -509,12 +509,12 @@ void MotorDebugPage::refreshView()
     m_stateValue->setText(m_snapshot.state);
     m_rpmValue->setText(available ? QStringLiteral("%1 rpm").arg(m_snapshot.rpm, 0, 'f', 0)
                                   : QStringLiteral("--"));
-    m_currentValue->setText(available ? QStringLiteral("%1 A").arg(m_snapshot.currentA, 0, 'f', 1)
+    m_currentValue->setText(available ? QStringLiteral("%1 A").arg(m_snapshot.currentA, 0, 'f', 4)
                                       : QStringLiteral("--"));
     m_voltageValue->setText(available ? QStringLiteral("%1 V").arg(m_snapshot.voltageV, 0, 'f', 1)
                                       : QStringLiteral("--"));
     m_temperatureValue->setText(
-        available ? QStringLiteral("%1 °C").arg(m_snapshot.temperatureC, 0, 'f', 1)
+        available ? QStringLiteral("%1 °C").arg(m_snapshot.temperatureC, 0, 'f', 3)
                   : QStringLiteral("--"));
     m_faultValue->setText(available ? m_snapshot.fault : QStringLiteral("离线"));
     if (!m_snapshot.recentLog.isEmpty() && m_requestLog != nullptr)

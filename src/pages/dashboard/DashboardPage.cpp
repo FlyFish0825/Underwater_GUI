@@ -516,7 +516,7 @@ ThrusterCard *thrusterTile(const rov::ThrusterTelemetry &item, QLabel *&rpmValue
     };
     addValueRow(QStringLiteral("转速"), rpmValue, QString::number(item.rpm, 'f', 0));
     addValueRow(QStringLiteral("电流"), currentValue,
-                QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 3));
+                QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 4));
     addValueRow(QStringLiteral("温度"), temperatureValue,
                 QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 1));
     return tile;
@@ -554,11 +554,11 @@ class ThrusterDetailDialog final : public QDialog
                                        QStringLiteral("bodyValue")),
                         1, 1);
         grid->addWidget(rov::makeMetricLabel(QStringLiteral("电流")), 2, 0);
-        grid->addWidget(rov::makeLabel(QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 3),
+        grid->addWidget(rov::makeLabel(QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 4),
                                        QStringLiteral("bodyValue")),
                         2, 1);
         grid->addWidget(rov::makeMetricLabel(QStringLiteral("温度")), 3, 0);
-        grid->addWidget(rov::makeLabel(QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 1),
+        grid->addWidget(rov::makeLabel(QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 3),
                                        QStringLiteral("bodyValue")),
                         3, 1);
         layout->addLayout(grid);
@@ -1137,7 +1137,7 @@ void DashboardPage::refreshView()
             m_thrusterRpmValues.at(i)->setText(itemValid ? QString::number(item.rpm, 'f', 0)
                                                          : QStringLiteral("--"));
             m_thrusterCurrentValues.at(i)->setText(
-                itemValid ? QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 3)
+                itemValid ? QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 4)
                           : QStringLiteral("--"));
             m_thrusterTemperatureValues.at(i)->setText(
                 itemValid ? QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 1)
@@ -1178,9 +1178,9 @@ void DashboardPage::refreshView()
         m_averageRpmValue->setText(
             QStringLiteral("平均转速  %1").arg(rpmTotal / numericCount, 0, 'f', 0));
         m_averageCurrentValue->setText(
-            QStringLiteral("平均电流  %1 A").arg(currentTotal / numericCount, 0, 'f', 3));
+            QStringLiteral("平均电流  %1 A").arg(currentTotal / numericCount, 0, 'f', 4));
         m_averageTemperatureValue->setText(
-            QStringLiteral("平均温度  %1 °C").arg(temperatureTotal / numericCount, 0, 'f', 1));
+            QStringLiteral("平均温度  %1 °C").arg(temperatureTotal / numericCount, 0, 'f', 3));
     }
     else
     {
