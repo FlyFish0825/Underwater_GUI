@@ -4,6 +4,7 @@
 
 #include <QMetaType>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 namespace rov
@@ -34,7 +35,6 @@ struct FirmwareNode
 
 struct FirmwareSnapshot
 {
-    DemoContext demo;
     QVector<FirmwareNode> nodes;
     QString fileName;
     QString fileVersion;

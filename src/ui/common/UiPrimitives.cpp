@@ -241,7 +241,7 @@ QPushButton *makeButton(const QString &text, const QString &objectName, QWidget 
     return button;
 }
 
-QWidget *makePageHeader(const QString &title, const QString &subtitle, const QString &demoText)
+QWidget *makePageHeader(const QString &title, const QString &subtitle, const QString &badgeText)
 {
     auto *header = new QWidget;
     auto *layout = new QHBoxLayout(header);
@@ -255,7 +255,7 @@ QWidget *makePageHeader(const QString &title, const QString &subtitle, const QSt
     textLayout->addWidget(makeLabel(subtitle, QStringLiteral("pageSubtitle")));
     layout->addWidget(textColumn);
     layout->addStretch();
-    layout->addWidget(makeLabel(demoText, QStringLiteral("demoBadge")), 0, Qt::AlignTop);
+    layout->addWidget(makeLabel(badgeText, QStringLiteral("pageBadge")), 0, Qt::AlignTop);
     return header;
 }
 

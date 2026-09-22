@@ -25,7 +25,6 @@ struct JointState
 
 struct ManipulatorSnapshot
 {
-    DemoContext demo;
     DataStamp armStamp;
     QVector<JointState> joints;
     QString systemState;

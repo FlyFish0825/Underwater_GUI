@@ -70,7 +70,7 @@ flowchart TB
 ```mermaid
 flowchart LR
     gateway[BootloaderCommunicationService<br/>CAN 收帧 / 发帧]
-    dashboard[DashboardPage<br/>输入请求 / 非演示快照]
+    dashboard[DashboardPage<br/>输入请求 / 有效快照]
     main[MainWindow<br/>旁路路由]
     queue[ResearchDataRecorder<br/>20,000 条有界队列]
     worker[后台线程<br/>批量序列化与写盘]

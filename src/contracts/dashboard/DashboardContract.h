@@ -31,7 +31,6 @@ struct ThrusterTelemetry
 
 struct DashboardSnapshot
 {
-    DemoContext demo;
     DataStamp systemStamp;
     QVector<ThrusterTelemetry> thrusters;
 

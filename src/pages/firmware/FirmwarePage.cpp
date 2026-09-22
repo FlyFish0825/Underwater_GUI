@@ -1,6 +1,5 @@
 #include "pages/firmware/FirmwarePage.h"
 
-#include "preview/PreviewData.h"
 #include "pages/firmware/BootloaderCommandDialog.h"
 #include "pages/firmware/FirmwareHistoryDialog.h"
 #include "pages/firmware/FirmwareLogRecordingDialog.h"
@@ -211,6 +210,25 @@ QString thrusterDisplayName(const int index)
         QStringLiteral("推进器 7（内左后）"), QStringLiteral("推进器 8（内右后）"),
     };
     return names.value(index, QStringLiteral("推进器 %1").arg(index + 1));
+}
+
+QVector<rov::FirmwareNode> offlineFirmwareNodes()
+{
+    QVector<rov::FirmwareNode> nodes;
+    nodes.reserve(8);
+    for (int index = 0; index < 8; ++index)
+    {
+        rov::FirmwareNode node;
+        node.nodeId = QStringLiteral("0x%1").arg(index + 1, 2, 16, QChar('0'));
+        node.deviceName = thrusterDisplayName(index);
+        node.currentVersion = QStringLiteral("--");
+        node.targetVersion = QStringLiteral("--");
+        node.online = false;
+        node.state = rov::FirmwareState::Idle;
+        node.progressPercent = 0;
+        nodes.append(node);
+    }
+    return nodes;
 }
 
 QString commandNameZh(const QString &name)
@@ -657,16 +675,15 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     {
         auto *row = new QHBoxLayout;
         row->addWidget(
-            makeLabel(QStringLiteral("0x%1").arg(i + 1, 2, 16, QLatin1Char('0')).toUpper(),
+            makeLabel(QStringLiteral("0x%1").arg(i + 1, 2, 16, QLatin1Char('0')),
                       QStringLiteral("bodyValue")));
         row->addWidget(
             makeLabel(thrusterDisplayName(i), QStringLiteral("bodyValue")), 1);
         auto *bar = new AppProgressBar;
         bar->setRange(0, 100);
-        bar->setValue(i == 0 ? 100 : (i == 1 ? 65 : 0));
+        bar->setValue(0);
         row->addWidget(bar, 2);
-        auto *barState = makeLabel(i == 0 ? QStringLiteral("成功") : QStringLiteral("空闲"),
-                                   i == 0 ? QStringLiteral("statusGood") : QStringLiteral("statusIdle"));
+        auto *barState = makeLabel(QStringLiteral("空闲"), QStringLiteral("statusIdle"));
         row->addWidget(barState);
         m_progressBars.append(bar);
         m_progressStates.append(barState);
@@ -882,6 +899,12 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                     m_heartbeatWatchdog->stop();
                 m_serialConnectButton->setText(QStringLiteral("进入实机模式"));
                 m_serialStatus->setText(connectionStatusText(false, QStringLiteral("未连接 · VID_0483 PID_5740")));
+                for (int row = 0; row < m_snapshot.nodes.size(); ++row)
+                {
+                    m_snapshot.nodes[row].online = false;
+                    if (m_nodeTable != nullptr && m_nodeTable->item(row, 5) != nullptr)
+                        m_nodeTable->item(row, 5)->setText(QStringLiteral("离线"));
+                }
                 logRequest(QStringLiteral("串口已断开"));
                 updateSafetyLock();
             });
@@ -955,7 +978,9 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                     refreshSerialDevices();
             });
     m_deviceScanTimer->start();
-    setSnapshot(firmwarePreview());
+    FirmwareSnapshot initialSnapshot;
+    initialSnapshot.nodes = offlineFirmwareNodes();
+    setSnapshot(initialSnapshot);
 }
 
 void FirmwarePage::resizeEvent(QResizeEvent *event)
@@ -1160,7 +1185,8 @@ BootloaderCommunicationService *FirmwarePage::communicationService() const
 void FirmwarePage::setSnapshot(const FirmwareSnapshot &snapshot)
 {
     m_snapshot = snapshot;
-    // 演示快照没有真实文件路径；真正拖入/选择文件后由 m_firmwarePath 覆盖。
+    if (m_snapshot.nodes.isEmpty())
+        m_snapshot.nodes = offlineFirmwareNodes();
     if (m_snapshot.fileName.isEmpty())
     {
         m_firmwarePath.clear();

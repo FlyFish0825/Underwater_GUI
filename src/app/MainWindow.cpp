@@ -185,7 +185,6 @@ QString motorLabel(const quint8 nodeId)
 rov::DashboardSnapshot dashboardFromMotorFleet(const rov::ObserverMotorFleetSnapshot &fleet)
 {
     rov::DashboardSnapshot snapshot;
-    snapshot.demo.isDemo = false;
     snapshot.systemStamp = fleet.stamp;
     snapshot.connected = false;
     snapshot.canControl = false;
@@ -253,7 +252,6 @@ rov::MotorDebugSnapshot motorDebugFromNode(const rov::ObserverMotorNodeSnapshot 
                                            QVector<QVector<double>> &history, quint8 &historyNodeId)
 {
     rov::MotorDebugSnapshot snapshot;
-    snapshot.demo.isDemo = false;
     snapshot.motorStamp = node.stamp;
     snapshot.selectedMotorId = QStringLiteral("thruster%1").arg(node.nodeId);
     snapshot.selectedMotorLabel =
@@ -376,9 +374,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     topLayout->addWidget(
         makeLabel(QStringLiteral("水下机器人上位机"), QStringLiteral("brandLabel")));
     topLayout->addStretch();
-    topLayout->addWidget(statusDotLabel(QStringLiteral("演示 / 离线"), QStringLiteral("#078d4a")));
-    topLayout->addWidget(
-        makeLabel(QStringLiteral("|  ROV-001  |  演示数据"), QStringLiteral("mutedLabel")));
+    auto *deviceStatus =
+        statusDotLabel(QStringLiteral("设备离线"), QStringLiteral("#8a8f98"));
+    topLayout->addWidget(deviceStatus);
+    topLayout->addWidget(makeLabel(QStringLiteral("|  ROV-001"), QStringLiteral("mutedLabel")));
 
     auto *minimize = new QToolButton(topBar);
     minimize->setObjectName(QStringLiteral("windowButton"));
@@ -555,13 +554,33 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(firmware->communicationService(), &BootloaderCommunicationService::closed, m_motorData,
             &ObserverMotorDataService::reset);
     connect(m_motorData, &ObserverMotorDataService::snapshotChanged, this,
-            [this, dashboard, motorDebug](const ObserverMotorFleetSnapshot &fleet)
+            [this, dashboard, motorDebug, deviceStatus](const ObserverMotorFleetSnapshot &fleet)
             {
                 dashboard->setSnapshot(dashboardFromMotorFleet(fleet));
                 const quint8 nodeId = motorDebug->selectedNodeId();
                 motorDebug->setSnapshot(motorDebugFromNode(
                     m_motorData->nodeSnapshot(nodeId), m_debugSeriesHistory, m_debugHistoryNodeId));
+                bool anyNodeOnline = false;
+                for (const ObserverMotorNodeSnapshot &node : fleet.nodes)
+                {
+                    if (node.online)
+                    {
+                        anyNodeOnline = true;
+                        break;
+                    }
+                }
+                deviceStatus->setText(anyNodeOnline ? QStringLiteral("●  电机节点在线")
+                                                    : QStringLiteral("●  设备离线"));
+                deviceStatus->setStyleSheet(
+                    QStringLiteral("color: %1; font-weight: 600;")
+                        .arg(anyNodeOnline ? QStringLiteral("#078d4a")
+                                           : QStringLiteral("#8a8f98")));
             });
+    // 数据服务在构造时已生成 8 个离线节点；显式同步一次，避免错过构造阶段的信号。
+    dashboard->setSnapshot(dashboardFromMotorFleet(m_motorData->snapshot()));
+    motorDebug->setSnapshot(motorDebugFromNode(
+        m_motorData->nodeSnapshot(motorDebug->selectedNodeId()), m_debugSeriesHistory,
+        m_debugHistoryNodeId));
     // 机械臂、视觉和设置页保留原有的小屏幕等比保护。
     // 电机调试与固件升级页改由页面内部自适应，避免宽屏下整页缩小后两侧留白。
     for (QWidget *page : {static_cast<QWidget *>(manipulator), static_cast<QWidget *>(vision),
@@ -590,10 +609,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     auto *footerLayout = new QHBoxLayout(footer);
     footerLayout->setContentsMargins(18, 0, 18, 0);
     footerLayout->setSpacing(18);
-    m_footerStatus = statusDotLabel(QStringLiteral("系统就绪 · 演示"), QStringLiteral("#078d4a"));
+    m_footerStatus = statusDotLabel(QStringLiteral("系统就绪"), QStringLiteral("#078d4a"));
     footerLayout->addWidget(m_footerStatus);
-    footerLayout->addWidget(
-        makeLabel(QStringLiteral("2026-09-16 18:21:04"), QStringLiteral("mutedLabel")));
     footerLayout->addStretch();
     m_gatewayStatus = statusDotLabel(QStringLiteral("CAN 网关离线"), QStringLiteral("#8a8f98"));
     footerLayout->addWidget(m_gatewayStatus);
@@ -650,7 +667,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(dashboard, &DashboardPage::snapshotAvailable, this,
             [this](const DashboardSnapshot &snapshot)
             {
-                if (m_recorder != nullptr && !snapshot.demo.isDemo)
+                if (m_recorder != nullptr)
                     m_recorder->recordDashboardSnapshot(snapshot);
             });
     connect(dashboard, &DashboardPage::recordingStartRequested, this,
@@ -1042,7 +1059,7 @@ void MainWindow::updatePageViewport()
 void MainWindow::handleRequest(const QString &message)
 {
     m_footerLog->setText(QStringLiteral("日志：请求   |   %1").arg(message));
-    m_footerStatus->setText(QStringLiteral("●  已记录请求 · 演示"));
+    m_footerStatus->setText(QStringLiteral("●  已记录请求"));
 }
 
 void MainWindow::selectPage(const int index)

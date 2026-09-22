@@ -1,5 +1,5 @@
-# Service / data boundary
+# 服务与数据边界
 
-The current phase uses deterministic preview snapshots. Future services may
-convert protocol objects into business snapshots, track validity/freshness,
-and accept typed requests. Pages must continue to depend only on contracts.
+数据服务负责把协议对象转换为业务快照、维护有效性与新鲜度，并接收类型化请求。
+页面只依赖契约，不直接解析通信帧。没有真实数据时，快照必须保持未知或离线状态，
+不得生成模拟数值。

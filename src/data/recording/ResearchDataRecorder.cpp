@@ -279,7 +279,6 @@ QJsonObject ResearchDataRecorder::toJson(const PendingRecord &record)
     }
     else if (record.type == RecordType::Dashboard)
     {
-        put(object, "demo", record.snapshot.demo.isDemo);
         put(object, "depth_m", record.snapshot.depthM);
         put(object, "roll_deg", record.snapshot.rollDeg);
         put(object, "pitch_deg", record.snapshot.pitchDeg);

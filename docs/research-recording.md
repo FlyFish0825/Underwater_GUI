@@ -50,13 +50,13 @@ JSONL 和 CSV 在采集过程中同时追加写入，因此“导出”不需要
 
 - 总览六自由度输入：surge、sway、heave、roll、pitch、yaw；
 - 解锁、停机、保持位置、上浮等用户事件；
-- 非演示 `DashboardSnapshot` 中的深度、横滚、俯仰、航向、母线电压、内部温度、
+- 有效 `DashboardSnapshot` 中的深度、横滚、俯仰、航向、母线电压、内部温度、
   报警数和推进器快照。
 
 当前工程尚没有真实 IMU、压力/深度传感器协议和数据服务。记录格式已经预留
-`imu_accel_*`、`imu_gyro_*`、`pressure_pa` 等列；在真实协议接入前这些列为空，演示页的
-12.4 m 等预览数据不会写入科研记录。传感器原始 CAN 帧仍会完整保存，后续应在
-Protocol / Service 层增加解码并把非演示快照交给记录器。
+`imu_accel_*`、`imu_gyro_*`、`pressure_pa` 等列；在真实协议接入前这些列为空。
+传感器原始 CAN 帧仍会完整保存，后续应在 Protocol / Service 层增加解码并把有效快照
+交给记录器。
 
 ## 性能与完整性策略
 

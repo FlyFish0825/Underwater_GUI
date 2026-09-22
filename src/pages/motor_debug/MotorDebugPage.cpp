@@ -1,6 +1,5 @@
 #include "pages/motor_debug/MotorDebugPage.h"
 
-#include "preview/PreviewData.h"
 #include "ui/common/AppComboBox.h"
 #include "ui/common/UiPrimitives.h"
 #include "widgets/plot/QwtCurvePlotWidget.h"
@@ -181,7 +180,7 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     root->setSpacing(8);
     root->addWidget(makePageHeader(QStringLiteral("电机调试"),
                                    QStringLiteral("多窗口曲线观察、转速控制与参数调节。"),
-                                   QStringLiteral("演示 · 预览数据")));
+                                   QStringLiteral("节点反馈")));
 
     auto *curveCard = new CardWidget(QStringLiteral("实时曲线工作区"), IconKind::Waveform);
     curveCard->contentLayout()->setContentsMargins(10, 8, 10, 10);
@@ -413,7 +412,11 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
                                .arg(request.durationSeconds));
             });
 
-    setSnapshot(motorDebugPreview());
+    MotorDebugSnapshot initialSnapshot;
+    initialSnapshot.motorStamp.freshness = DataFreshness::Offline;
+    initialSnapshot.state = QStringLiteral("离线");
+    initialSnapshot.fault = QStringLiteral("离线");
+    setSnapshot(initialSnapshot);
     addCurveWindow(0);
 }
 
@@ -506,7 +509,8 @@ void MotorDebugPage::refreshView()
         return;
     const bool available = m_snapshot.motorStamp.validity == DataValidity::Valid &&
                            m_snapshot.motorStamp.freshness != DataFreshness::Offline;
-    m_stateValue->setText(m_snapshot.state);
+    m_stateValue->setText(available && !m_snapshot.state.isEmpty() ? m_snapshot.state
+                                                                   : QStringLiteral("离线"));
     m_rpmValue->setText(available ? QStringLiteral("%1 rpm").arg(m_snapshot.rpm, 0, 'f', 0)
                                   : QStringLiteral("--"));
     m_currentValue->setText(available ? QStringLiteral("%1 A").arg(m_snapshot.currentA, 0, 'f', 4)
@@ -524,7 +528,7 @@ void MotorDebugPage::refreshView()
 void MotorDebugPage::logRequest(const QString &message)
 {
     if (m_requestLog != nullptr)
-        m_requestLog->setText(QStringLiteral("最近请求：%1 · 演示模式未写入设备").arg(message));
+        m_requestLog->setText(QStringLiteral("最近请求：%1 · 设备离线时不下发").arg(message));
 }
 
 } // namespace rov

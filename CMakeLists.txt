@@ -51,11 +51,6 @@ add_library(rov_ui_common STATIC
     src/ui/common/UiPrimitives.h
 )
 
-add_library(rov_preview STATIC
-    src/preview/PreviewData.cpp
-    src/preview/PreviewData.h
-)
-
 add_library(rov_communication STATIC
     src/communication/bootloader/BootloaderDownloadController.cpp
     src/communication/bootloader/BootloaderDownloadController.h
@@ -159,7 +154,6 @@ add_executable(rov_ui
 
 set(ROV_UI_TARGETS
     rov_ui_common
-    rov_preview
     rov_communication
     rov_motor_data
     rov_camera
@@ -206,7 +200,6 @@ target_link_libraries(rov_ui PRIVATE
     rov_page_manipulator
     rov_page_vision
     rov_page_settings
-    rov_preview
     rov_ui_common
     rov_communication
     rov_motor_data

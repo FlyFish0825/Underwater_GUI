@@ -10,7 +10,6 @@ namespace rov
 
 struct VisionSnapshot
 {
-    DemoContext demo;
     DataStamp cameraStamp;
     QString cameraDevice;
     QString resolution;

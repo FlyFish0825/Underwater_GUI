@@ -1,6 +1,5 @@
 #include "pages/manipulator/ManipulatorPage.h"
 
-#include "preview/PreviewData.h"
 #include "ui/common/AppSlider.h"
 #include "ui/common/UiPrimitives.h"
 
@@ -79,7 +78,7 @@ ManipulatorPage::ManipulatorPage(QWidget *parent) : QWidget(parent)
     root->setSpacing(10);
     root->addWidget(makePageHeader(QStringLiteral("机械臂"),
                                    QStringLiteral("平面机械臂控制与状态。"),
-                                   QStringLiteral("演示 · 预览数据")));
+                                   QStringLiteral("设备离线")));
 
     auto *mainRow = new QHBoxLayout;
     mainRow->setSpacing(12);
@@ -101,22 +100,14 @@ ManipulatorPage::ManipulatorPage(QWidget *parent) : QWidget(parent)
         auto *axisLayout = new QVBoxLayout(axis);
         axisLayout->addWidget(makeLabel(axes.at(i), QStringLiteral("bodyValue")));
         auto *values = new QHBoxLayout;
-        values->addWidget(
-            makeLabel(QStringLiteral("目标\n%1 m")
-                          .arg(i == 0 ? QStringLiteral("0.45") : QStringLiteral("-0.20")),
-                      QStringLiteral("bodyValue")));
-        values->addWidget(
-            makeLabel(QStringLiteral("实际\n%1 m")
-                          .arg(i == 0 ? QStringLiteral("0.42") : QStringLiteral("-0.18")),
-                      QStringLiteral("bodyValue")));
-        values->addWidget(
-            makeLabel(QStringLiteral("误差\n%1 m")
-                          .arg(i == 0 ? QStringLiteral("0.03") : QStringLiteral("0.02")),
-                      QStringLiteral("bodyValue")));
+        values->addWidget(makeLabel(QStringLiteral("目标\n--"), QStringLiteral("bodyValue")));
+        values->addWidget(makeLabel(QStringLiteral("实际\n--"), QStringLiteral("bodyValue")));
+        values->addWidget(makeLabel(QStringLiteral("误差\n--"), QStringLiteral("bodyValue")));
         axisLayout->addLayout(values);
         auto *slider = new AppSlider(Qt::Horizontal);
         slider->setRange(0, 100);
-        slider->setValue(i == 0 ? 45 : 32);
+        slider->setValue(0);
+        slider->setEnabled(false);
         axisLayout->addWidget(slider);
         cartesianGrid->addWidget(axis, 0, i);
     }
@@ -146,15 +137,15 @@ ManipulatorPage::ManipulatorPage(QWidget *parent) : QWidget(parent)
     auto *bottom = new QHBoxLayout;
     auto *status = new CardWidget(QStringLiteral("机械臂状态"), IconKind::Status);
     auto *statusGrid = new QGridLayout;
-    m_systemState = makeStatusPill(QStringLiteral("就绪"), QStringLiteral("statusGood"));
-    m_controlMode = makeLabel(QStringLiteral("位置控制"), QStringLiteral("bodyValue"));
-    m_faultStatus = makeStatusPill(QStringLiteral("无故障"), QStringLiteral("statusGood"));
+    m_systemState = makeStatusPill(QStringLiteral("离线"), QStringLiteral("statusWarn"));
+    m_controlMode = makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
+    m_faultStatus = makeStatusPill(QStringLiteral("--"), QStringLiteral("statusWarn"));
     statusGrid->addWidget(makeMetricLabel(QStringLiteral("系统状态")), 0, 0);
     statusGrid->addWidget(m_systemState, 0, 1);
     statusGrid->addWidget(makeMetricLabel(QStringLiteral("控制模式")), 1, 0);
     statusGrid->addWidget(m_controlMode, 1, 1);
     statusGrid->addWidget(makeMetricLabel(QStringLiteral("归零状态")), 2, 0);
-    statusGrid->addWidget(makeLabel(QStringLiteral("已归零"), QStringLiteral("bodyValue")), 2, 1);
+    statusGrid->addWidget(makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue")), 2, 1);
     statusGrid->addWidget(makeMetricLabel(QStringLiteral("故障状态")), 3, 0);
     statusGrid->addWidget(m_faultStatus, 3, 1);
     status->contentLayout()->addLayout(statusGrid);
@@ -218,7 +209,11 @@ ManipulatorPage::ManipulatorPage(QWidget *parent) : QWidget(parent)
         makeLabel(QStringLiteral("请求已记录；未连接设备。"), QStringLiteral("mutedLabel"));
     status->contentLayout()->addWidget(m_requestLog);
 
-    setSnapshot(manipulatorPreview());
+    ManipulatorSnapshot initialSnapshot;
+    initialSnapshot.armStamp.freshness = DataFreshness::Offline;
+    initialSnapshot.systemState = QStringLiteral("离线");
+    initialSnapshot.controlUnavailableReason = QStringLiteral("机械臂设备未连接");
+    setSnapshot(initialSnapshot);
 }
 
 void ManipulatorPage::setSnapshot(const ManipulatorSnapshot &snapshot)
@@ -233,9 +228,17 @@ void ManipulatorPage::refreshView()
     {
         return;
     }
-    m_systemState->setText(m_snapshot.systemState);
-    m_controlMode->setText(m_snapshot.controlMode);
-    m_faultStatus->setText(m_snapshot.faultStatus);
+    const bool available = m_snapshot.armStamp.validity == DataValidity::Valid &&
+                           m_snapshot.armStamp.freshness != DataFreshness::Offline;
+    m_systemState->setText(available && !m_snapshot.systemState.isEmpty()
+                               ? m_snapshot.systemState
+                               : QStringLiteral("离线"));
+    m_controlMode->setText(available && !m_snapshot.controlMode.isEmpty()
+                               ? m_snapshot.controlMode
+                               : QStringLiteral("--"));
+    m_faultStatus->setText(available && !m_snapshot.faultStatus.isEmpty()
+                               ? m_snapshot.faultStatus
+                               : QStringLiteral("--"));
     m_jointTable->setRowCount(m_snapshot.joints.size());
     for (int row = 0; row < m_snapshot.joints.size(); ++row)
     {
@@ -262,7 +265,7 @@ void ManipulatorPage::logRequest(const QString &message)
 {
     if (m_requestLog != nullptr)
     {
-        m_requestLog->setText(QStringLiteral("最近请求：%1 · 仅演示").arg(message));
+        m_requestLog->setText(QStringLiteral("最近请求：%1 · 设备离线，未下发").arg(message));
     }
 }
 

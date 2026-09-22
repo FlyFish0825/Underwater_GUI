@@ -77,7 +77,6 @@ int main(int argc, char *argv[])
     recorder.recordControlInput(input);
 
     DashboardSnapshot snapshot;
-    snapshot.demo.isDemo = false;
     snapshot.depthM = 12.75;
     snapshot.rollDeg = 1.25;
     recorder.recordDashboardSnapshot(snapshot);

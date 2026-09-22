@@ -1,6 +1,5 @@
 #include "pages/vision/VisionPage.h"
 
-#include "preview/PreviewData.h"
 #include "ui/common/AppComboBox.h"
 #include "ui/common/UiPrimitives.h"
 
@@ -223,7 +222,19 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent)
     connect(m_saveFrame, &QPushButton::clicked, this, &VisionPage::saveCurrentFrame);
 
     qApp->installEventFilter(this);
-    setSnapshot(visionPreview());
+    VisionSnapshot initialSnapshot;
+    initialSnapshot.cameraStamp.freshness = DataFreshness::Offline;
+    initialSnapshot.cameraDevice = QStringLiteral("-");
+    initialSnapshot.resolution = QStringLiteral("-");
+    initialSnapshot.frameRate = QStringLiteral("-");
+    initialSnapshot.pixelFormat = QStringLiteral("-");
+    initialSnapshot.streamState = QStringLiteral("无视频流");
+    initialSnapshot.lastFrame = QStringLiteral("-");
+    initialSnapshot.latency = QStringLiteral("-");
+    initialSnapshot.nodeState = QStringLiteral("未运行");
+    initialSnapshot.processingMode = QStringLiteral("-");
+    initialSnapshot.modelsLoaded = QStringLiteral("-");
+    setSnapshot(initialSnapshot);
 }
 
 void VisionPage::setSnapshot(const VisionSnapshot &snapshot)

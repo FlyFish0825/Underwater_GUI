@@ -179,7 +179,7 @@ QLabel#mutedLabel {
     color: #7890aa;
 }
 
-QLabel#demoBadge {
+QLabel#pageBadge {
     color: #4c6684;
     background: #edf3f8;
     border: 1px solid #d7e3ee;

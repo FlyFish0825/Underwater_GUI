@@ -1,6 +1,5 @@
 #include "pages/dashboard/DashboardPage.h"
 
-#include "preview/PreviewData.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QCheckBox>
@@ -552,21 +551,32 @@ class ThrusterDetailDialog final : public QDialog
         auto *grid = new QGridLayout;
         grid->setHorizontalSpacing(18);
         grid->setVerticalSpacing(8);
+        const bool telemetryValid = item.stamp.validity == rov::DataValidity::Valid &&
+                                    item.stamp.freshness != rov::DataFreshness::Offline;
+        const bool itemOnline = item.status == QStringLiteral("在线");
         grid->addWidget(rov::makeMetricLabel(QStringLiteral("当前状态")), 0, 0);
         grid->addWidget(
             rov::makeLabel(disabled ? QStringLiteral("已停用") : item.status,
-                           disabled ? QStringLiteral("statusBad") : QStringLiteral("statusGood")),
+                           disabled ? QStringLiteral("statusBad")
+                                    : (itemOnline ? QStringLiteral("statusGood")
+                                                  : QStringLiteral("statusWarn"))),
             0, 1);
         grid->addWidget(rov::makeMetricLabel(QStringLiteral("转速")), 1, 0);
-        grid->addWidget(rov::makeLabel(QStringLiteral("%1 rpm").arg(item.rpm, 0, 'f', 0),
+        grid->addWidget(rov::makeLabel(telemetryValid
+                                           ? QStringLiteral("%1 rpm").arg(item.rpm, 0, 'f', 0)
+                                           : QStringLiteral("--"),
                                        QStringLiteral("bodyValue")),
                         1, 1);
         grid->addWidget(rov::makeMetricLabel(QStringLiteral("电流")), 2, 0);
-        grid->addWidget(rov::makeLabel(QStringLiteral("%1 A").arg(item.currentA, 0, 'f', 4),
+        grid->addWidget(rov::makeLabel(telemetryValid ? formatThrusterCurrent(item.currentA)
+                                                       : QStringLiteral("--"),
                                        QStringLiteral("bodyValue")),
                         2, 1);
         grid->addWidget(rov::makeMetricLabel(QStringLiteral("温度")), 3, 0);
-        grid->addWidget(rov::makeLabel(QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 3),
+        grid->addWidget(rov::makeLabel(telemetryValid
+                                           ? QStringLiteral("%1 °C")
+                                                 .arg(item.temperatureC, 0, 'f', 3)
+                                           : QStringLiteral("--"),
                                        QStringLiteral("bodyValue")),
                         3, 1);
         layout->addLayout(grid);
@@ -578,20 +588,22 @@ class ThrusterDetailDialog final : public QDialog
         auto *actionRow = new QHBoxLayout;
         m_testButton =
             rov::makeButton(QStringLiteral("发送测试 1 秒"), QStringLiteral("softButton"), this);
+        m_testButton->setEnabled(itemOnline && !disabled);
         auto *closeButton =
             rov::makeButton(QStringLiteral("关闭"), QStringLiteral("softButton"), this);
         actionRow->addWidget(m_testButton);
         actionRow->addWidget(closeButton);
         layout->addLayout(actionRow);
 
-        m_result = rov::makeLabel(QStringLiteral("演示模式：操作只记录为请求。"),
+        m_result = rov::makeLabel(QStringLiteral("操作将生成控制请求；设备离线时不会下发。"),
                                   QStringLiteral("mutedLabel"));
         m_result->setWordWrap(true);
         layout->addWidget(m_result);
 
         connect(m_disableCheck, &QCheckBox::toggled, this,
-                [this](const bool checked)
+                [this, itemOnline](const bool checked)
                 {
+                    m_testButton->setEnabled(itemOnline && !checked);
                     m_result->setText(
                         checked ? QStringLiteral("该推进器将被标记为停用，可取消勾选恢复。")
                                 : QStringLiteral("该推进器已准备恢复，点击关闭后生效。"));
@@ -665,9 +677,25 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     root->setSpacing(10);
     root->addWidget(makePageHeader(QStringLiteral("总览"),
                                    QStringLiteral("水下机器人状态、推进器与控制概览。"),
-                                   QStringLiteral("演示 · 未连接设备")));
+                                   QStringLiteral("设备状态")));
 
-    const DashboardSnapshot preview = dashboardPreview();
+    DashboardSnapshot initialSnapshot;
+    initialSnapshot.systemStamp.freshness = DataFreshness::Offline;
+    initialSnapshot.controlUnavailableReason = QStringLiteral("无在线电机节点");
+    const QStringList thrusterPositions = {
+        QStringLiteral("前左 · 水平"),   QStringLiteral("前右 · 水平"),
+        QStringLiteral("后左 · 水平"),   QStringLiteral("后右 · 水平"),
+        QStringLiteral("内左前 · 垂向"), QStringLiteral("内右前 · 垂向"),
+        QStringLiteral("内左后 · 垂向"), QStringLiteral("内右后 · 垂向")};
+    for (int i = 0; i < kDashboardThrusterCount; ++i)
+    {
+        ThrusterTelemetry item;
+        item.id = QStringLiteral("thruster%1").arg(i + 1);
+        item.label = QStringLiteral("T%1 · %2").arg(i + 1).arg(thrusterPositions.at(i));
+        item.status = QStringLiteral("离线");
+        item.stamp.freshness = DataFreshness::Offline;
+        initialSnapshot.thrusters.append(item);
+    }
     auto *topRow = new QHBoxLayout;
     topRow->setSpacing(12);
 
@@ -679,7 +707,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
         QLabel *current = nullptr;
         QLabel *temperature = nullptr;
         QLabel *status = nullptr;
-        const ThrusterTelemetry item = preview.thrusters.value(i);
+        const ThrusterTelemetry item = initialSnapshot.thrusters.value(i);
         auto *tile = thrusterTile(item, rpm, current, temperature, status);
         tile->onClicked = [this, i]() { openThrusterDetails(i); };
         m_thrusterRpmValues.append(rpm);
@@ -739,7 +767,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     auto *permissionRow = new QHBoxLayout;
     permissionRow->addWidget(makeLabel(QStringLiteral("控制权限"), QStringLiteral("bodyValue")));
     permissionRow->addStretch();
-    m_controlPermission = makeStatusPill(QStringLiteral("仅演示"), QStringLiteral("statusWarn"));
+    m_controlPermission = makeStatusPill(QStringLiteral("不可用"), QStringLiteral("statusWarn"));
     permissionRow->addWidget(m_controlPermission);
     controlCard->contentLayout()->addLayout(permissionRow);
 
@@ -987,7 +1015,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
                 logRequest(QStringLiteral("推力上限请求：%1%").arg(value));
             });
 
-    setSnapshot(preview);
+    setSnapshot(initialSnapshot);
 }
 
 void DashboardPage::setSnapshot(const DashboardSnapshot &snapshot)
@@ -1083,16 +1111,16 @@ void DashboardPage::refreshView()
 
     if (m_stateUpdate != nullptr)
     {
-        const QString timestamp =
-            available && m_snapshot.demo.lastUpdate.isValid()
-                ? m_snapshot.demo.lastUpdate.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
-                : QStringLiteral("--");
+        const QString timestamp = available
+                                      ? QDateTime::currentDateTime().toString(
+                                            QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+                                      : QStringLiteral("--");
         m_stateUpdate->setText(QStringLiteral("更新时间：%1").arg(timestamp));
     }
     if (m_controlPermission != nullptr)
     {
         m_controlPermission->setText(m_snapshot.canControl ? QStringLiteral("允许")
-                                                           : QStringLiteral("仅演示"));
+                                                           : QStringLiteral("不可用"));
         m_controlPermission->setToolTip(m_snapshot.canControl
                                             ? QStringLiteral("当前快照允许控制")
                                             : m_snapshot.controlUnavailableReason);
@@ -1149,8 +1177,9 @@ void DashboardPage::refreshView()
             m_thrusterTemperatureValues.at(i)->setText(
                 itemValid ? QStringLiteral("%1 °C").arg(item.temperatureC, 0, 'f', 1)
                           : QStringLiteral("--"));
-            m_thrusterStatusValues.at(i)->setText(disabled ? QStringLiteral("停用")
-                                                           : QStringLiteral("●"));
+            m_thrusterStatusValues.at(i)->setText(
+                disabled ? QStringLiteral("停用")
+                         : (itemOnline ? QStringLiteral("●") : QStringLiteral("离线")));
             m_thrusterStatusValues.at(i)->setToolTip(disabled ? QStringLiteral("已在页面中停用")
                                                               : item.status);
             setTone(m_thrusterStatusValues.at(i),
@@ -1164,19 +1193,22 @@ void DashboardPage::refreshView()
             m_thrusterTemperatureValues.at(i)->setText(QStringLiteral("--"));
             const bool disabled = m_thrusterDisabled.value(i, false);
             m_thrusterStatusValues.at(i)->setText(disabled ? QStringLiteral("停用")
-                                                           : QStringLiteral("●"));
+                                                           : QStringLiteral("离线"));
             m_thrusterStatusValues.at(i)->setToolTip(disabled ? QStringLiteral("已在页面中停用")
                                                               : QStringLiteral("无数据"));
             setTone(m_thrusterStatusValues.at(i), disabled ? "bad" : "warn");
         }
     }
 
-    m_totalThrusterValue->setText(available ? QString::number(m_snapshot.thrusters.size())
-                                            : QStringLiteral("--"));
-    m_onlineThrusterValue->setText(available ? QString::number(online) : QStringLiteral("--"));
-    m_offlineThrusterValue->setText(available ? QString::number(offline) : QStringLiteral("--"));
-    m_warningValue->setText(available ? QString::number(m_snapshot.alarmCount)
-                                      : QStringLiteral("--"));
+    const bool hasNodeInventory = !m_snapshot.thrusters.isEmpty();
+    m_totalThrusterValue->setText(hasNodeInventory ? QString::number(m_snapshot.thrusters.size())
+                                                   : QStringLiteral("--"));
+    m_onlineThrusterValue->setText(hasNodeInventory ? QString::number(online)
+                                                    : QStringLiteral("--"));
+    m_offlineThrusterValue->setText(hasNodeInventory ? QString::number(offline)
+                                                     : QStringLiteral("--"));
+    m_warningValue->setText(hasNodeInventory ? QString::number(m_snapshot.alarmCount)
+                                             : QStringLiteral("--"));
     setTone(m_onlineThrusterValue, "good");
     setTone(m_offlineThrusterValue, offline > 0 ? "warn" : "good");
     setTone(m_warningValue, m_snapshot.alarmCount > 0 ? "bad" : "good");
@@ -1232,7 +1264,10 @@ void DashboardPage::logRequest(const QString &message)
 {
     if (m_requestLog != nullptr)
     {
-        m_requestLog->setText(QStringLiteral("最近请求：%1 · 仅演示").arg(message));
+        m_requestLog->setText(QStringLiteral("最近请求：%1 · %2")
+                                  .arg(message, m_snapshot.connected
+                                                    ? QStringLiteral("已提交")
+                                                    : QStringLiteral("设备离线，未下发")));
     }
 }
 

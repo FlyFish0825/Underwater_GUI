@@ -4,6 +4,7 @@
 
 #include <QMetaType>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 namespace rov
@@ -25,7 +26,6 @@ struct DebugSeries
 
 struct MotorDebugSnapshot
 {
-    DemoContext demo;
     DataStamp motorStamp;
     QString selectedMotorId;
     QString selectedMotorLabel;

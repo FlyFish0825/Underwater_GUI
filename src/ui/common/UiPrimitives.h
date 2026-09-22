@@ -67,6 +67,6 @@ QLabel *makeMetricValue(const QString &text);
 QLabel *makeStatusPill(const QString &text, const QString &statusObjectName);
 QPushButton *makeButton(const QString &text, const QString &objectName = QString(),
                         QWidget *parent = nullptr);
-QWidget *makePageHeader(const QString &title, const QString &subtitle, const QString &demoText);
+QWidget *makePageHeader(const QString &title, const QString &subtitle, const QString &badgeText);
 
 } // namespace rov
