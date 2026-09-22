@@ -24,8 +24,8 @@ int main(int argc, char **argv)
         return ok;
     };
     if (!check(nominal && data && apply, "Missing settings controls")) return 1;
-    if (!check(!nominal->isEnabled() && !data->isEnabled() && !apply->isEnabled(),
-               "Disconnected controls must be disabled")) return 1;
+    if (!check(nominal->isEnabled() && data->isEnabled() && !apply->isEnabled(),
+               "Disconnected rate selectors must remain available")) return 1;
     int requests = 0;
     quint32 sentNominal = 0, sentData = 0;
     QObject::connect(&page, &rov::SettingsPlaceholder::canBitrateApplyRequested,
@@ -49,8 +49,8 @@ int main(int argc, char **argv)
                    && QSettings().value("communication/canDataBitrate").toUInt() == 2000000U,
                "Acknowledgement must save both rates")) return 1;
     page.setGatewayConnected(false);
-    if (!check(!apply->isEnabled() && !nominal->isEnabled() && !data->isEnabled(),
-               "Disconnect must disable controls")) return 1;
+    if (!check(!apply->isEnabled() && nominal->isEnabled() && data->isEnabled(),
+               "Disconnect must only disable applying rates")) return 1;
     qInfo() << "CanBitrateSettingsTest: PASS";
     return 0;
 }
