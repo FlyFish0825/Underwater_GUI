@@ -492,7 +492,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     auto *more = makeButton(QStringLiteral("更多…"), QStringLiteral("softButton"));
     auto *moreMenu = new QMenu(more);
     QAction *enterBootAction = moreMenu->addAction(QStringLiteral("进入 Bootloader"));
-    QAction *trialAction = moreMenu->addAction(QStringLiteral("试运行验证"));
+    QAction *trialAction = moreMenu->addAction(QStringLiteral("Trial Jump（协议调试）"));
     QAction *resetAction = moreMenu->addAction(QStringLiteral("复位节点"));
     moreMenu->addSeparator();
     QAction *readFlashAction = moreMenu->addAction(QStringLiteral("读取 Flash"));
@@ -777,8 +777,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             });
     connect(enterBootAction, &QAction::triggered, this,
             [this]() { sendCommonCommand(BootCommand::EnterBoot, QStringLiteral("进入 Bootloader")); });
-    connect(trialAction, &QAction::triggered, this,
-            [this]() { sendCommonCommand(BootCommand::JumpApp, QStringLiteral("试运行验证"), 0x01U); });
+    connect(trialAction, &QAction::triggered, this, &FirmwarePage::showCommandCenter);
     connect(resetAction, &QAction::triggered, this,
             [this]() { sendCommonCommand(BootCommand::Reset, QStringLiteral("复位节点")); });
     connect(readFlashAction, &QAction::triggered, this, &FirmwarePage::showCommandCenter);
