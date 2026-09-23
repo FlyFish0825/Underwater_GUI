@@ -71,14 +71,101 @@ CSV 和元数据文件，队列满时不阻塞通信线程，而是累计明确�
 
 ## 编译与运行
 
-使用项目已经锁定的工具链：
+本工程使用 Windows、Qt Widgets、C++17 和仓库内固定的工具链。请从仓库根目录打开 PowerShell，所有下面的相对路径都以该目录为起点。
+
+| 工具 | 锁定版本 | 仓库内位置 |
+| --- | --- | --- |
+| Qt | 5.15.19 | `toolchain/qt/5.15.19` |
+| MinGW GCC/G++ | 8.1.0 | `toolchain/mingw/8.1.0/Tools/mingw810_64` |
+| CMake | 3.28.6 | `toolchain/cmake/3.28.6/cmake-3.28.6-windows-x86_64` |
+| Ninja | 1.11.1 | `toolchain/ninja/1.11.1` |
+| clangd / clang-format | 14.0.6 | `toolchain/llvm/14.0.6` |
+
+### 编译过程
+
+1. `activate.ps1` 设置仓库和工具链目录变量，并把 Qt、MinGW、CMake、Ninja 加入当前 PowerShell 的 `PATH`。
+2. CMake 读取根目录 `CMakeLists.txt`，使用 Ninja 生成器，将 Debug 构建配置写入 `build/gui`。配置中指定项目内 Qt、`gcc.exe` 和 `g++.exe`。VSCode/clangd 所需的 `compile_commands.json` 由 VSCode 配置生成；手工配置时可添加 `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`。
+3. Ninja 编译 C++ 源码、Qt MOC/UIC/RCC 生成步骤和静态库，最后链接 `rov_ui.exe`。并行度为 2；标记为 `EXCLUDE_FROM_ALL` 的测试程序不会随主程序一起编译。
+4. `deploy-qt.ps1` 将运行时依赖复制到程序目录：Qt 与 MinGW DLL 放在 `build/gui`，Qt 平台插件放在 `build/gui/platforms`。
+5. 从 `build/gui/rov_ui.exe` 启动程序。
+
+### 编译目录和主要产物
+
+构建统一使用 `build/gui`，不要删除它来做普通增量编译。该目录已加入 `.gitignore`，只保存在本机。
+
+| 路径 | 用途 |
+| --- | --- |
+| `build/gui/CMakeCache.txt` | 当前 Debug 配置、Qt 与编译器路径等 CMake 缓存 |
+| `build/gui/build.ninja` | CMake 生成的 Ninja 构建规则 |
+| `build/gui/CMakeFiles/` | C++ 对象文件、AUTOMOC/AUTOUIC/AUTORCC 生成文件及中间产物 |
+| `build/gui/compile_commands.json` | 每个 C/C++ 文件的编译命令，供 clangd/VSCode 跳转与诊断使用 |
+| `build/gui/rov_ui.exe` | GUI 主程序 |
+| `build/gui/Qt5Core.dll`、`Qt5Gui.dll`、`Qt5Widgets.dll`，以及 `libgcc_s_seh-1.dll`、`libstdc++-6.dll`、`libwinpthread-1.dll` | Qt 与 MinGW 运行库 |
+| `build/gui/platforms/` | `qwindows.dll`、`qoffscreen.dll`、`qminimal.dll` 平台插件 |
+
+### 一键构建
+
+首次配置、完整构建或重新部署运行库时，在仓库根目录运行：
 
 ```powershell
-. 'F:\file\BaiduSyncdisk\Project\Underwater_GUI\toolchain\env\activate.ps1'
-& 'F:\file\BaiduSyncdisk\Project\Underwater_GUI\toolchain\env\build-gui.ps1'
+& '.\toolchain\env\build-gui.ps1'
 ```
 
-编译结果位于 `build/gui/rov_ui.exe`。Qt 和 MinGW 运行库部署使用匹配当前工具链的 `deploy-qt.ps1`。
+脚本依次执行工具链激活、CMake 配置、`ninja -C build/gui -j2` 和 Qt 运行库部署。再次运行会复用 `build/gui` 缓存，只重编发生变化的文件，然后重新部署运行库。
+
+### 分步执行命令
+
+需要检查或单独重做某一步时，可按以下顺序执行。配置命令适用于首次构建或需要重新生成 CMake 配置时：
+
+```powershell
+. '.\toolchain\env\activate.ps1'
+$root = $env:ROV_UI_ROOT
+$build = Join-Path $root 'build\gui'
+$cmake = Join-Path $env:ROV_UI_CMAKE_DIR 'bin\cmake.exe'
+$qt = $env:ROV_UI_QT_DIR.Replace('\', '/')
+$gcc = (Join-Path $env:ROV_UI_MINGW_DIR 'bin\gcc.exe').Replace('\', '/')
+$gxx = (Join-Path $env:ROV_UI_MINGW_DIR 'bin\g++.exe').Replace('\', '/')
+
+& $cmake -S $root -B $build -G Ninja `
+    '-DCMAKE_BUILD_TYPE=Debug' `
+    "-DCMAKE_PREFIX_PATH=$qt" `
+    "-DCMAKE_C_COMPILER=$gcc" `
+    "-DCMAKE_CXX_COMPILER=$gxx" `
+    '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON'
+```
+
+配置成功后，编译全部默认目标：
+
+```powershell
+$ninja = Join-Path $env:ROV_UI_NINJA_DIR 'ninja.exe'
+& $ninja -C $build -j2
+```
+
+或者只编译 GUI 主程序及其依赖：
+
+```powershell
+cmake --build $build --target rov_ui --parallel 2
+```
+
+CMake/Ninja 编译完成后，单独部署运行库：
+
+```powershell
+& '.\toolchain\env\deploy-qt.ps1' -Executable (Join-Path $build 'rov_ui.exe')
+```
+
+启动程序：
+
+```powershell
+& '.\build\gui\rov_ui.exe'
+```
+
+若 PowerShell 因执行策略阻止脚本，可在仓库根目录运行以下命令，在该子进程中临时绕过执行策略：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File '.\toolchain\env\build-gui.ps1'
+```
+
+若链接时报 `rov_ui.exe: Permission denied`，或部署 Qt DLL 时出现 `Copy-Item` 文件占用错误，通常是程序仍在运行并加载了这些文件。先关闭 `rov_ui.exe`，再重新运行一键构建脚本；确认输出没有 `Copy-Item` 错误，且显示 `Qt runtime deployed beside` 后，运行库部署才完成。构建脚本和 VSCode 配置都会使用 `build/gui`，共享同一份 Ninja/CMake 缓存。
 
 测试目标默认不参与主程序构建，需要验证时再显式构建对应测试目标。
 
