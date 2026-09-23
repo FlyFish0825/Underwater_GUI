@@ -61,7 +61,6 @@ class FirmwarePage final : public QWidget
   private:
     void refreshView();
     void refreshSerialDevices();
-    void toggleSerialConnection();
     void browseFirmwareFile();
     bool loadFirmwareFile(const QString &path);
     void selectNode(int index);
@@ -117,7 +116,6 @@ class FirmwarePage final : public QWidget
     QComboBox *m_serialDeviceCombo = nullptr;
     QComboBox *m_transferModeCombo = nullptr;
     QLabel *m_serialStatus = nullptr;
-    QPushButton *m_serialConnectButton = nullptr;
     QVector<SerialDeviceInfo> m_serialDevices;
     BootloaderCommunicationService *m_communication = nullptr;
     BootloaderService *m_bootloader = nullptr;
