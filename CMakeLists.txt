@@ -54,6 +54,10 @@ add_library(rov_ui_common STATIC
 add_library(rov_communication STATIC
     src/communication/bootloader/BootloaderDownloadController.cpp
     src/communication/bootloader/BootloaderDownloadController.h
+    src/communication/bootloader/BootloaderFirmwareReader.cpp
+    src/communication/bootloader/BootloaderFirmwareReader.h
+    src/communication/bootloader/BootloaderUpgradeSequence.cpp
+    src/communication/bootloader/BootloaderUpgradeSequence.h
     src/communication/bootloader/BootloaderProtocol.cpp
     src/communication/bootloader/BootloaderProtocol.h
     src/communication/bootloader/BootloaderService.cpp
@@ -211,12 +215,27 @@ if (WIN32)
     target_link_libraries(rov_communication PRIVATE setupapi)
 endif()
 
+
 if (WIN32)
     set_target_properties(rov_ui PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(rov_bootloader_firmware_reader_test EXCLUDE_FROM_ALL
+        tests/BootloaderFirmwareReaderTest.cpp
+    )
+    target_include_directories(rov_bootloader_firmware_reader_test PRIVATE src)
+    target_link_libraries(rov_bootloader_firmware_reader_test PRIVATE Qt5::Core rov_communication)
+    add_test(NAME rov_bootloader_firmware_reader_test COMMAND rov_bootloader_firmware_reader_test)
+
+    add_executable(rov_bootloader_upgrade_sequence_test EXCLUDE_FROM_ALL
+        tests/BootloaderUpgradeSequenceTest.cpp
+    )
+    target_include_directories(rov_bootloader_upgrade_sequence_test PRIVATE src)
+    target_link_libraries(rov_bootloader_upgrade_sequence_test PRIVATE Qt5::Core rov_communication)
+    add_test(NAME rov_bootloader_upgrade_sequence_test COMMAND rov_bootloader_upgrade_sequence_test)
+
     add_executable(rov_can_bitrate_settings_test EXCLUDE_FROM_ALL tests/CanBitrateSettingsTest.cpp)
     target_link_libraries(rov_can_bitrate_settings_test PRIVATE rov_page_settings rov_firmware_history)
     add_test(NAME rov_can_bitrate_settings_test COMMAND rov_can_bitrate_settings_test -platform offscreen)
