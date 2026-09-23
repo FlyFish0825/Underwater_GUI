@@ -1,5 +1,6 @@
 #include "pages/settings/SettingsPlaceholder.h"
 
+#include "ui/firmware_history/FirmwareHistoryDialog.h"
 #include "ui/common/AppComboBox.h"
 #include "ui/common/UiPrimitives.h"
 
@@ -8,7 +9,9 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QSettings>
+#include <QShowEvent>
 #include <QVBoxLayout>
 
 namespace rov
@@ -59,6 +62,7 @@ SettingsPlaceholder::SettingsPlaceholder(QWidget *connectionBar, QWidget *parent
                                    QStringLiteral("配置 USB-CAN 网关通信参数。"),
                                    QStringLiteral("通信配置")));
     auto *communicationCard = new CardWidget(QStringLiteral("通信配置"), IconKind::Settings);
+    communicationCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     auto *communicationRow = new QHBoxLayout;
     communicationRow->setContentsMargins(0, 0, 0, 0);
     communicationRow->setSpacing(12);
@@ -77,7 +81,7 @@ SettingsPlaceholder::SettingsPlaceholder(QWidget *connectionBar, QWidget *parent
                                                              kDefaultCanNominalBitrate));
     m_canBitrateCombo->setMinimumWidth(150);
     communicationRow->addWidget(m_canBitrateCombo);
-    communicationRow->addWidget(makeLabel(QStringLiteral("CAN 数据段速率")));
+    communicationRow->addWidget(makeLabel(QStringLiteral("CAN 数据速率")));
     m_canDataBitrateCombo = new AppComboBox(communicationCard);
     m_canDataBitrateCombo->setObjectName(QStringLiteral("canDataBitrateCombo"));
     for (const auto &option : kCanDataBitrateOptions)
@@ -93,33 +97,56 @@ SettingsPlaceholder::SettingsPlaceholder(QWidget *connectionBar, QWidget *parent
     m_applyCanBitrateButton = applyCanBitrate;
     applyCanBitrate->setEnabled(false);
     communicationRow->addWidget(applyCanBitrate);
+    m_canBitrateStatus = makeLabel(QStringLiteral("未连接网关"), QStringLiteral("mutedLabel"));
+    communicationRow->addWidget(m_canBitrateStatus);
     communicationRow->addStretch();
     communicationCard->contentLayout()->addLayout(communicationRow);
-    m_canBitrateStatus = makeLabel(QStringLiteral("未连接网关；可预选速率，连接后应用"),
-                                   QStringLiteral("mutedLabel"));
-    communicationCard->contentLayout()->addWidget(m_canBitrateStatus);
     QObject::connect(applyCanBitrate, &QPushButton::clicked, this,
                      &SettingsPlaceholder::requestSelectedCanBitrate);
     root->addWidget(communicationCard);
 
     auto *historyCard = new CardWidget(QStringLiteral("历史记录管理"), IconKind::List);
-    auto *historyRow = new QHBoxLayout;
-    historyRow->setContentsMargins(0, 0, 0, 0);
-    historyRow->setSpacing(12);
-    const int historyCount = m_historyStore.load().size();
-    m_historyStatus = makeLabel(
-        QStringLiteral("当前保存 %1 条 · 文件位于程序目录").arg(historyCount),
-        QStringLiteral("mutedLabel"));
-    historyRow->addWidget(m_historyStatus, 1);
+    historyCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    historyCard->contentLayout()->setContentsMargins(14, 8, 14, 9);
+    historyCard->contentLayout()->setSpacing(4);
+    m_historyStatus = makeLabel(QString(), QStringLiteral("mutedLabel"));
+    auto *openHistory = makeButton(QStringLiteral("打开历史记录"), QStringLiteral("softButton"));
+    historyCard->headerLayout()->addStretch();
+    historyCard->headerLayout()->addWidget(openHistory);
     auto *clearHistory = makeButton(QStringLiteral("清空历史记录"), QStringLiteral("dangerButton"));
-    clearHistory->setToolTip(QStringLiteral("需要连续确认两次，才会清空固件升级历史记录"));
-    historyRow->addWidget(clearHistory);
-    historyCard->contentLayout()->addLayout(historyRow);
+    clearHistory->setToolTip(QStringLiteral("清空固件升级历史记录"));
+    historyCard->headerLayout()->addWidget(clearHistory);
+    m_historyPreview = makeLabel(QString(), QStringLiteral("mutedLabel"));
+    m_historyPreview->setWordWrap(true);
+    m_historyPreview->setTextFormat(Qt::RichText);
+    m_historyPreview->setMaximumHeight(82);
+    m_historyPreview->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    historyCard->contentLayout()->addWidget(m_historyPreview);
+    historyCard->contentLayout()->addWidget(m_historyStatus);
+    refreshHistoryPreview();
+    QObject::connect(openHistory, &QPushButton::clicked, this, &SettingsPlaceholder::showHistory);
     QObject::connect(clearHistory, &QPushButton::clicked, this,
                      &SettingsPlaceholder::clearHistoryWithConfirmation);
 
     root->addWidget(historyCard);
     root->addStretch();
+}
+
+SettingsPlaceholder::~SettingsPlaceholder()
+{
+    if (m_historyDialog != nullptr)
+    {
+        m_historyDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+        m_historyDialog->close();
+        delete m_historyDialog.data();
+        m_historyDialog = nullptr;
+    }
+}
+
+void SettingsPlaceholder::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    refreshHistoryPreview();
 }
 
 void SettingsPlaceholder::setGatewayConnected(const bool connected)
@@ -133,7 +160,7 @@ void SettingsPlaceholder::setGatewayConnected(const bool connected)
 
     if (m_canBitrateStatus != nullptr)
         m_canBitrateStatus->setText(connected ? QStringLiteral("网关已连接")
-                                              : QStringLiteral("未连接网关；可预选速率，连接后应用"));
+                                              : QStringLiteral("网关未连接"));
 
     if (m_applyCanBitrateButton != nullptr)
         m_applyCanBitrateButton->setEnabled(connected && !m_canBitrateRequestPending);
@@ -216,27 +243,95 @@ void SettingsPlaceholder::clearHistoryWithConfirmation()
     if (count == 0)
     {
         m_historyStatus->setText(QStringLiteral("当前没有可清空的历史记录"));
+        QMessageBox information;
+        information.setWindowTitle(QStringLiteral("历史记录"));
+        information.setText(QStringLiteral("当前没有可清空的历史记录。"));
+        information.setIcon(QMessageBox::Information);
+        information.setStandardButtons(QMessageBox::Ok);
+        information.setWindowFlag(Qt::Window, true);
+        information.setWindowModality(Qt::ApplicationModal);
+        information.exec();
         return;
     }
 
-    const auto first = QMessageBox::warning(
-        this, QStringLiteral("确认清空历史记录"),
-        QStringLiteral("即将清空 %1 条固件升级历史记录。\n是否继续？").arg(count),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-    if (first != QMessageBox::Yes)
+    // Settings lives inside MainWindow's QGraphicsProxyWidget. A QMessageBox parented to this
+    // page can be embedded/scaled by the proxy and end up behind the viewport, making a click
+    // appear to do nothing. Keep the confirmation as an independent application-modal window.
+    QMessageBox confirmation;
+    confirmation.setWindowTitle(QStringLiteral("确认清空历史记录"));
+    confirmation.setText(QStringLiteral("即将清空 %1 条固件升级历史记录。\n此操作无法撤销，是否继续？")
+                             .arg(count));
+    confirmation.setIcon(QMessageBox::Warning);
+    confirmation.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+    confirmation.setDefaultButton(QMessageBox::No);
+    confirmation.setWindowFlag(Qt::Window, true);
+    confirmation.setWindowModality(Qt::ApplicationModal);
+    if (confirmation.exec() != QMessageBox::Yes)
         return;
 
-    const auto second = QMessageBox::critical(
-        this, QStringLiteral("请再次确认"),
-        QStringLiteral("历史记录清空后无法恢复。\n确定要永久清空吗？"),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-    if (second != QMessageBox::Yes)
-        return;
+    const bool cleared = m_historyStore.clear();
+    refreshHistoryPreview();
+    m_historyStatus->setText(cleared ? QStringLiteral("历史记录已清空")
+                                     : QStringLiteral("清空失败：无法写入历史记录文件"));
+    QMessageBox result;
+    result.setWindowTitle(QStringLiteral("历史记录"));
+    result.setText(cleared ? QStringLiteral("历史记录已清空。")
+                           : QStringLiteral("清空失败：无法写入历史记录文件。"));
+    result.setIcon(cleared ? QMessageBox::Information : QMessageBox::Critical);
+    result.setStandardButtons(QMessageBox::Ok);
+    result.setWindowFlag(Qt::Window, true);
+    result.setWindowModality(Qt::ApplicationModal);
+    result.exec();
+}
 
-    if (m_historyStore.clear())
-        m_historyStatus->setText(QStringLiteral("历史记录已清空"));
-    else
-        m_historyStatus->setText(QStringLiteral("清空失败：无法写入历史记录文件"));
+void SettingsPlaceholder::showHistory()
+{
+    if (m_historyDialog != nullptr && m_historyDialog->isVisible())
+    {
+        m_historyDialog->raise();
+        m_historyDialog->activateWindow();
+        return;
+    }
+    if (m_historyDialog != nullptr)
+    {
+        m_historyDialog->deleteLater();
+        m_historyDialog = nullptr;
+    }
+    m_historyDialog = new FirmwareHistoryDialog(&m_historyStore, nullptr);
+    m_historyDialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_historyDialog->setWindowFlag(Qt::Window, true);
+    m_historyDialog->setWindowModality(Qt::ApplicationModal);
+    QWidget *owner = window();
+    if (owner != nullptr)
+    {
+        const QSize ownerSize = owner->size();
+        m_historyDialog->resize(qMax(900, ownerSize.width() * 3 / 5),
+                                qMax(600, ownerSize.height() * 3 / 5));
+        m_historyDialog->move(owner->frameGeometry().center() - m_historyDialog->rect().center());
+    }
+    m_historyDialog->open();
+    m_historyDialog->raise();
+    m_historyDialog->activateWindow();
+}
+
+void SettingsPlaceholder::refreshHistoryPreview()
+{
+    if (m_historyPreview == nullptr || m_historyStatus == nullptr)
+        return;
+    const auto entries = m_historyStore.load();
+    m_historyStatus->setText(QStringLiteral("共 %1 条记录 · 最新记录在前").arg(entries.size()));
+    QStringList lines;
+    const int first = qMax(0, entries.size() - 3);
+    for (int index = entries.size() - 1; index >= first; --index)
+    {
+        const auto &entry = entries.at(index);
+        lines.append(QStringLiteral("<div>[%1] %2</div>")
+                         .arg(entry.timestamp.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
+                              entry.message.toHtmlEscaped()));
+    }
+    if (lines.isEmpty())
+        lines.append(QStringLiteral("<span style='color:#8798aa'>暂无历史记录</span>"));
+    m_historyPreview->setText(lines.join(QString()));
 }
 
 } // namespace rov

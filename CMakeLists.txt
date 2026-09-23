@@ -197,6 +197,7 @@ target_link_libraries(rov_page_firmware PUBLIC rov_ui_common)
 target_link_libraries(rov_page_manipulator PUBLIC rov_ui_common)
 target_link_libraries(rov_page_vision PUBLIC rov_ui_common)
 target_link_libraries(rov_page_settings PUBLIC rov_ui_common)
+target_link_libraries(rov_page_settings PUBLIC rov_firmware_history_ui)
 
 target_include_directories(rov_ui PRIVATE src)
 
