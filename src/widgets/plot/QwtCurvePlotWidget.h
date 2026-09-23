@@ -32,6 +32,11 @@ class QwtCurvePlotWidget final : public QWidget
     void setDisplayWindowSeconds(double seconds);
     void setFollowLatest(bool follow);
 
+  signals:
+    // Manual zooming and axis scaling pause the moving viewport so the next
+    // snapshot cannot immediately overwrite the user's view.
+    void followLatestChanged(bool follow);
+
   protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -47,6 +52,7 @@ class QwtCurvePlotWidget final : public QWidget
     bool m_followLatest = true;
 
     void applyDisplayWindow();
+    void pauseFollowForManualView();
 };
 
 } // namespace rov

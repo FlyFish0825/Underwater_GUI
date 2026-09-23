@@ -53,6 +53,7 @@ class MotorDebugPage final : public QWidget
     void updateCurveAreaLayout();
     void refreshCurveWindows();
     void autoFitAllCurves();
+    void setHistoryLimit(int limit);
     void detachCurveWindow(QWidget *window, const QPoint &globalPos, const QPoint &dragOffset);
     void restoreCurveWindow(QWidget *window);
     void sendSpeedControl(bool runCommand, bool enabled);
@@ -81,6 +82,7 @@ class MotorDebugPage final : public QWidget
     QSpinBox *m_speedInput = nullptr;
     QPushButton *m_runButton = nullptr;
     QTimer *m_speedDispatchTimer = nullptr;
+    QComboBox *m_historyLimit = nullptr;
     QPoint m_curveDragStartGlobal;
     QPoint m_curveDragOffset;
     QWidget *m_curveDragWindow = nullptr;
