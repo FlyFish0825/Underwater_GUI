@@ -1,7 +1,7 @@
-#include "pages/firmware/FirmwareHistoryDialog.h"
+#include "ui/firmware_history/FirmwareHistoryDialog.h"
 
 #include "data/store/FirmwareHistoryStore.h"
-#include "pages/firmware/FirmwareLogFormatter.h"
+#include "ui/firmware_history/FirmwareLogFormatter.h"
 #include "ui/common/AppComboBox.h"
 #include "ui/common/AppFluentButton.h"
 #include "ui/common/AppLineEdit.h"

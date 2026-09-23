@@ -84,6 +84,13 @@ add_library(rov_firmware_history STATIC
     src/data/store/FirmwareHistoryStore.h
 )
 
+add_library(rov_firmware_history_ui STATIC
+    src/ui/firmware_history/FirmwareHistoryDialog.cpp
+    src/ui/firmware_history/FirmwareHistoryDialog.h
+    src/ui/firmware_history/FirmwareLogFormatter.cpp
+    src/ui/firmware_history/FirmwareLogFormatter.h
+)
+
 add_library(rov_motor_data STATIC
     src/contracts/motor/ObserverMotorContract.h
     src/data/services/ObserverMotorDataService.cpp
@@ -115,12 +122,8 @@ add_library(rov_page_motor_debug STATIC
 add_library(rov_page_firmware STATIC
     src/pages/firmware/BootloaderCommandDialog.cpp
     src/pages/firmware/BootloaderCommandDialog.h
-    src/pages/firmware/FirmwareHistoryDialog.cpp
-    src/pages/firmware/FirmwareHistoryDialog.h
     src/pages/firmware/FirmwareLogRecordingDialog.cpp
     src/pages/firmware/FirmwareLogRecordingDialog.h
-    src/pages/firmware/FirmwareLogFormatter.cpp
-    src/pages/firmware/FirmwareLogFormatter.h
     src/pages/firmware/FirmwarePage.cpp
     src/pages/firmware/FirmwarePage.h
 )
@@ -163,6 +166,7 @@ set(ROV_UI_TARGETS
     rov_camera
     rov_research_recording
     rov_firmware_history
+    rov_firmware_history_ui
     rov_page_dashboard
     rov_page_motor_debug
     rov_page_firmware
@@ -178,6 +182,8 @@ endforeach()
 
 target_link_libraries(rov_page_firmware PUBLIC rov_communication)
 target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history)
+target_link_libraries(rov_firmware_history_ui PUBLIC rov_firmware_history rov_ui_common)
+target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history_ui)
 target_link_libraries(rov_motor_data PUBLIC rov_communication)
 if (WIN32)
     target_link_libraries(rov_camera PRIVATE ole32 oleaut32 strmiids uuid)

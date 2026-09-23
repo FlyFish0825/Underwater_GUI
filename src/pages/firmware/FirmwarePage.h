@@ -15,11 +15,13 @@ class QBoxLayout;
 class QCheckBox;
 class QFrame;
 class QLineEdit;
+class QProgressBar;
 class QResizeEvent;
 class QTextBrowser;
 class QPushButton;
 class QTimer;
 class QTableWidget;
+class QGridLayout;
 
 namespace rov
 {
@@ -28,6 +30,8 @@ class BootloaderCommandDialog;
 class FirmwareHistoryDialog;
 class FirmwareLogRecordingDialog;
 class BootloaderDownloadController;
+class BootloaderFirmwareReader;
+class BootloaderUpgradeSequence;
 class AppProgressBar;
 
 class FirmwarePage final : public QWidget
@@ -60,8 +64,12 @@ class FirmwarePage final : public QWidget
 
   private:
     void refreshView();
+    void updateMainColumns();
+    void refreshMultiNodeCards();
+    void invalidateMultiNodePlan();
     void refreshSerialDevices();
     void browseFirmwareFile();
+    void exportDeviceFirmware();
     bool loadFirmwareFile(const QString &path);
     void selectNode(int index);
     void selectTableRow(int row, int column);
@@ -70,7 +78,7 @@ class FirmwarePage final : public QWidget
     void updateNodePhase(const QString &phase);
     void updateNodeRoles();
     bool confirmDangerousOperation(BootCommand command, quint8 target);
-    void sendCommonCommand(BootCommand command, const QString &label, quint8 byte2 = 0,
+    bool sendCommonCommand(BootCommand command, const QString &label, quint8 byte2 = 0,
                            const QByteArray &params = QByteArray());
     void showCommandCenter();
     void handleBootResponse(const BootResponse &response);
@@ -90,6 +98,10 @@ class FirmwarePage final : public QWidget
 
     FirmwareSnapshot m_snapshot;
     QBoxLayout *m_mainRowLayout = nullptr;
+    QBoxLayout *m_leftColumnLayout = nullptr;
+    QBoxLayout *m_rightColumnLayout = nullptr;
+    QBoxLayout *m_fileCardLayoutOwner = nullptr;
+    QFrame *m_firmwareFilePanel = nullptr;
     QLabel *m_fileName = nullptr;
     QLabel *m_fileVersion = nullptr;
     QLabel *m_fileSize = nullptr;
@@ -109,10 +121,26 @@ class FirmwarePage final : public QWidget
     QFrame *m_dropZone = nullptr;
     QFrame *m_connectionBar = nullptr;
     QFrame *m_multiModePanel = nullptr;
+    QFrame *m_multiNodeStatusPanel = nullptr;
+    QGridLayout *m_multiNodeGrid = nullptr;
+    int m_multiNodeGridColumns = 0;
+    QFrame *m_targetStatusPanel = nullptr;
+    QFrame *m_nodeControlPanel = nullptr;
     QFrame *m_protocolModePanel = nullptr;
     QLabel *m_demoBanner = nullptr;
     QLabel *m_fileValidation = nullptr;
     QTableWidget *m_nodeTable = nullptr;
+    QVector<QFrame *> m_multiNodeCards;
+    QVector<QLabel *> m_multiNodeIds;
+    QVector<QLabel *> m_multiNodeNames;
+    QVector<QLabel *> m_multiNodeRoles;
+    QVector<QLabel *> m_multiNodeVersions;
+    QVector<QLabel *> m_multiNodeTargets;
+    QVector<QLabel *> m_multiNodeOnline;
+    QVector<QLabel *> m_multiNodeStates;
+    QVector<AppProgressBar *> m_multiNodeProgressBars;
+    QVector<QLabel *> m_multiNodeProgressValues;
+    QLabel *m_multiConfigStatus = nullptr;
     QComboBox *m_serialDeviceCombo = nullptr;
     QComboBox *m_transferModeCombo = nullptr;
     QLabel *m_serialStatus = nullptr;
@@ -120,6 +148,8 @@ class FirmwarePage final : public QWidget
     BootloaderCommunicationService *m_communication = nullptr;
     BootloaderService *m_bootloader = nullptr;
     BootloaderDownloadController *m_downloadController = nullptr;
+    BootloaderFirmwareReader *m_firmwareReader = nullptr;
+    BootloaderUpgradeSequence *m_upgradeSequence = nullptr;
     // 高级命令窗口关闭后自动清空，支持重复打开。
     QPointer<BootloaderCommandDialog> m_commandDialog;
     QStringList m_runtimeLog;
@@ -128,7 +158,10 @@ class FirmwarePage final : public QWidget
     QTimer *m_heartbeatWatchdog = nullptr;
     QTimer *m_deviceScanTimer = nullptr;
     QTimer *m_bootProbeTimer = nullptr;
+    QTimer *m_autoRefreshResponseTimer = nullptr;
     quint8 m_bootProbeTarget = 0;
+    quint8 m_autoRefreshAfterBootTarget = 0;
+    quint8 m_autoRefreshStage = 0;
     quint64 m_heartbeatCount = 0;
     QString m_deviceSignature;
     FirmwareHistoryStore m_historyStore;
@@ -141,9 +174,18 @@ class FirmwarePage final : public QWidget
     QStringList m_recordedLogs;
     bool m_logRecording = true;
     QComboBox *m_targetNodeCombo = nullptr;
+    QComboBox *m_readNodeCombo = nullptr;
+    QPushButton *m_readFirmwareButton = nullptr;
+    QProgressBar *m_readFirmwareProgress = nullptr;
+    QString m_readFirmwareSavePath;
+    quint8 m_readFirmwareTarget = 0;
     QComboBox *m_canaryNodeCombo = nullptr;
     QComboBox *m_guardNodeCombo = nullptr;
     QVector<QCheckBox *> m_multiNodeChecks;
+    QVector<QCheckBox *> m_multiStrategyChecks;
+    bool m_multiNodePlanApplied = false;
+    QPushButton *m_multiApplyButton = nullptr;
+    QPushButton *m_multiUpdateButton = nullptr;
     int m_upgradeMode = 0;
     QLabel *m_stateNode = nullptr;
     QLabel *m_stateDevice = nullptr;

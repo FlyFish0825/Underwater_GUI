@@ -1,5 +1,5 @@
 #include "pages/firmware/BootloaderCommandDialog.h"
-#include "pages/firmware/FirmwareLogFormatter.h"
+#include "ui/firmware_history/FirmwareLogFormatter.h"
 #include "ui/common/AppCheckBox.h"
 #include "ui/common/AppComboBox.h"
 #include "ui/common/AppFluentButton.h"

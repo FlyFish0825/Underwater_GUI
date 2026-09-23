@@ -1,4 +1,4 @@
-#include "pages/firmware/FirmwareLogFormatter.h"
+#include "ui/firmware_history/FirmwareLogFormatter.h"
 
 #include <QByteArray>
 #include <QHash>

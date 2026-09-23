@@ -1,15 +1,18 @@
 #include "pages/firmware/FirmwarePage.h"
 
 #include "pages/firmware/BootloaderCommandDialog.h"
-#include "pages/firmware/FirmwareHistoryDialog.h"
+#include "ui/firmware_history/FirmwareHistoryDialog.h"
 #include "pages/firmware/FirmwareLogRecordingDialog.h"
-#include "pages/firmware/FirmwareLogFormatter.h"
+#include "ui/firmware_history/FirmwareLogFormatter.h"
 #include "communication/bootloader/BootloaderDownloadController.h"
+#include "communication/bootloader/BootloaderFirmwareReader.h"
+#include "communication/bootloader/BootloaderUpgradeSequence.h"
 #include "communication/bootloader/BootloaderProtocol.h"
 #include "ui/common/AppProgressBar.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QDateTime>
+#include <QDir>
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -19,6 +22,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QComboBox>
 #include <QHash>
 #include <QGridLayout>
@@ -386,9 +390,34 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(10, 8, 10, 8);
     root->setSpacing(8);
-    root->addWidget(makePageHeader(QStringLiteral("安全固件升级控制台"),
-                                   QStringLiteral("选择固件与目标节点后，由升级控制器自动执行安全下载和验证。"),
-                                   QStringLiteral("正常升级与协议调试相互隔离")));
+    auto *pageHeader = makePageHeader(QStringLiteral("安全固件升级控制台"),
+                                      QStringLiteral("选择固件与目标节点后，由升级控制器自动执行安全下载和验证。"),
+                                      QStringLiteral("正常升级与协议调试相互隔离"));
+    auto *readControls = new QWidget(pageHeader);
+    auto *readLayout = new QHBoxLayout(readControls);
+    readLayout->setContentsMargins(0, 0, 0, 0);
+    readLayout->setSpacing(6);
+    readLayout->addWidget(makeLabel(QStringLiteral("设备固件"), QStringLiteral("mutedLabel")));
+    m_readNodeCombo = new QComboBox(readControls);
+    m_readNodeCombo->setObjectName(QStringLiteral("deviceFirmwareNodeCombo"));
+    for (int node = 1; node <= 8; ++node)
+        m_readNodeCombo->addItem(QStringLiteral("Node%1").arg(node), node);
+    m_readNodeCombo->setToolTip(QStringLiteral("选择要导出当前 APP 固件的节点"));
+    readLayout->addWidget(m_readNodeCombo);
+    m_readFirmwareButton = makeButton(QStringLiteral("读取并保存 BIN"), QStringLiteral("softButton"));
+    m_readFirmwareButton->setObjectName(QStringLiteral("deviceFirmwareReadButton"));
+    m_readFirmwareButton->setToolTip(QStringLiteral("先让所选节点进入 Bootloader，再通过 READ 读取当前 APP；读取后可复位返回 APP"));
+    readLayout->addWidget(m_readFirmwareButton);
+    m_readFirmwareProgress = new QProgressBar(readControls);
+    m_readFirmwareProgress->setObjectName(QStringLiteral("deviceFirmwareReadProgress"));
+    m_readFirmwareProgress->setRange(0, 100);
+    m_readFirmwareProgress->setValue(0);
+    m_readFirmwareProgress->setFormat(QStringLiteral("待命"));
+    m_readFirmwareProgress->setFixedWidth(94);
+    readLayout->addWidget(m_readFirmwareProgress);
+    auto *pageHeaderLayout = qobject_cast<QHBoxLayout *>(pageHeader->layout());
+    pageHeaderLayout->insertWidget(1, readControls, 0, Qt::AlignVCenter);
+    root->addWidget(pageHeader);
 
     auto *modeBar = new QFrame;
     modeBar->setObjectName(QStringLiteral("connectionBar"));
@@ -399,7 +428,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     auto *modeGroup = new QButtonGroup(this);
     modeGroup->setExclusive(true);
     const QStringList modeNames = {QStringLiteral("单节点安全升级"),
-                                   QStringLiteral("多节点自治升级"),
+                                    QStringLiteral("多节点顺序升级"),
                                    QStringLiteral("协议调试模式")};
     for (int mode = 0; mode < modeNames.size(); ++mode)
     {
@@ -410,8 +439,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
         modeLayout->addWidget(button);
     }
     modeLayout->addStretch();
-    m_demoBanner = makeLabel(QStringLiteral("🧪 演示/离线模式 · 不会发送任何 CAN 控制命令"),
-                             QStringLiteral("statusIdle"));
+    m_demoBanner = makeLabel(QStringLiteral("离线"), QStringLiteral("statusWarn"));
     modeLayout->addWidget(m_demoBanner);
     root->addWidget(modeBar);
 
@@ -419,6 +447,8 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     m_mainRowLayout = mainRow;
     mainRow->setSpacing(8);
     auto *fileCard = new CardWidget(QStringLiteral("固件文件与安全检查"), IconKind::File);
+    fileCard->setObjectName(QStringLiteral("firmwareFileCard"));
+    m_firmwareFilePanel = fileCard;
     fileCard->contentLayout()->setContentsMargins(10, 8, 10, 10);
     fileCard->contentLayout()->setSpacing(6);
     auto *dropZone = new FirmwareDropZone;
@@ -487,9 +517,12 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     fileCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
 
     auto *left = new QVBoxLayout;
+    m_leftColumnLayout = left;
+    m_fileCardLayoutOwner = left;
     left->setSpacing(8);
     left->addWidget(fileCard);
     auto *nodeControl = new CardWidget(QStringLiteral("节点信息卡"), IconKind::Action);
+    m_nodeControlPanel = nodeControl;
     nodeControl->contentLayout()->setContentsMargins(10, 8, 10, 10);
     nodeControl->contentLayout()->setSpacing(6);
     auto *targetForm = new QGridLayout;
@@ -505,12 +538,14 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     commandColumn->setSpacing(5);
     commandColumn->addWidget(makeLabel(QStringLiteral("节点操作"), QStringLiteral("mutedLabel")));
     auto *refreshNode = makeButton(QStringLiteral("刷新状态"), QStringLiteral("softButton"));
+    auto *enterBootButton = makeButton(QStringLiteral("进入 Boot"), QStringLiteral("softButton"));
+    auto *resetButton = makeButton(QStringLiteral("复位"), QStringLiteral("softButton"));
     commandColumn->addWidget(refreshNode);
+    commandColumn->addWidget(enterBootButton);
+    commandColumn->addWidget(resetButton);
     auto *more = makeButton(QStringLiteral("更多…"), QStringLiteral("softButton"));
     auto *moreMenu = new QMenu(more);
-    QAction *enterBootAction = moreMenu->addAction(QStringLiteral("进入 Bootloader"));
     QAction *trialAction = moreMenu->addAction(QStringLiteral("试运行验证"));
-    QAction *resetAction = moreMenu->addAction(QStringLiteral("复位节点"));
     moreMenu->addSeparator();
     QAction *protocolAction = moreMenu->addAction(QStringLiteral("协议调试"));
     more->setMenu(moreMenu);
@@ -553,6 +588,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     mainRow->addLayout(left, 3);
 
     auto *right = new QVBoxLayout;
+    m_rightColumnLayout = right;
     right->setSpacing(8);
     // USB CDC 只负责连接状态检查，控件由 MainWindow 放到全局连接栏。
     m_connectionBar = new QFrame;
@@ -579,7 +615,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     m_serialStatus->setTextFormat(Qt::RichText);
     connectionRow->addWidget(m_serialStatus, 1);
 
-    auto *multiCard = new CardWidget(QStringLiteral("多节点自治升级配置"), IconKind::Firmware);
+    auto *multiCard = new CardWidget(QStringLiteral("多节点顺序升级配置"), IconKind::Firmware);
     m_multiModePanel = multiCard;
     multiCard->contentLayout()->setContentsMargins(10, 6, 10, 8);
     auto *multiNodes = new QGridLayout;
@@ -587,7 +623,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
     for (int node = 1; node <= 8; ++node)
     {
         auto *check = new QCheckBox(QStringLiteral("Node%1 %2").arg(node).arg(thrusterDisplayName(node - 1)));
-        check->setChecked(node == 1);
+        check->setChecked(node == 1 || node == 8);
         m_multiNodeChecks.append(check);
         multiNodes->addWidget(check, 1 + (node - 1) / 4, (node - 1) % 4);
     }
@@ -612,12 +648,141 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                                   QStringLiteral("Distributed Verify")})
     {
         auto *option = new QCheckBox(policy);
-        option->setChecked(true);
-        roles->addWidget(option);
+        option->setChecked(false);
+        option->setEnabled(false);
+        option->setToolTip(QStringLiteral("该设备协议/协调流程尚未实现，当前不参与升级"));
+        m_multiStrategyChecks.append(option);
     }
     roles->addStretch();
     multiCard->contentLayout()->addLayout(roles);
+    auto *policyRow = new QHBoxLayout;
+    for (QCheckBox *option : m_multiStrategyChecks)
+        policyRow->addWidget(option);
+    policyRow->addStretch();
+    multiCard->contentLayout()->addLayout(policyRow);
+    auto *strategyNote = makeLabel(
+        QStringLiteral("按 Canary 优先、Guard 最后逐节点升级；设备自治修复、回滚与分布式验证尚未接入。"),
+        QStringLiteral("mutedLabel"));
+    strategyNote->setWordWrap(true);
+    multiCard->contentLayout()->addWidget(strategyNote);
+    auto *multiApplyRow = new QHBoxLayout;
+    auto *applyMultiConfig = makeButton(QStringLiteral("应用配置"), QStringLiteral("softButton"));
+    m_multiApplyButton = applyMultiConfig;
+    m_multiConfigStatus = makeLabel(QStringLiteral("配置尚未应用"), QStringLiteral("mutedLabel"));
+    multiApplyRow->addWidget(applyMultiConfig);
+    multiApplyRow->addWidget(m_multiConfigStatus, 1);
+    multiCard->contentLayout()->addLayout(multiApplyRow);
+    const auto invalidatePlan = [this]() { invalidateMultiNodePlan(); };
+    for (QCheckBox *check : m_multiNodeChecks)
+        connect(check, &QCheckBox::toggled, this, invalidatePlan);
+    connect(m_canaryNodeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this, invalidatePlan](int)
+            {
+                invalidatePlan();
+                updateNodeRoles();
+            });
+    connect(m_guardNodeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this, invalidatePlan](int)
+            {
+                invalidatePlan();
+                updateNodeRoles();
+            });
+    connect(applyMultiConfig, &QPushButton::clicked, this,
+            [this]()
+            {
+                const int canary = m_canaryNodeCombo->currentData().toInt();
+                const int guard = m_guardNodeCombo->currentData().toInt();
+                bool canarySelected = false;
+                bool guardSelected = false;
+                for (int i = 0; i < m_multiNodeChecks.size(); ++i)
+                {
+                    canarySelected |= i + 1 == canary && m_multiNodeChecks.at(i)->isChecked();
+                    guardSelected |= i + 1 == guard && m_multiNodeChecks.at(i)->isChecked();
+                }
+                if (canary == guard || !canarySelected || !guardSelected)
+                {
+                    m_multiNodePlanApplied = false;
+                    m_multiConfigStatus->setText(QStringLiteral("应用失败：Canary/Guard 必须不同且都在目标列表中"));
+                    m_multiConfigStatus->setObjectName(QStringLiteral("statusBad"));
+                }
+                else
+                {
+                    m_multiNodePlanApplied = true;
+                    m_multiConfigStatus->setText(QStringLiteral("升级计划已应用到页面；设备未确认"));
+                    m_multiConfigStatus->setObjectName(QStringLiteral("statusGood"));
+                }
+                m_multiConfigStatus->style()->unpolish(m_multiConfigStatus);
+                m_multiConfigStatus->style()->polish(m_multiConfigStatus);
+                updateSafetyLock();
+            });
     right->addWidget(m_multiModePanel);
+
+    auto *multiStatusCard = new CardWidget(QStringLiteral("多节点升级状态（8）"), IconKind::Firmware);
+    m_multiNodeStatusPanel = multiStatusCard;
+    multiStatusCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
+    m_multiNodeGrid = new QGridLayout;
+    m_multiNodeGrid->setContentsMargins(0, 0, 0, 0);
+    m_multiNodeGrid->setHorizontalSpacing(8);
+    m_multiNodeGrid->setVerticalSpacing(8);
+    for (int i = 0; i < 8; ++i)
+    {
+        auto *nodeCard = new CardWidget(QStringLiteral("Node%1").arg(i + 1), IconKind::Firmware);
+        nodeCard->contentLayout()->setContentsMargins(8, 5, 8, 7);
+        nodeCard->contentLayout()->setSpacing(3);
+        auto *identity = new QHBoxLayout;
+        auto *nodeId = makeLabel(QStringLiteral("0x%1").arg(i + 1, 2, 16, QLatin1Char('0')),
+                                 QStringLiteral("mutedLabel"));
+        auto *nodeName = makeLabel(thrusterDisplayName(i), QStringLiteral("sectionTitle"));
+        identity->addWidget(nodeId);
+        identity->addWidget(nodeName, 1);
+        auto *role = makeLabel(QStringLiteral("普通"), QStringLiteral("mutedLabel"));
+        role->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        identity->addWidget(role);
+        nodeCard->contentLayout()->addLayout(identity);
+        auto *versions = new QHBoxLayout;
+        auto *currentVersion = makeLabel(QStringLiteral("当前版本：--"), QStringLiteral("bodyValue"));
+        auto *targetVersion = makeLabel(QStringLiteral("目标版本：--"), QStringLiteral("bodyValue"));
+        versions->addWidget(currentVersion, 1);
+        versions->addWidget(targetVersion, 1);
+        nodeCard->contentLayout()->addLayout(versions);
+        auto *statusRow = new QHBoxLayout;
+        auto *online = makeLabel(QStringLiteral("离线"), QStringLiteral("statusIdle"));
+        auto *state = makeLabel(QStringLiteral("空闲"), QStringLiteral("statusIdle"));
+        statusRow->addWidget(online);
+        statusRow->addStretch();
+        statusRow->addWidget(state);
+        nodeCard->contentLayout()->addLayout(statusRow);
+        auto *progressRow = new QHBoxLayout;
+        auto *progress = new AppProgressBar;
+        progress->setRange(0, 100);
+        progress->setValue(0);
+        auto *progressValue = makeLabel(QStringLiteral("0%"), QStringLiteral("bodyValue"));
+        progressValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        progressValue->setFixedWidth(38);
+        progressRow->addWidget(progress, 1);
+        progressRow->addWidget(progressValue);
+        nodeCard->contentLayout()->addLayout(progressRow);
+        m_multiNodeCards.append(nodeCard);
+        m_multiNodeIds.append(nodeId);
+        m_multiNodeNames.append(nodeName);
+        m_multiNodeRoles.append(role);
+        m_multiNodeVersions.append(currentVersion);
+        m_multiNodeTargets.append(targetVersion);
+        m_multiNodeOnline.append(online);
+        m_multiNodeStates.append(state);
+        m_multiNodeProgressBars.append(progress);
+        m_multiNodeProgressValues.append(progressValue);
+        m_multiNodeGrid->addWidget(nodeCard, i / 4, i % 4);
+    }
+    auto *multiActions = new QHBoxLayout;
+    m_multiUpdateButton = makeButton(QStringLiteral("开始多节点升级"), QStringLiteral("primaryButton"));
+    m_multiUpdateButton->setEnabled(false);
+    m_multiUpdateButton->setToolTip(QStringLiteral("请先应用升级计划；尚未应用前无法开始"));
+    multiActions->addStretch();
+    multiActions->addWidget(m_multiUpdateButton);
+    multiStatusCard->contentLayout()->addLayout(m_multiNodeGrid);
+    multiStatusCard->contentLayout()->addLayout(multiActions);
+    right->addWidget(m_multiNodeStatusPanel);
 
     auto *protocolCard = new CardWidget(QStringLiteral("协议调试模式"), IconKind::Action);
     m_protocolModePanel = protocolCard;
@@ -632,6 +797,7 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
 
     auto *targetCard =
         new CardWidget(QStringLiteral("节点升级状态（8）"), IconKind::Firmware);
+    m_targetStatusPanel = targetCard;
     targetCard->contentLayout()->setContentsMargins(8, 6, 8, 8);
     targetCard->contentLayout()->setSpacing(5);
     m_nodeTable = new QTableWidget(0, 7);
@@ -795,15 +961,17 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                 sendCommonCommand(BootCommand::GetInfo, QStringLiteral("刷新设备信息"));
                 sendCommonCommand(BootCommand::GetStatus, QStringLiteral("刷新运行状态"));
             });
-    connect(enterBootAction, &QAction::triggered, this,
+    connect(enterBootButton, &QPushButton::clicked, this,
             [this]() { sendCommonCommand(BootCommand::EnterBoot, QStringLiteral("进入 Bootloader")); });
     connect(trialAction, &QAction::triggered, this, &FirmwarePage::startTrialValidation);
-    connect(resetAction, &QAction::triggered, this,
+    connect(resetButton, &QPushButton::clicked, this,
             [this]() { sendCommonCommand(BootCommand::Reset, QStringLiteral("复位节点")); });
     connect(protocolAction, &QAction::triggered, this, &FirmwarePage::showCommandCenter);
     dropZone->setFileHandler([this](const QString &path) { loadFirmwareFile(path); });
     connect(browse, &QPushButton::clicked, this, &FirmwarePage::browseFirmwareFile);
     connect(m_updateButton, &QPushButton::clicked, this, &FirmwarePage::startFirmwareDownload);
+    connect(m_multiUpdateButton, &QPushButton::clicked, this,
+            &FirmwarePage::startFirmwareDownload);
     connect(clearLog, &QPushButton::clicked, this,
             [this]()
             {
@@ -854,6 +1022,54 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
 
     m_communication = new BootloaderCommunicationService(this);
     m_bootloader = new BootloaderService(m_communication, this);
+    m_firmwareReader = new BootloaderFirmwareReader(m_bootloader, m_communication, this);
+    connect(m_readFirmwareButton, &QPushButton::clicked, this, &FirmwarePage::exportDeviceFirmware);
+    connect(m_firmwareReader, &BootloaderFirmwareReader::progressChanged, this,
+            [this](const quint8 target, const int percent)
+            {
+                if (target == m_readFirmwareTarget && m_readFirmwareProgress != nullptr)
+                    m_readFirmwareProgress->setValue(percent);
+            });
+    connect(m_firmwareReader, &BootloaderFirmwareReader::finished, this,
+            [this](const bool success, const QByteArray &image, const QString &message)
+            {
+                const QString path = m_readFirmwareSavePath;
+                const quint8 target = m_readFirmwareTarget;
+                m_readFirmwareSavePath.clear();
+                m_readFirmwareTarget = 0;
+                QString result = message;
+                bool saved = false;
+                if (success && !path.isEmpty())
+                {
+                    QSaveFile file(path);
+                    if (file.open(QIODevice::WriteOnly) && file.write(image) == image.size()
+                        && file.commit())
+                    {
+                        saved = true;
+                        result = QStringLiteral("已保存 %1（%2 字节）")
+                                     .arg(QFileInfo(path).fileName()).arg(image.size());
+                    }
+                    else
+                        result = QStringLiteral("设备固件读取完成，但保存失败：%1").arg(file.errorString());
+                }
+                if (m_readFirmwareProgress != nullptr)
+                {
+                    m_readFirmwareProgress->setFormat(saved ? QStringLiteral("已保存")
+                                                             : path.isEmpty() ? QStringLiteral("已取消")
+                                                                              : QStringLiteral("失败"));
+                    m_readFirmwareProgress->setToolTip(result);
+                    if (!saved)
+                        m_readFirmwareProgress->setValue(0);
+                }
+                logRequest(QStringLiteral("Node%1 固件导出：%2").arg(target).arg(result));
+                updateSafetyLock();
+                if (saved)
+                    QMessageBox::information(window(), QStringLiteral("固件导出完成"),
+                                             QStringLiteral("%1\n%2\n节点停留在 Bootloader，可按“复位”返回 APP。")
+                                                 .arg(result, path));
+                else if (!path.isEmpty())
+                    QMessageBox::warning(window(), QStringLiteral("固件导出失败"), result);
+            });
     m_downloadController = new BootloaderDownloadController(m_bootloader, this);
     connect(m_downloadController, &BootloaderDownloadController::phaseChanged, this,
             [this](const QString &phase)
@@ -868,6 +1084,49 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
             &FirmwarePage::logRequest);
     connect(m_downloadController, &BootloaderDownloadController::finished, this,
             &FirmwarePage::finishFirmwareDownload);
+    m_upgradeSequence = new BootloaderUpgradeSequence(m_downloadController, this);
+    connect(m_upgradeSequence, &BootloaderUpgradeSequence::nodeStarted, this,
+            [this](const quint8 target, const int position, const int count)
+            {
+                for (int row = 0; row < m_snapshot.nodes.size(); ++row)
+                {
+                    if (nodeIdFromText(m_snapshot.nodes.at(row).nodeId) != target)
+                        continue;
+                    if (m_targetNodeCombo != nullptr)
+                    {
+                        const QSignalBlocker blocker(m_targetNodeCombo);
+                        m_targetNodeCombo->setCurrentIndex(row);
+                    }
+                    selectNode(row);
+                    m_snapshot.nodes[row].state = FirmwareState::Programming;
+                    m_snapshot.nodes[row].progressPercent = 0;
+                    if (m_nodeTable != nullptr && m_nodeTable->item(row, 6) != nullptr)
+                        m_nodeTable->item(row, 6)->setText(QStringLiteral("等待升级"));
+                    if (row < m_progressBars.size() && m_progressBars.at(row) != nullptr)
+                        m_progressBars.at(row)->setValue(0);
+                    if (row < m_progressPercentValues.size()
+                        && m_progressPercentValues.at(row) != nullptr)
+                        m_progressPercentValues.at(row)->setText(QStringLiteral("0%"));
+                    if (row < m_progressStates.size() && m_progressStates.at(row) != nullptr)
+                        m_progressStates.at(row)->setText(QStringLiteral("等待升级"));
+                    refreshMultiNodeCards();
+                    break;
+                }
+                logRequest(QStringLiteral("多节点升级 %1/%2：开始 Node%3")
+                               .arg(position).arg(count).arg(target));
+                updateSafetyLock();
+            });
+    connect(m_upgradeSequence, &BootloaderUpgradeSequence::finished, this,
+            [this](const bool success, const QString &message)
+            {
+                logRequest(QStringLiteral("多节点升级%1：%2")
+                               .arg(success ? QStringLiteral("完成") : QStringLiteral("停止"),
+                                    message));
+                refreshMultiNodeCards();
+                updateSafetyLock();
+            });
+    connect(m_communication, &BootloaderCommunicationService::closed,
+            m_upgradeSequence, &BootloaderUpgradeSequence::cancel);
     connect(m_targetNodeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &FirmwarePage::selectNode);
     connect(m_nodeTable, &QTableWidget::cellClicked, this, &FirmwarePage::selectTableRow);
@@ -885,8 +1144,6 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                 m_heartbeatWatchdog->start();
                 m_serialStatus->setText(
                     connectionStatusText(true, QStringLiteral("已接管 %1 · 等待下位机心跳").arg(port)));
-                if (m_demoBanner != nullptr)
-                    m_demoBanner->setText(QStringLiteral("实机模式 · CAN 控制命令已启用"));
                 updateSafetyLock();
                 logRequest(QStringLiteral("已打开 %1").arg(port));
             });
@@ -903,6 +1160,10 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                     if (m_nodeTable != nullptr && m_nodeTable->item(row, 5) != nullptr)
                         m_nodeTable->item(row, 5)->setText(QStringLiteral("离线"));
                 }
+                m_autoRefreshAfterBootTarget = 0;
+                m_autoRefreshStage = 0;
+                if (m_autoRefreshResponseTimer != nullptr)
+                    m_autoRefreshResponseTimer->stop();
                 logRequest(QStringLiteral("串口已断开"));
                 updateSafetyLock();
             });
@@ -952,9 +1213,30 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                 if (m_bootloader == nullptr || m_communication == nullptr
                     || !m_communication->isOpen() || m_bootProbeTarget == 0)
                     return;
+                if ((m_downloadController != nullptr && m_downloadController->isRunning())
+                    || (m_upgradeSequence != nullptr && m_upgradeSequence->isRunning()))
+                {
+                    if (m_autoRefreshAfterBootTarget == m_bootProbeTarget)
+                    {
+                        logRequest(QStringLiteral("Node%1 自动刷新已取消：升级任务正在运行")
+                                       .arg(m_bootProbeTarget));
+                        m_autoRefreshAfterBootTarget = 0;
+                        m_autoRefreshStage = 0;
+                        if (m_autoRefreshResponseTimer != nullptr)
+                            m_autoRefreshResponseTimer->stop();
+                    }
+                    return;
+                }
                 if (!m_bootloader->sendHostCommand(m_bootProbeTarget, BootCommand::GetVersion))
                 {
                     logRequest(QStringLiteral("自动读取版本失败：串口未连接或发送失败"));
+                    if (m_autoRefreshAfterBootTarget == m_bootProbeTarget)
+                    {
+                        m_autoRefreshAfterBootTarget = 0;
+                        m_autoRefreshStage = 0;
+                        if (m_autoRefreshResponseTimer != nullptr)
+                            m_autoRefreshResponseTimer->stop();
+                    }
                     return;
                 }
                 const QByteArray raw = BootloaderProtocol::encodeHostControl(
@@ -964,6 +1246,33 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
                 logRequest(QStringLiteral("自动探测 Node%1 · 读取版本 · CAN=0x000 · DATA=%2")
                                .arg(m_bootProbeTarget)
                                .arg(QString(raw)));
+                if (m_autoRefreshAfterBootTarget == m_bootProbeTarget
+                    && m_autoRefreshResponseTimer != nullptr)
+                    m_autoRefreshResponseTimer->start();
+            });
+
+    m_autoRefreshResponseTimer = new QTimer(this);
+    m_autoRefreshResponseTimer->setSingleShot(true);
+    m_autoRefreshResponseTimer->setInterval(2000);
+    connect(m_autoRefreshResponseTimer, &QTimer::timeout, this,
+            [this]()
+            {
+                if (m_autoRefreshAfterBootTarget == 0)
+                    return;
+                QString expected = QStringLiteral("Bootloader 响应");
+                if (m_autoRefreshStage == 1)
+                    expected = bootCommandName(BootCommand::GetVersion);
+                else if (m_autoRefreshStage == 2)
+                    expected = bootCommandName(BootCommand::GetInfo);
+                else if (m_autoRefreshStage == 3)
+                    expected = bootCommandName(BootCommand::GetStatus);
+                logRequest(QStringLiteral("Node%1 自动刷新超时：未收到 %2 响应，已停止后续查询")
+                               .arg(m_autoRefreshAfterBootTarget)
+                               .arg(expected));
+                m_autoRefreshAfterBootTarget = 0;
+                m_autoRefreshStage = 0;
+                if (m_autoRefreshResponseTimer != nullptr)
+                    m_autoRefreshResponseTimer->stop();
             });
 
     refreshSerialDevices();
@@ -984,25 +1293,46 @@ FirmwarePage::FirmwarePage(QWidget *parent) : QWidget(parent)
 void FirmwarePage::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    if (m_mainRowLayout == nullptr)
+    const int availableWidth = window() != nullptr ? window()->width() : event->size().width();
+    if (m_multiNodeGrid != nullptr && !m_multiNodeCards.isEmpty())
     {
-        return;
+        const int columns = availableWidth < 1200 ? 2 : 4;
+        if (columns != m_multiNodeGridColumns)
+        {
+            while (QLayoutItem *item = m_multiNodeGrid->takeAt(0))
+                delete item;
+            for (int column = 0; column < 4; ++column)
+                m_multiNodeGrid->setColumnStretch(column, 0);
+            for (int i = 0; i < m_multiNodeCards.size(); ++i)
+                m_multiNodeGrid->addWidget(m_multiNodeCards.at(i), i / columns, i % columns);
+            for (int column = 0; column < columns; ++column)
+                m_multiNodeGrid->setColumnStretch(column, 1);
+            m_multiNodeGridColumns = columns;
+        }
     }
+    updateMainColumns();
+}
 
+void FirmwarePage::updateMainColumns()
+{
+    if (m_mainRowLayout == nullptr)
+        return;
     // QScrollArea 会在布局切换前暂时按页面的旧 minimumSizeHint 扩大子页，
     // 因此这里以实际窗口宽度判断断点，避免窄屏仍被旧的横向最小宽度锁住。
-    const int availableWidth = window() != nullptr ? window()->width() : event->size().width();
-    const bool stacked = availableWidth < 1200;
+    const int availableWidth = window() != nullptr ? window()->width() : width();
+    const bool stacked = availableWidth < 1200 || m_upgradeMode == 1;
     const QBoxLayout::Direction direction =
         stacked ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
-    if (m_mainRowLayout->direction() == direction)
-    {
+    const int leftStretch = stacked ? 0 : 3;
+    const int rightStretch = m_upgradeMode == 1 ? 1 : (stacked ? 0 : 7);
+    if (m_mainRowLayout->direction() == direction
+        && m_mainRowLayout->stretch(0) == leftStretch
+        && m_mainRowLayout->stretch(1) == rightStretch)
         return;
-    }
 
     m_mainRowLayout->setDirection(direction);
-    m_mainRowLayout->setStretch(0, stacked ? 0 : 3);
-    m_mainRowLayout->setStretch(1, stacked ? 0 : 7);
+    m_mainRowLayout->setStretch(0, leftStretch);
+    m_mainRowLayout->setStretch(1, rightStretch);
     m_mainRowLayout->invalidate();
     if (layout() != nullptr)
     {
@@ -1042,10 +1372,26 @@ void FirmwarePage::closeAuxiliaryWindows()
 void FirmwarePage::setUpgradeMode(const int mode)
 {
     m_upgradeMode = qBound(0, mode, 2);
+    QBoxLayout *desiredFileColumn = m_upgradeMode == 1 ? m_rightColumnLayout
+                                                        : m_leftColumnLayout;
+    if (m_firmwareFilePanel != nullptr && desiredFileColumn != nullptr
+        && m_fileCardLayoutOwner != desiredFileColumn)
+    {
+        if (m_fileCardLayoutOwner != nullptr)
+            m_fileCardLayoutOwner->removeWidget(m_firmwareFilePanel);
+        desiredFileColumn->insertWidget(0, m_firmwareFilePanel);
+        m_fileCardLayoutOwner = desiredFileColumn;
+    }
     if (m_multiModePanel != nullptr)
         m_multiModePanel->setVisible(m_upgradeMode == 1);
     if (m_protocolModePanel != nullptr)
         m_protocolModePanel->setVisible(m_upgradeMode == 2);
+    if (m_nodeControlPanel != nullptr)
+        m_nodeControlPanel->setVisible(m_upgradeMode != 1);
+    if (m_multiNodeStatusPanel != nullptr)
+        m_multiNodeStatusPanel->setVisible(m_upgradeMode == 1);
+    if (m_targetStatusPanel != nullptr)
+        m_targetStatusPanel->setVisible(m_upgradeMode != 1);
     if (m_updateButton != nullptr)
     {
         if (m_upgradeMode == 0)
@@ -1055,26 +1401,27 @@ void FirmwarePage::setUpgradeMode(const int mode)
         }
         else if (m_upgradeMode == 1)
         {
-            m_updateButton->setText(QStringLiteral("多节点升级待接入"));
-            m_updateButton->setToolTip(QStringLiteral("当前仅配置角色与策略，不发送协议命令"));
+            m_updateButton->setText(QStringLiteral("开始安全升级"));
+            m_updateButton->setToolTip(QStringLiteral("多节点升级请使用节点卡下方的升级按钮"));
         }
         else
         {
             m_updateButton->setText(QStringLiteral("开始安全升级"));
         }
-        m_updateButton->setVisible(m_upgradeMode != 2);
+        m_updateButton->setVisible(m_upgradeMode == 0);
     }
+    if (m_multiUpdateButton != nullptr)
+        m_multiUpdateButton->setVisible(m_upgradeMode == 1);
+    updateMainColumns();
     updateNodeRoles();
     updateSafetyLock();
 }
 
 void FirmwarePage::updateNodeRoles()
 {
-    if (m_nodeTable == nullptr)
-        return;
     const int canary = m_canaryNodeCombo == nullptr ? 1 : m_canaryNodeCombo->currentData().toInt();
     const int guard = m_guardNodeCombo == nullptr ? 8 : m_guardNodeCombo->currentData().toInt();
-    for (int row = 0; row < m_nodeTable->rowCount(); ++row)
+    for (int row = 0; row < m_snapshot.nodes.size(); ++row)
     {
         const int node = row + 1;
         QString role = QStringLiteral("普通");
@@ -1083,28 +1430,154 @@ void FirmwarePage::updateNodeRoles()
         if (m_upgradeMode == 1 && node == guard)
             role = role == QStringLiteral("Canary") ? QStringLiteral("Canary / Guard")
                                                      : QStringLiteral("Guard");
-        m_nodeTable->setItem(row, 2, new QTableWidgetItem(role));
+        if (m_nodeTable != nullptr && row < m_nodeTable->rowCount())
+            m_nodeTable->setItem(row, 2, new QTableWidgetItem(role));
+        if (row < m_multiNodeRoles.size() && m_multiNodeRoles.at(row) != nullptr)
+            m_multiNodeRoles.at(row)->setText(role);
+    }
+    refreshMultiNodeCards();
+}
+
+void FirmwarePage::invalidateMultiNodePlan()
+{
+    m_multiNodePlanApplied = false;
+    if (m_multiConfigStatus != nullptr)
+    {
+        m_multiConfigStatus->setText(QStringLiteral("配置已更改，请重新应用；设备未确认"));
+        m_multiConfigStatus->setObjectName(QStringLiteral("statusWarn"));
+        m_multiConfigStatus->style()->unpolish(m_multiConfigStatus);
+        m_multiConfigStatus->style()->polish(m_multiConfigStatus);
+    }
+    updateSafetyLock();
+}
+
+void FirmwarePage::refreshMultiNodeCards()
+{
+    for (int i = 0; i < m_multiNodeCards.size(); ++i)
+    {
+        if (i >= m_snapshot.nodes.size())
+            continue;
+        const FirmwareNode &node = m_snapshot.nodes.at(i);
+        if (i < m_multiNodeIds.size() && m_multiNodeIds.at(i) != nullptr)
+            m_multiNodeIds.at(i)->setText(node.nodeId);
+        if (i < m_multiNodeNames.size() && m_multiNodeNames.at(i) != nullptr)
+            m_multiNodeNames.at(i)->setText(node.deviceName);
+        if (i < m_multiNodeVersions.size() && m_multiNodeVersions.at(i) != nullptr)
+            m_multiNodeVersions.at(i)->setText(QStringLiteral("当前版本：%1")
+                                                   .arg(node.currentVersion.isEmpty()
+                                                            ? QStringLiteral("--")
+                                                            : node.currentVersion));
+        if (i < m_multiNodeTargets.size() && m_multiNodeTargets.at(i) != nullptr)
+            m_multiNodeTargets.at(i)->setText(QStringLiteral("目标版本：%1")
+                                                  .arg(node.targetVersion.isEmpty()
+                                                           ? (m_snapshot.fileVersion.isEmpty()
+                                                                  ? QStringLiteral("--")
+                                                                  : m_snapshot.fileVersion)
+                                                           : node.targetVersion));
+        if (i < m_multiNodeOnline.size() && m_multiNodeOnline.at(i) != nullptr)
+        {
+            m_multiNodeOnline.at(i)->setText(node.online ? QStringLiteral("在线")
+                                                          : QStringLiteral("离线"));
+            m_multiNodeOnline.at(i)->setObjectName(node.online ? QStringLiteral("statusGood")
+                                                                : QStringLiteral("statusWarn"));
+            m_multiNodeOnline.at(i)->style()->unpolish(m_multiNodeOnline.at(i));
+            m_multiNodeOnline.at(i)->style()->polish(m_multiNodeOnline.at(i));
+        }
+        if (i < m_multiNodeStates.size() && m_multiNodeStates.at(i) != nullptr)
+        {
+            m_multiNodeStates.at(i)->setText(firmwareStateText(node.state));
+            m_multiNodeStates.at(i)->setObjectName(node.state == FirmwareState::Completed
+                                                       ? QStringLiteral("statusGood")
+                                                   : node.state == FirmwareState::Failed
+                                                       ? QStringLiteral("statusBad")
+                                                       : node.state == FirmwareState::Programming
+                                                       ? QStringLiteral("statusWarn")
+                                                       : QStringLiteral("statusWarn"));
+            m_multiNodeStates.at(i)->style()->unpolish(m_multiNodeStates.at(i));
+            m_multiNodeStates.at(i)->style()->polish(m_multiNodeStates.at(i));
+        }
+        if (i < m_multiNodeProgressBars.size() && m_multiNodeProgressBars.at(i) != nullptr)
+            m_multiNodeProgressBars.at(i)->setValue(qBound(0, node.progressPercent, 100));
+        if (i < m_multiNodeProgressValues.size() && m_multiNodeProgressValues.at(i) != nullptr)
+            m_multiNodeProgressValues.at(i)->setText(QStringLiteral("%1%")
+                                                         .arg(qBound(0, node.progressPercent, 100)));
     }
 }
 
 void FirmwarePage::updateSafetyLock()
 {
-    if (m_updateButton == nullptr)
-        return;
     const int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
     const bool connected = m_communication != nullptr && m_communication->isOpen();
     if (m_demoBanner != nullptr)
-        m_demoBanner->setText(connected
-                                  ? QStringLiteral("实机模式 · CAN 控制命令已启用")
-                                  : QStringLiteral("🧪 演示/离线模式 · 不会发送任何 CAN 控制命令"));
+    {
+        m_demoBanner->setText(connected ? QStringLiteral("实际模式") : QStringLiteral("离线"));
+        m_demoBanner->setObjectName(connected ? QStringLiteral("statusGood")
+                                             : QStringLiteral("statusWarn"));
+        m_demoBanner->style()->unpolish(m_demoBanner);
+        m_demoBanner->style()->polish(m_demoBanner);
+    }
     const bool nodeOnline = index >= 0 && index < m_snapshot.nodes.size()
                             && m_snapshot.nodes.at(index).online;
     const bool versionValid = m_stateBootloader != nullptr
                               && m_stateBootloader->text().startsWith(QLatin1Char('v'));
-    const bool idle = m_downloadController == nullptr || !m_downloadController->isRunning();
+    const bool downloadRunning = m_downloadController != nullptr && m_downloadController->isRunning();
+    const bool sequenceRunning = m_upgradeSequence != nullptr && m_upgradeSequence->isRunning();
+    const bool readerRunning = m_firmwareReader != nullptr && m_firmwareReader->isRunning();
+    const bool idle = !downloadRunning && !sequenceRunning && !readerRunning;
+    if (m_readFirmwareButton != nullptr)
+    {
+        m_readFirmwareButton->setText(readerRunning ? QStringLiteral("取消读取")
+                                                     : QStringLiteral("读取并保存 BIN"));
+        m_readFirmwareButton->setEnabled(readerRunning || (connected && !downloadRunning
+                                                           && !sequenceRunning));
+    }
+    if (m_readNodeCombo != nullptr)
+        m_readNodeCombo->setEnabled(!readerRunning);
+    for (QCheckBox *check : m_multiNodeChecks)
+        check->setEnabled(idle);
+    if (m_canaryNodeCombo != nullptr)
+        m_canaryNodeCombo->setEnabled(idle);
+    if (m_guardNodeCombo != nullptr)
+        m_guardNodeCombo->setEnabled(idle);
+    if (m_multiApplyButton != nullptr)
+        m_multiApplyButton->setEnabled(idle);
     const bool enabled = m_upgradeMode == 0 && connected && m_firmwareValid && nodeOnline
                          && versionValid && idle;
-    m_updateButton->setEnabled(enabled);
+    if (m_updateButton != nullptr)
+        m_updateButton->setEnabled(enabled);
+
+    bool selectedNodesOnline = true;
+    int selectedCount = 0;
+    for (int i = 0; i < m_multiNodeChecks.size(); ++i)
+    {
+        if (!m_multiNodeChecks.at(i)->isChecked())
+            continue;
+        ++selectedCount;
+        selectedNodesOnline &= i < m_snapshot.nodes.size() && m_snapshot.nodes.at(i).online;
+    }
+    const bool multiEnabled = m_upgradeMode == 1 && m_multiNodePlanApplied
+                              && selectedCount >= 2 && selectedNodesOnline && connected
+                              && m_firmwareValid && idle;
+    if (m_multiUpdateButton != nullptr)
+    {
+        m_multiUpdateButton->setEnabled(multiEnabled);
+        QStringList multiMissing;
+        if (!m_multiNodePlanApplied)
+            multiMissing.append(QStringLiteral("升级计划尚未应用"));
+        if (selectedCount < 2)
+            multiMissing.append(QStringLiteral("至少选择 Canary 和 Guard 两个节点"));
+        if (!selectedNodesOnline)
+            multiMissing.append(QStringLiteral("所选节点存在离线节点"));
+        if (!connected)
+            multiMissing.append(QStringLiteral("CAN 网关未连接"));
+        if (!m_firmwareValid)
+            multiMissing.append(QStringLiteral("固件未通过安全检查"));
+        if (!idle)
+            multiMissing.append(QStringLiteral("升级任务正在运行"));
+        m_multiUpdateButton->setToolTip(multiEnabled
+                                           ? QStringLiteral("将按 Canary、其他所选节点、Guard 的顺序串行升级")
+                                           : multiMissing.join(QStringLiteral("；")));
+    }
 
     QStringList missing;
     if (!connected)
@@ -1120,10 +1593,11 @@ void FirmwarePage::updateSafetyLock()
     if (m_upgradeMode == 1)
     {
         missing.clear();
-        missing.append(QStringLiteral("自治协调器尚未接入，仅允许配置角色与策略"));
+        missing.append(QStringLiteral("多节点配置见右侧升级计划"));
     }
-    m_updateButton->setToolTip(enabled ? QStringLiteral("安全条件已满足，可开始升级")
-                                       : missing.join(QStringLiteral("；")));
+    if (m_updateButton != nullptr)
+        m_updateButton->setToolTip(enabled ? QStringLiteral("安全条件已满足，可开始升级")
+                                           : missing.join(QStringLiteral("；")));
 }
 
 void FirmwarePage::updateNodePhase(const QString &phase)
@@ -1154,6 +1628,17 @@ void FirmwarePage::updateNodePhase(const QString &phase)
         m_nodeTable->item(row, 6)->setText(state);
     if (row < m_progressStates.size() && m_progressStates.at(row) != nullptr)
         m_progressStates.at(row)->setText(state);
+    if (row < m_multiNodeStates.size() && m_multiNodeStates.at(row) != nullptr)
+    {
+        m_multiNodeStates.at(row)->setText(state);
+        m_multiNodeStates.at(row)->setObjectName(state.contains(QStringLiteral("澶辫触"))
+                                                    ? QStringLiteral("statusBad")
+                                                    : state.contains(QStringLiteral("瀹屾垚"))
+                                                    ? QStringLiteral("statusGood")
+                                                    : QStringLiteral("statusWarn"));
+        m_multiNodeStates.at(row)->style()->unpolish(m_multiNodeStates.at(row));
+        m_multiNodeStates.at(row)->style()->polish(m_multiNodeStates.at(row));
+    }
 }
 
 bool FirmwarePage::confirmDangerousOperation(const BootCommand command, const quint8 target)
@@ -1201,6 +1686,60 @@ void FirmwarePage::setSnapshot(const FirmwareSnapshot &snapshot)
         m_firmwareValid = false;
     }
     refreshView();
+    updateSafetyLock();
+}
+
+void FirmwarePage::exportDeviceFirmware()
+{
+    if (m_firmwareReader != nullptr && m_firmwareReader->isRunning())
+    {
+        m_readFirmwareSavePath.clear();
+        m_firmwareReader->cancel();
+        return;
+    }
+    const bool upgrading = (m_downloadController != nullptr && m_downloadController->isRunning())
+                           || (m_upgradeSequence != nullptr && m_upgradeSequence->isRunning());
+    if (m_firmwareReader == nullptr || m_communication == nullptr || !m_communication->isOpen()
+        || upgrading || m_readNodeCombo == nullptr)
+    {
+        QMessageBox::warning(window(), QStringLiteral("无法读取设备固件"),
+                             QStringLiteral("请先连接 CAN 网关，并等待当前升级任务结束。"));
+        return;
+    }
+    const quint8 target = static_cast<quint8>(m_readNodeCombo->currentData().toUInt());
+    const QString suggested = QDir::home().filePath(
+        QStringLiteral("Node%1_%2.bin")
+            .arg(target)
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"))));
+    const QString path = QFileDialog::getSaveFileName(window(), QStringLiteral("保存设备固件"),
+                                                      suggested, QStringLiteral("BIN 固件 (*.bin)"));
+    if (path.isEmpty())
+        return;
+    if (m_bootProbeTimer != nullptr)
+        m_bootProbeTimer->stop();
+    m_bootProbeTarget = 0;
+    if (m_autoRefreshResponseTimer != nullptr)
+        m_autoRefreshResponseTimer->stop();
+    m_autoRefreshAfterBootTarget = 0;
+    m_autoRefreshStage = 0;
+    m_readFirmwareTarget = target;
+    m_readFirmwareSavePath = path;
+    m_readFirmwareProgress->setValue(0);
+    m_readFirmwareProgress->setFormat(QStringLiteral("读取中 %p%"));
+    m_readFirmwareProgress->setToolTip(QStringLiteral("正在读取 Node%1 的当前 APP 固件").arg(target));
+    if (!m_firmwareReader->start(target))
+    {
+        if (!m_readFirmwareSavePath.isEmpty())
+        {
+            m_readFirmwareSavePath.clear();
+            m_readFirmwareTarget = 0;
+            m_readFirmwareProgress->setFormat(QStringLiteral("失败"));
+            QMessageBox::warning(window(), QStringLiteral("无法读取设备固件"),
+                                 QStringLiteral("读取任务未能启动，请检查连接和节点状态。"));
+        }
+    }
+    else
+        logRequest(QStringLiteral("开始读取 Node%1 的当前 APP 固件").arg(target));
     updateSafetyLock();
 }
 
@@ -1284,6 +1823,34 @@ bool FirmwarePage::loadFirmwareFile(const QString &path)
         logRequest(validationText);
     emit firmwareFileSelected(FirmwareFileRequest{m_firmwarePath});
     updateSafetyLock();
+    if (m_firmwareValid && isBin)
+    {
+        const int targetIndex = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
+        const bool nodeOnline = targetIndex >= 0 && targetIndex < m_snapshot.nodes.size()
+                                && m_snapshot.nodes.at(targetIndex).online;
+        if (m_upgradeMode != 0)
+            logRequest(QStringLiteral("已载入 BIN；当前不是单节点安全升级模式，跳过自动进入 Boot"));
+        else if (m_communication == nullptr || !m_communication->isOpen())
+            logRequest(QStringLiteral("已载入 BIN；CAN 网关未连接，跳过自动进入 Boot"));
+        else if (!nodeOnline)
+            logRequest(QStringLiteral("已载入 BIN；当前目标节点离线，跳过自动进入 Boot"));
+        else if (m_downloadController != nullptr && m_downloadController->isRunning())
+            logRequest(QStringLiteral("已载入 BIN；升级任务正在运行，跳过自动进入 Boot"));
+        else
+        {
+            const quint8 target = nodeIdFromText(m_snapshot.nodes.at(targetIndex).nodeId);
+            m_autoRefreshAfterBootTarget = 0;
+            m_autoRefreshStage = 0;
+            if (m_autoRefreshResponseTimer != nullptr)
+                m_autoRefreshResponseTimer->stop();
+            if (sendCommonCommand(BootCommand::EnterBoot, QStringLiteral("自动进入 Bootloader")))
+            {
+                m_autoRefreshAfterBootTarget = target;
+                m_autoRefreshStage = 1;
+                logRequest(QStringLiteral("已载入 BIN：Node%1 将在进入 Boot 后自动刷新状态").arg(target));
+            }
+        }
+    }
     return m_firmwareValid;
 }
 
@@ -1335,6 +1902,7 @@ void FirmwarePage::refreshView()
         m_runtimeLog = m_snapshot.log;
         renderRuntimeLog();
     }
+    refreshMultiNodeCards();
 }
 
 void FirmwarePage::selectNode(int index)
@@ -1342,6 +1910,14 @@ void FirmwarePage::selectNode(int index)
     if (index < 0 || index >= m_snapshot.nodes.size())
         return;
     const auto &node = m_snapshot.nodes.at(index);
+    if (m_autoRefreshAfterBootTarget != 0
+        && nodeIdFromText(node.nodeId) != m_autoRefreshAfterBootTarget)
+    {
+        m_autoRefreshAfterBootTarget = 0;
+        m_autoRefreshStage = 0;
+        if (m_autoRefreshResponseTimer != nullptr)
+            m_autoRefreshResponseTimer->stop();
+    }
     if (m_nodeTable != nullptr)
     {
         const QSignalBlocker blocker(m_nodeTable);
@@ -1368,35 +1944,57 @@ void FirmwarePage::selectTableRow(int row, int column)
     selectNode(row);
 }
 
-void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, quint8 byte2,
+bool FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, quint8 byte2,
                                      const QByteArray &params)
 {
     // 统一安全边界：页面上任何 JUMP_APP 都只能走 Trial 模式。不能让普通
     // Byte2=0x00 跳转绕过 Bootloader 看门狗和 APP 返回 Boot 的验证。
     if (command == BootCommand::JumpApp)
         byte2 = 0x01U;
-    if (command == BootCommand::Abort && m_downloadController != nullptr
-        && m_downloadController->isRunning())
+    if (command == BootCommand::Abort)
     {
-        cancelFirmwareDownload();
-        return;
+        if (m_upgradeSequence != nullptr && m_upgradeSequence->isRunning())
+        {
+            m_upgradeSequence->cancel();
+            logRequest(QStringLiteral("已请求取消多节点升级"));
+            return true;
+        }
+        if (m_downloadController != nullptr && m_downloadController->isRunning())
+        {
+            cancelFirmwareDownload();
+            return true;
+        }
+    }
+    const bool downloadRunning = m_downloadController != nullptr
+                                 && m_downloadController->isRunning();
+    const bool sequenceRunning = m_upgradeSequence != nullptr
+                                 && m_upgradeSequence->isRunning();
+    if (m_firmwareReader != nullptr && m_firmwareReader->isRunning())
+    {
+        logRequest(QStringLiteral("%1：设备固件读取中，已阻止其他 Bootloader 命令").arg(label));
+        return false;
+    }
+    if (command != BootCommand::Abort && (downloadRunning || sequenceRunning))
+    {
+        logRequest(QStringLiteral("%1：升级任务进行中，已阻止发送其他 Bootloader 命令").arg(label));
+        return false;
     }
     if (m_bootloader == nullptr || m_communication == nullptr || !m_communication->isOpen())
     {
         logRequest(QStringLiteral("%1：串口未连接").arg(label));
-        return;
+        return false;
     }
     const int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
     if (index < 0 || index >= m_snapshot.nodes.size())
     {
         logRequest(QStringLiteral("%1：没有选择目标节点").arg(label));
-        return;
+        return false;
     }
     const quint8 target = nodeIdFromText(m_snapshot.nodes.at(index).nodeId);
     if (!confirmDangerousOperation(command, target))
     {
         logRequest(QStringLiteral("已取消危险操作：%1").arg(label));
-        return;
+        return false;
     }
     if (m_bootloader->sendHostCommand(target, command, byte2, params))
     {
@@ -1411,6 +2009,7 @@ void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, 
             logRequest(QStringLiteral("TX Node%1 · ENTER_BOOT · CAN=0x000 · DATA=%2 · APP 不回复 ACK，等待复位；1 秒后自动读取版本")
                            .arg(target)
                            .arg(raw));
+            return true;
         }
         else if (command == BootCommand::JumpApp)
             logRequest(QStringLiteral("TX Node%1 · JUMP_APP · CAN=0x000 · DATA=%2 · 安全 Trial 跳转：Bootloader 看门狗已接管，请随后发送 ENTER_BOOT 验证返回")
@@ -1421,13 +2020,22 @@ void FirmwarePage::sendCommonCommand(BootCommand command, const QString &label, 
                            .arg(target)
                            .arg(bootCommandName(command))
                            .arg(raw));
+        return true;
     }
     else
+    {
         logRequest(QStringLiteral("%1：发送失败").arg(label));
+        return false;
+    }
 }
 
 void FirmwarePage::startTrialValidation()
 {
+    if (m_firmwareReader != nullptr && m_firmwareReader->isRunning())
+    {
+        logRequest(QStringLiteral("试运行验证失败：请先完成或取消设备固件读取"));
+        return;
+    }
     if (m_downloadController == nullptr || m_communication == nullptr
         || !m_communication->isOpen())
     {
@@ -1465,6 +2073,39 @@ void FirmwarePage::startTrialValidation()
 void FirmwarePage::startFirmwareDownload()
 {
     updateSafetyLock();
+    if (m_upgradeMode == 1)
+    {
+        if (m_multiUpdateButton == nullptr || !m_multiUpdateButton->isEnabled())
+        {
+            logRequest(QStringLiteral("多节点升级尚不可开始：%1")
+                           .arg(m_multiUpdateButton == nullptr
+                                    ? QStringLiteral("升级入口不可用")
+                                    : m_multiUpdateButton->toolTip()));
+            return;
+        }
+        if (m_upgradeSequence == nullptr || m_communication == nullptr
+            || !m_communication->isOpen())
+        {
+            logRequest(QStringLiteral("多节点升级失败：CAN 网关未连接"));
+            return;
+        }
+        QVector<quint8> selectedNodes;
+        for (int row = 0; row < m_multiNodeChecks.size() && row < m_snapshot.nodes.size(); ++row)
+        {
+            if (m_multiNodeChecks.at(row)->isChecked())
+                selectedNodes.append(nodeIdFromText(m_snapshot.nodes.at(row).nodeId));
+        }
+        constexpr bool canFd = false;
+        if (!m_upgradeSequence->start(selectedNodes,
+                                      static_cast<quint8>(m_canaryNodeCombo->currentData().toUInt()),
+                                      static_cast<quint8>(m_guardNodeCombo->currentData().toUInt()),
+                                      m_firmwarePath, canFd))
+            logRequest(QStringLiteral("多节点升级启动失败，详见上方日志"));
+        updateSafetyLock();
+        return;
+    }
+    if (m_upgradeMode != 0)
+        return;
     if (m_updateButton == nullptr || !m_updateButton->isEnabled())
     {
         logRequest(QStringLiteral("安全锁未解除：%1")
@@ -1521,6 +2162,11 @@ void FirmwarePage::startFirmwareDownload()
 
 void FirmwarePage::cancelFirmwareDownload()
 {
+    if (m_upgradeSequence != nullptr && m_upgradeSequence->isRunning())
+    {
+        m_upgradeSequence->cancel();
+        return;
+    }
     if (m_downloadController != nullptr)
         m_downloadController->cancel();
 }
@@ -1536,7 +2182,7 @@ void FirmwarePage::updateDownloadProgress(const quint8 target, const int percent
         m_snapshot.nodes[row].progressPercent = boundedPercent;
         if (m_nodeTable != nullptr && m_nodeTable->item(row, 6) != nullptr)
             m_nodeTable->item(row, 6)->setText(
-                boundedPercent >= 100 ? QStringLiteral("升级完成")
+                boundedPercent >= 100 ? QStringLiteral("数据已发送，等待验证")
                                       : QStringLiteral("升级中 %1%").arg(boundedPercent));
         if (row < m_progressBars.size() && m_progressBars.at(row) != nullptr)
             m_progressBars.at(row)->setValue(boundedPercent);
@@ -1547,13 +2193,19 @@ void FirmwarePage::updateDownloadProgress(const quint8 target, const int percent
         if (row < m_progressStates.size() && m_progressStates.at(row) != nullptr)
         {
             m_progressStates.at(row)->setText(
-                boundedPercent >= 100 ? QStringLiteral("升级完成")
+                boundedPercent >= 100 ? QStringLiteral("等待验证")
                                       : QStringLiteral("升级中 %1%").arg(boundedPercent));
             m_progressStates.at(row)->setProperty("class",
-                                                  boundedPercent >= 100
-                                                      ? QStringLiteral("statusGood")
-                                                      : QStringLiteral("statusBusy"));
+                                                  QStringLiteral("statusBusy"));
         }
+        if (row < m_multiNodeProgressBars.size() && m_multiNodeProgressBars.at(row) != nullptr)
+            m_multiNodeProgressBars.at(row)->setValue(boundedPercent);
+        if (row < m_multiNodeProgressValues.size() && m_multiNodeProgressValues.at(row) != nullptr)
+            m_multiNodeProgressValues.at(row)->setText(QStringLiteral("%1%").arg(boundedPercent));
+        if (row < m_multiNodeStates.size() && m_multiNodeStates.at(row) != nullptr)
+            m_multiNodeStates.at(row)->setText(boundedPercent >= 100
+                                                   ? QStringLiteral("等待验证")
+                                                   : QStringLiteral("升级中 %1%").arg(boundedPercent));
         if (m_targetNodeCombo != nullptr && m_targetNodeCombo->currentIndex() == row
             && m_stateProgress != nullptr)
         {
@@ -1568,7 +2220,19 @@ void FirmwarePage::updateDownloadProgress(const quint8 target, const int percent
 
 void FirmwarePage::finishFirmwareDownload(const bool success, const QString &message)
 {
-    const int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
+    int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
+    if (m_upgradeSequence != nullptr && m_upgradeSequence->isRunning())
+    {
+        for (int row = 0; row < m_snapshot.nodes.size(); ++row)
+        {
+            if (nodeIdFromText(m_snapshot.nodes.at(row).nodeId)
+                == m_upgradeSequence->currentTarget())
+            {
+                index = row;
+                break;
+            }
+        }
+    }
     if (m_trialValidationActive)
     {
         int trialIndex = -1;
@@ -1614,11 +2278,14 @@ void FirmwarePage::finishFirmwareDownload(const bool success, const QString &mes
             m_progressStates.at(index)->setText(success ? QStringLiteral("升级完成")
                                                         : QStringLiteral("失败"));
     }
-    if (m_updateButton != nullptr)
-        m_updateButton->setEnabled(true);
     if (m_stateProgress != nullptr)
-        m_stateProgress->setText(message);
+    {
+        m_stateProgress->setText(success ? QStringLiteral("升级完成，可点击复位启动 APP")
+                                         : message);
+        m_stateProgress->setToolTip(message);
+    }
     updateNodePhase(success ? QStringLiteral("升级完成") : QStringLiteral("失败"));
+    refreshMultiNodeCards();
     updateSafetyLock();
 }
 
@@ -1660,6 +2327,11 @@ void FirmwarePage::showCommandCenter()
     connect(m_commandDialog, &BootloaderCommandDialog::commandRequested, this,
             [this](quint8 target, BootCommand command, quint8 byte2, const QByteArray &params)
             {
+                if (m_firmwareReader != nullptr && m_firmwareReader->isRunning())
+                {
+                    logRequest(QStringLiteral("设备固件读取中，请完成或取消读取后再发送调试命令"));
+                    return;
+                }
                 // 命令中心也不能绕过页面的 Trial 保护，即使在协议开发模式下
                 // 手动输入了 Byte2=0x00，也强制改为 Trial Jump。
                 if (command == BootCommand::JumpApp)
@@ -1695,6 +2367,11 @@ void FirmwarePage::showCommandCenter()
     connect(m_commandDialog, &BootloaderCommandDialog::peerCommandRequested, this,
             [this](quint8 target, BootCommand command, quint8 source, quint16 session, quint16 value)
             {
+                if (m_firmwareReader != nullptr && m_firmwareReader->isRunning())
+                {
+                    logRequest(QStringLiteral("设备固件读取中，请完成或取消读取后再发送调试命令"));
+                    return;
+                }
                 if (!confirmDangerousOperation(command, target))
                 {
                     logRequest(QStringLiteral("已取消危险操作：%1").arg(bootCommandName(command)));
@@ -1724,6 +2401,9 @@ void FirmwarePage::showCommandCenter()
 
 void FirmwarePage::handleBootResponse(const BootResponse &response)
 {
+    if (m_firmwareReader != nullptr && m_firmwareReader->isRunning()
+        && response.command == BootCommand::Read && response.nodeId == m_readFirmwareTarget)
+        return;
     const QString nodeText = QStringLiteral("0x%1").arg(response.nodeId, 2, 16, QLatin1Char('0')).toUpper();
     for (int row = 0; row < m_snapshot.nodes.size(); ++row)
     {
@@ -1777,6 +2457,93 @@ void FirmwarePage::handleBootResponse(const BootResponse &response)
             }
             updateSafetyLock();
             break;
+        }
+    }
+    if (m_autoRefreshAfterBootTarget == response.nodeId)
+    {
+        const bool expectedResponse = (m_autoRefreshStage == 1
+                                       && response.command == BootCommand::GetVersion)
+                                      || (m_autoRefreshStage == 2
+                                          && response.command == BootCommand::GetInfo)
+                                      || (m_autoRefreshStage == 3
+                                          && response.command == BootCommand::GetStatus);
+        if (expectedResponse)
+        {
+            if (m_autoRefreshResponseTimer != nullptr)
+                m_autoRefreshResponseTimer->stop();
+            if (response.status == BootStatus::Error || response.errorCode != 0)
+            {
+                logRequest(QStringLiteral("Node%1 自动刷新收到 %2 错误响应（0x%3），已停止后续查询")
+                               .arg(response.nodeId)
+                               .arg(bootCommandName(response.command))
+                               .arg(response.errorCode, 2, 16, QLatin1Char('0')).toUpper());
+                m_autoRefreshAfterBootTarget = 0;
+                m_autoRefreshStage = 0;
+                logRequest(QStringLiteral("RX %1 · %2 · %3 · DATA=%4")
+                               .arg(nodeText, bootCommandName(response.command), bootStatusName(response.status))
+                               .arg(QString(response.rawData.toHex(' ').toUpper())));
+                return;
+            }
+        }
+        else
+        {
+            logRequest(QStringLiteral("RX %1 · %2 · %3 · DATA=%4")
+                           .arg(nodeText, bootCommandName(response.command), bootStatusName(response.status))
+                           .arg(QString(response.rawData.toHex(' ').toUpper())));
+            return;
+        }
+        BootCommand nextCommand = BootCommand::GetVersion;
+        bool hasNextCommand = true;
+        if (m_autoRefreshStage == 1)
+        {
+            nextCommand = BootCommand::GetInfo;
+            m_autoRefreshStage = 2;
+        }
+        else if (m_autoRefreshStage == 2)
+        {
+            nextCommand = BootCommand::GetStatus;
+            m_autoRefreshStage = 3;
+        }
+        else if (response.command == BootCommand::GetStatus && m_autoRefreshStage == 3)
+        {
+            hasNextCommand = false;
+            m_autoRefreshAfterBootTarget = 0;
+            m_autoRefreshStage = 0;
+        }
+        if (hasNextCommand)
+        {
+            const bool upgradeRunning = (m_downloadController != nullptr
+                                         && m_downloadController->isRunning())
+                                        || (m_upgradeSequence != nullptr
+                                            && m_upgradeSequence->isRunning());
+            if (upgradeRunning || m_bootloader == nullptr || m_communication == nullptr
+                || !m_communication->isOpen())
+            {
+                logRequest(QStringLiteral("Node%1 自动刷新状态已取消：升级运行中或通信已断开")
+                               .arg(response.nodeId));
+                m_autoRefreshAfterBootTarget = 0;
+                m_autoRefreshStage = 0;
+            }
+            else if (!m_bootloader->sendHostCommand(response.nodeId, nextCommand))
+            {
+                logRequest(QStringLiteral("Node%1 自动刷新状态失败：%2 发送失败")
+                               .arg(response.nodeId)
+                               .arg(bootCommandName(nextCommand)));
+                m_autoRefreshAfterBootTarget = 0;
+                m_autoRefreshStage = 0;
+            }
+            else
+            {
+                if (m_autoRefreshResponseTimer != nullptr)
+                    m_autoRefreshResponseTimer->start();
+                const QString raw = BootloaderProtocol::encodeHostControl(response.nodeId, nextCommand)
+                                        .toHex(' ')
+                                        .toUpper();
+                logRequest(QStringLiteral("自动刷新 Node%1 · %2 · CAN=0x000 · DATA=%3")
+                               .arg(response.nodeId)
+                               .arg(bootCommandName(nextCommand))
+                               .arg(raw));
+            }
         }
     }
     logRequest(QStringLiteral("RX %1 · %2 · %3 · DATA=%4")

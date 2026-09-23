@@ -91,6 +91,13 @@ MISSING_COUNT、MISSING_ITEM、PROVIDER_GRANT
 
 命令中心还列出 Peer/Autonomous 命令。Peer 报文默认只解析、显示和记录；打开“协议开发模式”后，才可以选择 Source、Target、Session 和 Value 发送 Peer Control。
 
+固件页顶部的“读取并保存 BIN”在单节点、多节点顺序升级和协议调试三种模式中共用。
+选择节点与本地保存路径后，`BootloaderFirmwareReader` 自动发送 `ENTER_BOOT`、
+探测 Bootloader，再用现有 `READ` 命令读取配置页中的 APP 长度和 CRC32，随后顺序读取
+`0x08005000` 起的 APP 镜像。配置和整份镜像均通过 CRC32 校验后才保存为 `.bin`；
+取消、通信超时或校验失败不会留下导出文件。读取期间与升级、调试命令互斥。
+设备读取后停留在 Bootloader，可从节点信息卡执行复位以返回 APP。
+
 ## 5. APP 与 Bootloader 返回流程
 
 APP 和 Bootloader 使用同一套 Host CONTROL 协议。APP 阶段接收 `ENTER_BOOT`
@@ -191,7 +198,7 @@ F:\file\BaiduSyncdisk\Project\Observer_Motor\build\Boot-Release\Observer_boot.bi
 ### 当前限制
 
 - 自动缺包修复（设备在 `WRITE_END` 报告缺包时，当前版本会停止并保留错误信息，避免盲目跳转）；
-- 8 节点自治升级、Provider/Coordinator 修复轮次和 Guard/Rollback；
+- 多节点可按 Canary 优先、Guard 最后串行复用单节点安全下载；设备侧自治升级、Provider/Coordinator 修复轮次和 Guard/Rollback 尚未接入；
 - Trial 启动状态的真实回读；
 - Jetson Nano/TCP Transport。
 
