@@ -9,6 +9,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -23,6 +24,8 @@
 #include <QVBoxLayout>
 #include <QWindow>
 
+#include <algorithm>
+#include <functional>
 #include <utility>
 
 namespace
@@ -35,11 +38,40 @@ class CurveFloatingDialog final : public QDialog
         : QDialog(owner, Qt::Window | Qt::WindowTitleHint | Qt::WindowSystemMenuHint
                              | Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint)
     {
-        setAttribute(Qt::WA_NativeWindow, true);
         setAttribute(Qt::WA_QuitOnClose, false);
         setWindowModality(Qt::NonModal);
         setSizeGripEnabled(true);
     }
+
+    void setRestoreCallback(const std::function<void()> &callback)
+    {
+        m_restoreCallback = callback;
+    }
+
+  protected:
+    void changeEvent(QEvent *event) override
+    {
+        QDialog::changeEvent(event);
+        if (event->type() != QEvent::WindowStateChange || isMinimized())
+            return;
+
+        // Windows may restore the top-level frame before its embedded widget
+        // receives a useful layout pass. Defer one event-loop turn so the plot
+        // gets its real size before the next live repaint.
+        QTimer::singleShot(0, this,
+                           [this]()
+                           {
+                               if (isMinimized() || !isVisible())
+                                   return;
+                               if (layout() != nullptr)
+                                   layout()->activate();
+                               if (m_restoreCallback)
+                                   m_restoreCallback();
+                           });
+    }
+
+  private:
+    std::function<void()> m_restoreCallback;
 };
 
 class CurveWindowWidget final : public QFrame
@@ -75,6 +107,20 @@ class CurveWindowWidget final : public QFrame
         m_followLatest->setChecked(true);
         m_followLatest->setToolTip(QStringLiteral("开启后曲线会持续跟随最新数据；关闭后可停留查看当前视图"));
         toolbar->addWidget(m_followLatest);
+        m_historyLimitLabel = rov::makeLabel(QStringLiteral("缓冲区"), QStringLiteral("mutedLabel"));
+        toolbar->addWidget(m_historyLimitLabel);
+        m_historyLimit = new rov::AppComboBox;
+        m_historyLimit->setMinimumWidth(88);
+        m_historyLimit->addItem(QStringLiteral("250 点"), 250);
+        m_historyLimit->addItem(QStringLiteral("500 点"), 500);
+        m_historyLimit->addItem(QStringLiteral("1000 点"), 1000);
+        m_historyLimit->addItem(QStringLiteral("2000 点"), 2000);
+        m_historyLimit->addItem(QStringLiteral("5000 点"), 5000);
+        m_historyLimit->setCurrentIndex(1);
+        m_historyLimit->setToolTip(QStringLiteral("设置全部曲线的历史数据缓冲区大小"));
+        toolbar->addWidget(m_historyLimit);
+        m_historyLimitLabel->setVisible(false);
+        m_historyLimit->setVisible(false);
         m_variable = new QComboBox;
         m_variable->setMinimumWidth(150);
         toolbar->addWidget(m_variable, 1);
@@ -97,6 +143,18 @@ class CurveWindowWidget final : public QFrame
                 });
         connect(m_followLatest, &QCheckBox::toggled, m_plot,
                 &rov::QwtCurvePlotWidget::setFollowLatest);
+        connect(m_historyLimit, qOverload<int>(&QComboBox::currentIndexChanged), this,
+                [this](const int index)
+                {
+                    if (index >= 0 && m_historyLimitChanged)
+                        m_historyLimitChanged(m_historyLimit->itemData(index).toInt());
+                });
+        connect(m_plot, &rov::QwtCurvePlotWidget::followLatestChanged, this,
+                [this](const bool follow)
+                {
+                    const QSignalBlocker blocker(m_followLatest);
+                    m_followLatest->setChecked(follow);
+                });
         connect(m_fit, &QPushButton::clicked, m_plot, &rov::QwtCurvePlotWidget::fitToData);
         connect(m_clear, &QPushButton::clicked, this,
                 [this]()
@@ -165,7 +223,52 @@ class CurveWindowWidget final : public QFrame
 
     void updateSeries(const QVector<rov::DebugSeries> &series)
     {
-        m_catalog = series;
+        const bool catalogChanged =
+            m_catalog.size() != series.size() ||
+            !std::equal(m_catalog.cbegin(), m_catalog.cend(), series.cbegin(),
+                        [](const rov::DebugSeries &left, const rov::DebugSeries &right)
+                        {
+                            return left.id == right.id && left.name == right.name &&
+                                   left.unit == right.unit;
+                        });
+
+        if (catalogChanged)
+        {
+            QStringList selectedIds;
+            for (const int index : std::as_const(m_selectedIndexes))
+            {
+                if (index >= 0 && index < m_catalog.size())
+                    selectedIds.append(m_catalog.at(index).id);
+            }
+
+            m_catalog = series;
+            const QSignalBlocker blocker(m_variable);
+            m_variable->clear();
+            for (const auto &item : m_catalog)
+                m_variable->addItem(QStringLiteral("%1  [%2]").arg(item.name, item.unit));
+
+            m_selectedIndexes.clear();
+            for (const QString &id : std::as_const(selectedIds))
+            {
+                for (int index = 0; index < m_catalog.size(); ++index)
+                {
+                    if (m_catalog.at(index).id == id)
+                    {
+                        m_selectedIndexes.append(index);
+                        break;
+                    }
+                }
+            }
+            if (m_selectedIndexes.isEmpty() && !m_catalog.isEmpty())
+                m_selectedIndexes.append(0);
+            m_selectedIndex = m_selectedIndexes.isEmpty() ? -1 : m_selectedIndexes.first();
+            if (m_selectedIndex >= 0)
+                m_variable->setCurrentIndex(m_selectedIndex);
+        }
+        else
+        {
+            m_catalog = series;
+        }
         refreshPlot(false);
     }
 
@@ -184,6 +287,26 @@ class CurveWindowWidget final : public QFrame
         m_plot->setFollowLatest(follow);
     }
 
+    void setFloatingConfigurationVisible(const bool visible)
+    {
+        m_historyLimitLabel->setVisible(visible);
+        m_historyLimit->setVisible(visible);
+    }
+
+    void setHistoryLimit(const int limit)
+    {
+        const int index = m_historyLimit->findData(limit);
+        if (index < 0)
+            return;
+        const QSignalBlocker blocker(m_historyLimit);
+        m_historyLimit->setCurrentIndex(index);
+    }
+
+    void setHistoryLimitChangedHandler(const std::function<void(int)> &handler)
+    {
+        m_historyLimitChanged = handler;
+    }
+
   private:
     void refreshPlot(const bool autoFit)
     {
@@ -199,6 +322,8 @@ class CurveWindowWidget final : public QFrame
     QLabel *m_title = nullptr;
     rov::AppComboBox *m_displayWindow = nullptr;
     QCheckBox *m_followLatest = nullptr;
+    QLabel *m_historyLimitLabel = nullptr;
+    rov::AppComboBox *m_historyLimit = nullptr;
     QComboBox *m_variable = nullptr;
     QPushButton *m_clear = nullptr;
     QPushButton *m_fit = nullptr;
@@ -207,6 +332,7 @@ class CurveWindowWidget final : public QFrame
     QVector<rov::DebugSeries> m_catalog;
     QVector<int> m_selectedIndexes;
     int m_selectedIndex = -1;
+    std::function<void(int)> m_historyLimitChanged;
 };
 
 QVector<int> indexesForIds(const QVector<rov::DebugSeries> &series, const QStringList &ids)
@@ -294,15 +420,15 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     auto *addCurve = makeButton(QStringLiteral("＋ 自定义窗口"), QStringLiteral("primaryButton"));
     curveHeader->addWidget(addCurve);
     curveHeader->addWidget(makeLabel(QStringLiteral("缓冲区"), QStringLiteral("mutedLabel")));
-    auto *historyLimit = new AppComboBox;
-    historyLimit->setMinimumWidth(88);
-    historyLimit->addItem(QStringLiteral("250 点"), 250);
-    historyLimit->addItem(QStringLiteral("500 点"), 500);
-    historyLimit->addItem(QStringLiteral("1000 点"), 1000);
-    historyLimit->addItem(QStringLiteral("2000 点"), 2000);
-    historyLimit->addItem(QStringLiteral("5000 点"), 5000);
-    historyLimit->setCurrentIndex(1);
-    curveHeader->addWidget(historyLimit);
+    m_historyLimit = new AppComboBox;
+    m_historyLimit->setMinimumWidth(88);
+    m_historyLimit->addItem(QStringLiteral("250 点"), 250);
+    m_historyLimit->addItem(QStringLiteral("500 点"), 500);
+    m_historyLimit->addItem(QStringLiteral("1000 点"), 1000);
+    m_historyLimit->addItem(QStringLiteral("2000 点"), 2000);
+    m_historyLimit->addItem(QStringLiteral("5000 点"), 5000);
+    m_historyLimit->setCurrentIndex(1);
+    curveHeader->addWidget(m_historyLimit);
     m_curveGrid = new QGridLayout;
     m_curveGrid->setContentsMargins(0, 0, 0, 0);
     m_curveGrid->setHorizontalSpacing(8);
@@ -476,11 +602,11 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
             addPresetWindow({QStringLiteral("speed_rpm"), QStringLiteral("pll_electrical_speed")});
         });
     connect(fitAll, &QPushButton::clicked, this, &MotorDebugPage::autoFitAllCurves);
-    connect(historyLimit, qOverload<int>(&QComboBox::currentIndexChanged), this,
-            [this, historyLimit](const int index)
+    connect(m_historyLimit, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](const int index)
             {
                 if (index >= 0)
-                    emit historyLimitChanged(historyLimit->itemData(index).toInt());
+                    setHistoryLimit(m_historyLimit->itemData(index).toInt());
             });
     connect(m_motorSelect, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](const int index)
@@ -618,6 +744,10 @@ void MotorDebugPage::addCurveWindow(const int seriesIndex)
     curve->setSeriesCatalog(m_availableSeries, indexes);
     curve->dragLabel()->installEventFilter(this);
     m_curveWindows.append(curve);
+    curve->setHistoryLimitChangedHandler(
+        [this](const int limit) { setHistoryLimit(limit); });
+    if (m_historyLimit != nullptr)
+        curve->setHistoryLimit(m_historyLimit->currentData().toInt());
     connect(curve->variableCombo(), qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this, curve](const int index) { curve->selectSeries(index); });
     connect(curve->removeButton(), &QPushButton::clicked, this,
@@ -631,6 +761,10 @@ void MotorDebugPage::addPresetWindow(const QStringList &seriesIds)
     curve->setSeriesCatalog(m_availableSeries, indexesForIds(m_availableSeries, seriesIds));
     curve->dragLabel()->installEventFilter(this);
     m_curveWindows.append(curve);
+    curve->setHistoryLimitChangedHandler(
+        [this](const int limit) { setHistoryLimit(limit); });
+    if (m_historyLimit != nullptr)
+        curve->setHistoryLimit(m_historyLimit->currentData().toInt());
     connect(curve->variableCombo(), qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this, curve](const int index) { curve->selectSeries(index); });
     connect(curve->removeButton(), &QPushButton::clicked, this,
@@ -729,6 +863,22 @@ void MotorDebugPage::autoFitAllCurves()
         static_cast<CurveWindowWidget *>(widget)->fitToData();
 }
 
+void MotorDebugPage::setHistoryLimit(const int limit)
+{
+    if (m_historyLimit == nullptr)
+        return;
+
+    const int index = m_historyLimit->findData(limit);
+    if (index < 0)
+        return;
+
+    const QSignalBlocker blocker(m_historyLimit);
+    m_historyLimit->setCurrentIndex(index);
+    for (QWidget *widget : m_curveWindows)
+        static_cast<CurveWindowWidget *>(widget)->setHistoryLimit(limit);
+    emit historyLimitChanged(limit);
+}
+
 void MotorDebugPage::detachCurveWindow(QWidget *window, const QPoint &globalPos,
                                        const QPoint &dragOffset)
 {
@@ -736,7 +886,10 @@ void MotorDebugPage::detachCurveWindow(QWidget *window, const QPoint &globalPos,
         return;
 
     auto *curve = static_cast<CurveWindowWidget *>(window);
-    QWidget *owner = QApplication::activeWindow();
+    // Use the application's main top-level window as owner. activeWindow()
+    // can be a combo popup or another floating curve window, which makes
+    // Windows minimize/restore the curve with the wrong owner.
+    QWidget *owner = this->window()->window();
     auto *dialog = new CurveFloatingDialog(owner);
     dialog->setWindowTitle(QStringLiteral("%1").arg(curve->dragLabel()->text()));
     dialog->setAttribute(Qt::WA_DeleteOnClose, false);
@@ -750,8 +903,18 @@ void MotorDebugPage::detachCurveWindow(QWidget *window, const QPoint &globalPos,
     m_curveGrid->removeWidget(window);
     window->setParent(dialog);
     layout->addWidget(window);
+    curve->setFloatingConfigurationVisible(true);
     dialog->resize(initialSize);
     m_curveDialogs.insert(window, dialog);
+    dialog->setRestoreCallback(
+        [window]()
+        {
+            if (window != nullptr)
+            {
+                window->show();
+                window->updateGeometry();
+            }
+        });
     relayoutCurveWindows();
     dialog->move(globalPos - dragOffset);
     connect(dialog, &QDialog::finished, this,
@@ -773,6 +936,9 @@ void MotorDebugPage::restoreCurveWindow(QWidget *window)
     m_curveDialogs.erase(it);
     dialog->layout()->removeWidget(window);
     window->setParent(m_curveCard);
+    static_cast<CurveWindowWidget *>(window)->setFloatingConfigurationVisible(false);
+    window->show();
+    window->updateGeometry();
     relayoutCurveWindows();
     dialog->hide();
     dialog->deleteLater();

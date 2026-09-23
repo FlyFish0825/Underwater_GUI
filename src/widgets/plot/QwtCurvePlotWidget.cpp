@@ -79,10 +79,24 @@ QwtCurvePlotWidget::QwtCurvePlotWidget(QWidget *parent) : QWidget(parent)
     m_yMagnifier->setWheelModifiers(Qt::ControlModifier);
     m_yMagnifier->setAxisEnabled(QwtPlot::xBottom, false);
     m_yMagnifier->setMouseButton(Qt::NoButton);
+
+    // Observe canvas wheel/zoom gestures before Qwt's helpers handle them so
+    // a manual viewport change can pause the live-follow policy.
+    m_plot->canvas()->installEventFilter(this);
+    connect(m_zoomer, &QwtPlotZoomer::zoomed, this,
+            [this](const QRectF &) { pauseFollowForManualView(); });
 }
 
 bool QwtCurvePlotWidget::eventFilter(QObject *watched, QEvent *event)
 {
+    if (event->type() == QEvent::Wheel && watched == m_plot->canvas())
+    {
+        const auto *wheel = static_cast<QWheelEvent *>(event);
+        const Qt::KeyboardModifiers modifiers = wheel->modifiers();
+        if ((modifiers & ~(Qt::ShiftModifier | Qt::ControlModifier)) == Qt::NoModifier)
+            pauseFollowForManualView();
+    }
+
     if (event->type() == QEvent::Wheel && m_plot != nullptr)
     {
         int axis = -1;
@@ -125,6 +139,7 @@ bool QwtCurvePlotWidget::eventFilter(QObject *watched, QEvent *event)
             const double nextUpper = anchor + (upper - anchor) * factor;
             if (qIsFinite(nextLower) && qIsFinite(nextUpper) && nextUpper > nextLower)
             {
+                pauseFollowForManualView();
                 m_plot->setAxisScale(axis, nextLower, nextUpper);
                 m_plot->replot();
             }
@@ -196,12 +211,23 @@ void QwtCurvePlotWidget::setDisplayWindowSeconds(const double seconds)
 
 void QwtCurvePlotWidget::setFollowLatest(const bool follow)
 {
+    if (m_followLatest == follow)
+        return;
     m_followLatest = follow;
+    emit followLatestChanged(m_followLatest);
     if (m_followLatest)
     {
         applyDisplayWindow();
         m_plot->replot();
     }
+}
+
+void QwtCurvePlotWidget::pauseFollowForManualView()
+{
+    if (!m_followLatest)
+        return;
+    m_followLatest = false;
+    emit followLatestChanged(false);
 }
 
 void QwtCurvePlotWidget::applyDisplayWindow()
