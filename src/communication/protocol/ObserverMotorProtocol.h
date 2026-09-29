@@ -15,6 +15,7 @@ constexpr quint32 kReservedReplyBaseCanId = 0x180U;
 constexpr quint32 kFeedbackBaseCanId = 0x200U;
 constexpr quint32 kHeartbeatBaseCanId = 0x280U;
 constexpr quint32 kDebugBaseCanId = 0x300U;
+constexpr quint32 kCalibrationBaseCanId = 0x340U;
 constexpr quint8 kFirstNodeId = 1U;
 constexpr quint8 kLastNodeId = 8U;
 constexpr quint8 kVersion = 0x01U;
@@ -36,6 +37,19 @@ enum class Command : quint8
     RunVector = 0x11,
     DebugSelect = 0x20,
     StatusOnce = 0x30,
+    Calibration = 0x40,
+};
+
+enum class CalibrationAction : quint8
+{
+    Rs = 0x01,
+    LsAll = 0x02,
+    LsAb = 0x03,
+    LsBc = 0x04,
+    LsCa = 0x05,
+    Stop = 0x06,
+    Read = 0x07,
+    RsLs = 0x08,
 };
 
 enum class FrameKind
@@ -45,6 +59,7 @@ enum class FrameKind
     Feedback,
     Heartbeat,
     Debug,
+    Calibration,
 };
 
 enum class MotorState : quint8
@@ -112,6 +127,29 @@ struct DebugFrame
     quint8 sequence = 0;
 };
 
+struct CalibrationFrame
+{
+    quint8 nodeId = 0;
+    quint8 event = 0;
+    quint8 action = 0;
+    quint8 stage = 0;
+    quint8 phase = 0;
+    quint8 error = 0;
+    quint8 validMask = 0;
+    quint16 sequence = 0;
+    quint8 hardwareError = 0;
+    double rsOhm = 0.0;
+    double rAbOhm = 0.0;
+    double rBcOhm = 0.0;
+    double rCaOhm = 0.0;
+    double rAOhm = 0.0;
+    double rBOhm = 0.0;
+    double rCOhm = 0.0;
+    double lsAbUh = 0.0;
+    double lsBcUh = 0.0;
+    double lsCaUh = 0.0;
+};
+
 struct DecodedFrame
 {
     FrameKind kind = FrameKind::ReservedReply;
@@ -120,6 +158,7 @@ struct DecodedFrame
     FeedbackFrame feedback;
     HeartbeatFrame heartbeat;
     DebugFrame debug;
+    CalibrationFrame calibration;
 };
 
 bool decode(const CanGatewayFrame &frame, DecodedFrame &decoded, QString *error = nullptr);
@@ -128,6 +167,8 @@ QByteArray encodeControl(const ControlFrame &control, QString *error = nullptr);
 QByteArray encodeDebugSelect(quint8 nodeMask, bool enabled, quint16 sequence,
                              QString *error = nullptr);
 QByteArray encodeStatusOnce(quint8 nodeMask, quint16 sequence, QString *error = nullptr);
+QByteArray encodeCalibration(CalibrationAction action, quint8 nodeMask, quint16 sequence,
+                             QString *error = nullptr);
 QByteArray encodeEnterBootloader();
 
 quint8 crc8(const QByteArray &bytes);

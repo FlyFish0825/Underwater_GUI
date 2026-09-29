@@ -3,6 +3,8 @@
 #include <QCoreApplication>
 #include <QDebug>
 
+#include <cstring>
+
 using namespace rov;
 using namespace rov::ObserverMotorProtocol;
 
@@ -19,6 +21,13 @@ void appendUnsignedLe16(QByteArray &bytes, const quint16 value)
 {
     bytes.append(static_cast<char>(value & 0xFFU));
     bytes.append(static_cast<char>((value >> 8U) & 0xFFU));
+}
+
+void appendFloat(QByteArray &bytes, const float value)
+{
+    const int offset = bytes.size();
+    bytes.resize(offset + static_cast<int>(sizeof(value)));
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
 }
 
 bool require(const bool condition, const char *message)
@@ -151,6 +160,70 @@ int main(int argc, char *argv[])
         || !require(decoded.debug.nodeId == 1 && qFuzzyCompare(decoded.debug.udV, 0.3)
                         && decoded.debug.statusFlags == 0x07,
                     "调试字段错误"))
+        return 1;
+
+    const QByteArray calibrationCommand = encodeCalibration(CalibrationAction::RsLs, 0x01U, 7U);
+    if (!require(calibrationCommand == QByteArray::fromHex(
+                             "014001080700000000000000000000000000000000000000"),
+                 "连续参数辨识命令编码错误")
+        || !require(decode(frame(kControlCanId, kCanFdFlags, calibrationCommand), decoded),
+                    "参数辨识命令解析失败")
+        || !require(decoded.control.command == Command::Calibration
+                        && decoded.control.nodeMask == 0x01U
+                        && decoded.control.sequence == 7U,
+                    "参数辨识命令字段错误"))
+        return 1;
+
+    QByteArray calibration(12, '\0');
+    calibration[0] = 1;
+    calibration[1] = 1;
+    calibration[2] = 2;
+    calibration[3] = 8;
+    calibration[4] = 2;
+    calibration[5] = 2;
+    calibration[7] = 0x0F;
+    calibration[8] = 7;
+    appendFloat(calibration, 0.5f);
+    appendFloat(calibration, 0.8f);
+    appendFloat(calibration, 0.9f);
+    appendFloat(calibration, 1.0f);
+    appendFloat(calibration, 0.4f);
+    appendFloat(calibration, 0.5f);
+    appendFloat(calibration, 0.6f);
+    appendFloat(calibration, 1200.0f);
+    appendFloat(calibration, 1300.0f);
+    appendFloat(calibration, 1400.0f);
+    calibration.append(QByteArray(64 - calibration.size(), '\0'));
+    if (!require(decode(frame(0x341, kCanFdFlags, calibration), decoded),
+                 "参数辨识结果解析失败")
+        || !require(decoded.calibration.action == 8U && decoded.calibration.validMask == 0x0F
+                        && qFuzzyCompare(decoded.calibration.rsOhm, 0.5)
+                        && qFuzzyCompare(decoded.calibration.lsCaUh, 1400.0),
+                    "参数辨识结果字段错误"))
+        return 1;
+
+    calibration[40] = 0;
+    calibration[41] = 0;
+    calibration[42] = 0;
+    calibration[43] = 0;
+    calibration[7] = 0x0D;
+    if (!require(decode(frame(0x341, kCanFdFlags, calibration), decoded),
+                 "部分有效参数辨识结果不应被拒绝")
+        || !require((decoded.calibration.validMask & 0x02U) == 0U
+                        && qFuzzyCompare(decoded.calibration.lsAbUh, 0.0),
+                    "部分有效参数辨识结果字段错误"))
+        return 1;
+
+    QByteArray malformedCommand = calibrationCommand;
+    malformedCommand[8] = 1;
+    if (!require(!decode(frame(kControlCanId, kCanFdFlags, malformedCommand), decoded),
+                 "参数辨识保留字节非零时仍被接受"))
+        return 1;
+
+    QString encodeError;
+    if (!require(!encodeCalibration(CalibrationAction::RsLs, 0x03U, 8U, &encodeError).size()
+                        && !encodeError.isEmpty(),
+                    "连续辨识多节点掩码未被拒绝"))
         return 1;
 
     if (!require(encodeEnterBootloader() == QByteArray::fromHex("010400000000007B"),

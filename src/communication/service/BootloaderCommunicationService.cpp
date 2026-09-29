@@ -134,6 +134,33 @@ bool BootloaderCommunicationService::sendObserverMotorControl(
     return sendCanFrame(frame);
 }
 
+bool BootloaderCommunicationService::sendObserverMotorCalibration(
+    const ObserverMotorProtocol::CalibrationAction action, const quint8 nodeId,
+    const quint16 sequence, QString *error)
+{
+    if (nodeId < ObserverMotorProtocol::kFirstNodeId
+        || nodeId > ObserverMotorProtocol::kLastNodeId)
+    {
+        if (error != nullptr)
+            *error = QStringLiteral("参数辨识节点号无效");
+        return false;
+    }
+    const QByteArray data = ObserverMotorProtocol::encodeCalibration(
+        action, static_cast<quint8>(1U << (nodeId - 1U)), sequence, error);
+    if (data.isEmpty())
+    {
+        if (error != nullptr && !error->isEmpty())
+            emit errorOccurred(*error);
+        return false;
+    }
+    CanGatewayFrame frame;
+    frame.sequence = sequence;
+    frame.canId = ObserverMotorProtocol::kControlCanId;
+    frame.flags = ObserverMotorProtocol::kCanFdFlags;
+    frame.data = data;
+    return sendCanFrame(frame);
+}
+
 bool BootloaderCommunicationService::setCanBitrate(const quint32 nominalBps, const quint32 dataBps)
 {
     if (!isOpen())

@@ -28,6 +28,9 @@ class BootloaderCommunicationService final : public QObject
     bool sendCanFrame(const CanGatewayFrame &frame);
     bool sendObserverMotorControl(const ObserverMotorProtocol::ControlFrame &control,
                                   QString *error = nullptr);
+    bool sendObserverMotorCalibration(ObserverMotorProtocol::CalibrationAction action,
+                                      quint8 nodeId, quint16 sequence,
+                                      QString *error = nullptr);
     bool setCanBitrate(quint32 nominalBps, quint32 dataBps);
     /**
      * @brief 使用 AA59 Credit/ACK 状态机发送一批连续 CAN 逻辑块。
