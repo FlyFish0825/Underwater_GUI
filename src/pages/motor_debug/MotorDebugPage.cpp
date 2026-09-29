@@ -1,5 +1,6 @@
 #include "pages/motor_debug/MotorDebugPage.h"
 
+#include "communication/protocol/ObserverMotorProtocol.h"
 #include "ui/common/AppComboBox.h"
 #include "ui/common/UiPrimitives.h"
 #include "widgets/plot/QwtCurvePlotWidget.h"
@@ -21,10 +22,12 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTimer>
+#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWindow>
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <utility>
 
@@ -363,6 +366,212 @@ QDoubleSpinBox *parameterBox(const double value)
     return box;
 }
 
+class CalibrationPanel final : public QWidget
+{
+  public:
+    explicit CalibrationPanel(QWidget *parent = nullptr) : QWidget(parent)
+    {
+        auto *root = new QVBoxLayout(this);
+        root->setContentsMargins(0, 0, 0, 0);
+        root->setSpacing(8);
+
+        auto *control = new rov::CardWidget(QStringLiteral("参数辨识控制"), rov::IconKind::Settings);
+        control->contentLayout()->setContentsMargins(10, 6, 10, 6);
+        auto *toolbar = new QHBoxLayout;
+        toolbar->addWidget(rov::makeMetricLabel(QStringLiteral("目标节点")));
+        m_node = new rov::AppComboBox;
+        for (int i = 1; i <= 8; ++i)
+            m_node->addItem(QStringLiteral("Node%1").arg(i), i);
+        toolbar->addWidget(m_node);
+        toolbar->addStretch();
+        addActionButton(toolbar, QStringLiteral("连续 Rs→Ls"), 0x08U, QStringLiteral("primaryButton"));
+        addActionButton(toolbar, QStringLiteral("完整 Rs"), 0x01U, QStringLiteral("softButton"));
+        addActionButton(toolbar, QStringLiteral("完整 Ls"), 0x02U, QStringLiteral("softButton"));
+        addActionButton(toolbar, QStringLiteral("读取结果"), 0x07U, QStringLiteral("softButton"));
+        addActionButton(toolbar, QStringLiteral("停止"), 0x06U, QStringLiteral("softButton"));
+        control->contentLayout()->addLayout(toolbar);
+        auto *single = new QHBoxLayout;
+        single->addWidget(rov::makeLabel(QStringLiteral("单组 Ls"), QStringLiteral("mutedLabel")));
+        addActionButton(single, QStringLiteral("AB"), 0x03U, QStringLiteral("softButton"));
+        addActionButton(single, QStringLiteral("BC"), 0x04U, QStringLiteral("softButton"));
+        addActionButton(single, QStringLiteral("CA"), 0x05U, QStringLiteral("softButton"));
+        single->addStretch();
+        single->addWidget(rov::makeLabel(QStringLiteral("结果仅保存在节点 RAM；后续可扩展磁链等辨识项。"),
+                                         QStringLiteral("mutedLabel")));
+        control->contentLayout()->addLayout(single);
+        root->addWidget(control);
+
+        auto *gridHost = new QWidget;
+        auto *grid = new QGridLayout(gridHost);
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->setHorizontalSpacing(8);
+        grid->setVerticalSpacing(8);
+        for (int i = 0; i < 8; ++i)
+        {
+            auto *card = new rov::CardWidget(QStringLiteral("Node%1 · 参数辨识").arg(i + 1),
+                                              rov::IconKind::Motor);
+            card->contentLayout()->setContentsMargins(8, 6, 8, 8);
+            card->contentLayout()->setSpacing(3);
+            m_status[static_cast<size_t>(i)] = rov::makeStatusPill(QStringLiteral("未开始"),
+                                                                    QStringLiteral("statusIdle"));
+            card->contentLayout()->addWidget(m_status[static_cast<size_t>(i)]);
+            m_rs[static_cast<size_t>(i)] = valueLabel();
+            m_ls[static_cast<size_t>(i)] = valueLabel();
+            m_phase[static_cast<size_t>(i)] = valueLabel();
+            m_flux[static_cast<size_t>(i)] = valueLabel();
+            m_detail[static_cast<size_t>(i)] = valueLabel();
+            addRow(card, QStringLiteral("Rs"), m_rs[static_cast<size_t>(i)]);
+            addRow(card, QStringLiteral("Ls AB / BC / CA"), m_ls[static_cast<size_t>(i)]);
+            addRow(card, QStringLiteral("线阻 R_AB / BC / CA"), m_phase[static_cast<size_t>(i)]);
+            addRow(card, QStringLiteral("磁链（预留）"), m_flux[static_cast<size_t>(i)]);
+            addRow(card, QStringLiteral("状态"), m_detail[static_cast<size_t>(i)]);
+            grid->addWidget(card, i / 4, i % 4);
+        }
+        root->addWidget(gridHost, 1);
+    }
+
+    void setActionHandler(const std::function<void(quint8, quint8)> &handler)
+    {
+        m_actionHandler = handler;
+    }
+
+    void setSnapshots(const QVector<rov::MotorCalibrationSnapshot> &snapshots)
+    {
+        for (int i = 0; i < 8; ++i)
+        {
+            const rov::MotorCalibrationSnapshot value =
+                i < snapshots.size() ? snapshots.at(i) : rov::MotorCalibrationSnapshot{};
+            const bool rsValid = (value.validMask & 0x01U) != 0;
+            m_status[static_cast<size_t>(i)]->setText(statusText(value));
+            m_status[static_cast<size_t>(i)]->setProperty(
+                "statusClass", value.error != 0 || value.replyTimedOut ? "statusBad" :
+                               (value.targetCompleted() ? "statusGood" : "statusIdle"));
+            m_status[static_cast<size_t>(i)]->style()->unpolish(m_status[static_cast<size_t>(i)]);
+            m_status[static_cast<size_t>(i)]->style()->polish(m_status[static_cast<size_t>(i)]);
+            m_rs[static_cast<size_t>(i)]->setText(rsValid ? QStringLiteral("%1 Ω").arg(value.rsOhm, 0, 'f', 6)
+                                                          : QStringLiteral("--"));
+            m_ls[static_cast<size_t>(i)]->setText(
+                QStringLiteral("%1 / %2 / %3 μH")
+                    .arg((value.validMask & 0x02U) ? QString::number(value.lsAbUh, 'f', 2)
+                                                   : QStringLiteral("--"))
+                    .arg((value.validMask & 0x04U) ? QString::number(value.lsBcUh, 'f', 2)
+                                                   : QStringLiteral("--"))
+                    .arg((value.validMask & 0x08U) ? QString::number(value.lsCaUh, 'f', 2)
+                                                   : QStringLiteral("--")));
+            m_phase[static_cast<size_t>(i)]->setText(rsValid ? QStringLiteral("%1 / %2 / %3 Ω\n相电阻 %4 / %5 / %6 Ω")
+                                                                     .arg(value.rAbOhm, 0, 'f', 5)
+                                                                     .arg(value.rBcOhm, 0, 'f', 5)
+                                                                     .arg(value.rCaOhm, 0, 'f', 5)
+                                                                     .arg(value.rAOhm, 0, 'f', 5)
+                                                                     .arg(value.rBOhm, 0, 'f', 5)
+                                                                     .arg(value.rCOhm, 0, 'f', 5)
+                                                             : QStringLiteral("--"));
+            m_flux[static_cast<size_t>(i)]->setText(QStringLiteral("--"));
+            m_detail[static_cast<size_t>(i)]->setText(
+                value.online ? QStringLiteral("%1 · 阶段 %2 · 有效项 0x%3 · 序号 %4")
+                                   .arg(eventText(value.event))
+                                   .arg(stageText(value.stage))
+                                   .arg(value.validMask, 2, 16, QLatin1Char('0'))
+                                   .arg(value.sequence)
+                             : QStringLiteral("节点离线"));
+        }
+    }
+
+  private:
+    QLabel *valueLabel()
+    {
+        auto *label = rov::makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
+        label->setWordWrap(true);
+        return label;
+    }
+
+    void addRow(rov::CardWidget *card, const QString &name, QLabel *value)
+    {
+        auto *row = new QHBoxLayout;
+        row->addWidget(rov::makeLabel(name, QStringLiteral("mutedLabel")));
+        row->addWidget(value, 1);
+        card->contentLayout()->addLayout(row);
+    }
+
+    void addActionButton(QLayout *layout, const QString &text, const quint8 action,
+                         const QString &style)
+    {
+        auto *button = rov::makeButton(text, style);
+        QObject::connect(button, &QPushButton::clicked, this,
+                         [this, action]()
+                         {
+                             if (m_actionHandler)
+                                 m_actionHandler(static_cast<quint8>(m_node->currentData().toInt()), action);
+                         });
+        layout->addWidget(button);
+    }
+
+    static QString eventText(const quint8 event)
+    {
+        switch (event)
+        {
+        case 1: return QStringLiteral("已接受");
+        case 2: return QStringLiteral("完成");
+        case 3: return QStringLiteral("已拒绝");
+        case 4: return QStringLiteral("失败");
+        case 5: return QStringLiteral("已停止");
+        case 6: return QStringLiteral("结果快照");
+        case 7: return QStringLiteral("Rs完成，准备 Ls");
+        default: return QStringLiteral("未开始");
+        }
+    }
+
+    static QString statusText(const rov::MotorCalibrationSnapshot &value)
+    {
+        if (!value.online)
+            return QStringLiteral("未连接");
+        if (value.awaitingReply)
+            return QStringLiteral("等待受理");
+        if (value.replyTimedOut)
+            return QStringLiteral("等待反馈超时");
+        if (value.error != 0)
+            return QStringLiteral("%1 (%2)").arg(errorText(value.error)).arg(value.hardwareError);
+        return eventText(value.event);
+    }
+
+    static QString stageText(const quint8 stage)
+    {
+        switch (stage)
+        {
+        case 1: return QStringLiteral("Rs");
+        case 2: return QStringLiteral("Ls");
+        case 3: return QStringLiteral("Rs完成，待Ls");
+        default: return QStringLiteral("空闲");
+        }
+    }
+
+    static QString errorText(const quint8 error)
+    {
+        switch (error)
+        {
+        case 1: return QStringLiteral("不支持的Action");
+        case 2: return QStringLiteral("NodeMask必须单bit");
+        case 3: return QStringLiteral("节点忙");
+        case 4: return QStringLiteral("安全条件不满足");
+        case 5: return QStringLiteral("资源启动失败");
+        case 6: return QStringLiteral("结果无效");
+        case 7: return QStringLiteral("任务已停止");
+        case 8: return QStringLiteral("硬件辨识故障");
+        case 9: return QStringLiteral("报文格式错误");
+        default: return QStringLiteral("辨识失败");
+        }
+    }
+
+    rov::AppComboBox *m_node = nullptr;
+    std::array<QLabel *, 8> m_status{};
+    std::array<QLabel *, 8> m_rs{};
+    std::array<QLabel *, 8> m_ls{};
+    std::array<QLabel *, 8> m_phase{};
+    std::array<QLabel *, 8> m_flux{};
+    std::array<QLabel *, 8> m_detail{};
+    std::function<void(quint8, quint8)> m_actionHandler;
+};
+
 } // namespace
 
 namespace rov
@@ -400,7 +609,11 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     pageTopLayout->setSpacing(10);
     pageTopLayout->addWidget(pageHeader, 0, Qt::AlignTop);
     pageTopLayout->addWidget(captureCard, 1, Qt::AlignTop);
-    root->addLayout(pageTopLayout);
+    auto *debugTab = new QWidget;
+    auto *debugTabLayout = new QVBoxLayout(debugTab);
+    debugTabLayout->setContentsMargins(0, 0, 0, 0);
+    debugTabLayout->setSpacing(6);
+    debugTabLayout->addLayout(pageTopLayout);
 
     auto *curveCard = new CardWidget(QStringLiteral("实时曲线工作区"), IconKind::Waveform);
     m_curveCard = curveCard;
@@ -586,7 +799,26 @@ MotorDebugPage::MotorDebugPage(QWidget *parent) : QWidget(parent)
     m_curveSplitter->setStretchFactor(0, 1);
     m_curveSplitter->setStretchFactor(1, 0);
     m_curveSplitter->setSizes({500, 250});
-    root->addWidget(m_curveSplitter, 1);
+    debugTabLayout->addWidget(m_curveSplitter, 1);
+
+    auto *tabs = new QTabWidget;
+    tabs->setObjectName(QStringLiteral("motorDebugTabs"));
+    tabs->addTab(debugTab, QStringLiteral("实时调试"));
+    auto *calibrationPanel = new CalibrationPanel;
+    tabs->addTab(calibrationPanel, QStringLiteral("参数辨识"));
+    m_calibrationUpdater = [calibrationPanel](const QVector<MotorCalibrationSnapshot> &snapshots)
+    {
+        calibrationPanel->setSnapshots(snapshots);
+    };
+    calibrationPanel->setActionHandler(
+        [this](const quint8 nodeId, const quint8 action)
+        {
+            MotorCalibrationRequest request;
+            request.nodeId = nodeId;
+            request.action = action;
+            emit parameterIdentificationRequested(request);
+        });
+    root->addWidget(tabs, 1);
 
     connect(addCurve, &QPushButton::clicked, this, [this]() { addCurveWindow(); });
     connect(addIabc, &QPushButton::clicked, this,
@@ -722,6 +954,13 @@ void MotorDebugPage::setSnapshot(const MotorDebugSnapshot &snapshot)
     m_availableSeries = snapshot.series;
     refreshView();
     refreshCurveWindows();
+}
+
+void MotorDebugPage::setCalibrationSnapshots(
+    const QVector<MotorCalibrationSnapshot> &snapshots)
+{
+    if (m_calibrationUpdater)
+        m_calibrationUpdater(snapshots);
 }
 
 quint8 MotorDebugPage::selectedNodeId() const

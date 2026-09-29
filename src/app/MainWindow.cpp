@@ -562,6 +562,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
                 motorDebug->setSnapshot(motorDebugFromNode(
                     m_motorData->nodeSnapshot(nodeId), m_debugSeriesHistory, m_debugHistoryNodeId,
                     m_debugHistoryLimit));
+                motorDebug->setCalibrationSnapshots(m_motorData->calibrationSnapshots());
                 bool anyNodeOnline = false;
                 for (const ObserverMotorNodeSnapshot &node : fleet.nodes)
                 {
@@ -578,6 +579,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
                         .arg(anyNodeOnline ? QStringLiteral("#078d4a")
                                            : QStringLiteral("#8a8f98")));
             });
+    connect(m_motorData, &ObserverMotorDataService::calibrationSnapshotChanged, this,
+            [motorDebug, this](const quint8, const MotorCalibrationSnapshot &)
+            {
+                motorDebug->setCalibrationSnapshots(m_motorData->calibrationSnapshots());
+            });
     connect(motorDebug, &MotorDebugPage::historyLimitChanged, this,
             [this](const int limit)
             {
@@ -593,6 +599,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     motorDebug->setSnapshot(motorDebugFromNode(
         m_motorData->nodeSnapshot(motorDebug->selectedNodeId()), m_debugSeriesHistory,
         m_debugHistoryNodeId, m_debugHistoryLimit));
+    motorDebug->setCalibrationSnapshots(m_motorData->calibrationSnapshots());
     // 机械臂、视觉和设置页保留原有的小屏幕等比保护。
     // 电机调试与固件升级页改由页面内部自适应，避免宽屏下整页缩小后两侧留白。
     for (QWidget *page : {static_cast<QWidget *>(manipulator), static_cast<QWidget *>(vision),
@@ -773,8 +780,40 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
                     .arg(request.runCommand
                              ? (request.enabled ? QStringLiteral("启动") : QStringLiteral("停止"))
                              : (request.enabled ? QStringLiteral("设置速度并启动")
-                                                : QStringLiteral("设置速度"))));
+                                                 : QStringLiteral("设置速度"))));
         });
+    connect(motorDebug, &MotorDebugPage::parameterIdentificationRequested, this,
+            [this, communication](const MotorCalibrationRequest &request)
+            {
+                if (request.nodeId < ObserverMotorProtocol::kFirstNodeId ||
+                    request.nodeId > ObserverMotorProtocol::kLastNodeId)
+                {
+                    handleRequest(QStringLiteral("参数辨识失败：无效节点 Node%1").arg(request.nodeId));
+                    return;
+                }
+                const auto action = static_cast<ObserverMotorProtocol::CalibrationAction>(
+                    request.action);
+                QString error;
+                if (!m_motorData->canRequestCalibration(request.nodeId, request.action, &error))
+                {
+                    handleRequest(QStringLiteral("参数辨识请求未发送：%1").arg(error));
+                    return;
+                }
+                const quint16 sequence = ++m_motorControlSequence;
+                if (communication == nullptr ||
+                    !communication->sendObserverMotorCalibration(
+                        action, request.nodeId, sequence, &error))
+                {
+                    if (error.isEmpty())
+                        error = QStringLiteral("网关未连接或串口发送失败");
+                    handleRequest(QStringLiteral("参数辨识发送失败：%1").arg(error));
+                    return;
+                }
+                m_motorData->noteCalibrationRequest(request.nodeId, request.action, sequence);
+                handleRequest(QStringLiteral("已发送参数辨识 Action=0x%1 到 Node%2")
+                                  .arg(request.action, 2, 16, QLatin1Char('0'))
+                                  .arg(request.nodeId));
+            });
     connect(firmware, &FirmwarePage::upgradeRequested, this,
             [this](const FirmwareUpgradeRequest &)
             { handleRequest(QStringLiteral("固件升级：已记录升级请求；未连接 Bootloader")); });

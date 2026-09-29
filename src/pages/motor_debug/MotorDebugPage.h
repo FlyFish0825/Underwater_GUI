@@ -1,11 +1,14 @@
 #pragma once
 
 #include "contracts/motor_debug/MotorDebugContract.h"
+#include "contracts/motor/ObserverMotorContract.h"
 
 #include <QHash>
 #include <QPoint>
 #include <QStringList>
 #include <QWidget>
+
+#include <functional>
 
 class QLabel;
 class QComboBox;
@@ -34,6 +37,7 @@ class MotorDebugPage final : public QWidget
     ~MotorDebugPage() override;
 
     void setSnapshot(const MotorDebugSnapshot &snapshot);
+    void setCalibrationSnapshots(const QVector<MotorCalibrationSnapshot> &snapshots);
     quint8 selectedNodeId() const;
 
   signals:
@@ -41,6 +45,7 @@ class MotorDebugPage final : public QWidget
     void captureRequested(const MotorCaptureRequest &request);
     void speedControlRequested(const MotorSpeedControlRequest &request);
     void historyLimitChanged(int limit);
+    void parameterIdentificationRequested(const MotorCalibrationRequest &request);
 
   protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -91,6 +96,7 @@ class MotorDebugPage final : public QWidget
     bool m_curveAreaCollapsed = false;
     int m_curveExpandedHeight = 500;
     bool m_running = false;
+    std::function<void(const QVector<MotorCalibrationSnapshot> &)> m_calibrationUpdater;
 };
 
 } // namespace rov
