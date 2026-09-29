@@ -68,9 +68,16 @@ struct MotorSpeedControlRequest
     bool runCommand = false;
 };
 
+struct MotorCalibrationRequest
+{
+    quint8 nodeId = 1;
+    quint8 action = 0x08;
+};
+
 } // namespace rov
 
 Q_DECLARE_METATYPE(rov::MotorDebugSnapshot)
 Q_DECLARE_METATYPE(rov::MotorParameterRequest)
 Q_DECLARE_METATYPE(rov::MotorCaptureRequest)
 Q_DECLARE_METATYPE(rov::MotorSpeedControlRequest)
+Q_DECLARE_METATYPE(rov::MotorCalibrationRequest)
