@@ -406,12 +406,18 @@ class CalibrationPanel final : public QWidget
         grid->setContentsMargins(0, 0, 0, 0);
         grid->setHorizontalSpacing(8);
         grid->setVerticalSpacing(8);
+        for (int column = 0; column < 4; ++column)
+            grid->setColumnStretch(column, 1);
+        grid->setRowStretch(0, 1);
+        grid->setRowStretch(1, 1);
         for (int i = 0; i < 8; ++i)
         {
             auto *card = new rov::CardWidget(QStringLiteral("Node%1 · 参数辨识").arg(i + 1),
                                               rov::IconKind::Motor);
-            card->contentLayout()->setContentsMargins(8, 6, 8, 8);
-            card->contentLayout()->setSpacing(3);
+            card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+            card->setMinimumHeight(340);
+            card->contentLayout()->setContentsMargins(12, 8, 12, 10);
+            card->contentLayout()->setSpacing(6);
             m_status[static_cast<size_t>(i)] = rov::makeStatusPill(QStringLiteral("未开始"),
                                                                     QStringLiteral("statusIdle"));
             card->contentLayout()->addWidget(m_status[static_cast<size_t>(i)]);
@@ -481,6 +487,7 @@ class CalibrationPanel final : public QWidget
     QLabel *valueLabel()
     {
         auto *label = rov::makeLabel(QStringLiteral("--"), QStringLiteral("bodyValue"));
+        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         label->setWordWrap(true);
         return label;
     }
@@ -488,8 +495,14 @@ class CalibrationPanel final : public QWidget
     void addRow(rov::CardWidget *card, const QString &name, QLabel *value)
     {
         auto *row = new QHBoxLayout;
-        row->addWidget(rov::makeLabel(name, QStringLiteral("mutedLabel")));
-        row->addWidget(value, 1);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(8);
+        auto *nameLabel = rov::makeLabel(name, QStringLiteral("mutedLabel"));
+        nameLabel->setFixedWidth(150);
+        nameLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        row->addWidget(nameLabel, 0, Qt::AlignLeft | Qt::AlignVCenter);
+        value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        row->addWidget(value, 1, Qt::AlignLeft | Qt::AlignVCenter);
         card->contentLayout()->addLayout(row);
     }
 
