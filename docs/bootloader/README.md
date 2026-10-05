@@ -91,7 +91,8 @@ MISSING_COUNT、MISSING_ITEM、PROVIDER_GRANT
 
 命令中心还列出 Peer/Autonomous 命令。Peer 报文默认只解析、显示和记录；打开“协议开发模式”后，才可以选择 Source、Target、Session 和 Value 发送 Peer Control。
 
-固件页顶部的“读取并保存 BIN”在单节点、多节点顺序升级和协议调试三种模式中共用。
+固件页顶部的“读取并保存 BIN”用于单节点和 7+1 多节点升级；协议调试模式单独提供命令中心，
+不再混入固件选择和普通升级控件。
 选择节点与本地保存路径后，`BootloaderFirmwareReader` 自动发送 `ENTER_BOOT`、
 探测 Bootloader，再用现有 `READ` 命令读取配置页中的 APP 长度和 CRC32，随后顺序读取
 `0x08005000` 起的 APP 镜像。配置和整份镜像均通过 CRC32 校验后才保存为 `.bin`；
@@ -191,14 +192,14 @@ F:\file\BaiduSyncdisk\Project\Observer_Motor\build\Boot-Release\Observer_boot.bi
 - Bootloader 命令中心与 Peer 监视；
 - 固件页节点选择和结构化节点状态。
 - Legacy 单节点正式下载：`ENTER_BOOT → ERASE → WRITE → DATA → WRITE_END → VERIFY → Trial JUMP_APP → ENTER_BOOT 返回验证`；
+- 7+1 多节点并行升级：Host 广播 `SESSION_BEGIN → SESSION_CRC32 → SET_GUARD → ERASE → WRITE → DATA → WRITE_END`，由 CAN_FD_IAP 设备侧继续完成缺包修复、Coordinator 选举、Guard 更新、分布式 VERIFY 和统一 Commit；
 - 64 字节逻辑 DATA 包、56 字节有效载荷；正式下载固定由 H750 拆成 Classic CAN `0x100~0x107` 八片分片；
 - APP DATA 通过 AA59 Credit/ACK 发送，不再依赖固定毫秒延时；
 - CRC-32/MPEG-2 计算、下载阶段、数据包进度和设备错误码显示。
 
 ### 当前限制
 
-- 自动缺包修复（设备在 `WRITE_END` 报告缺包时，当前版本会停止并保留错误信息，避免盲目跳转）；
-- 多节点可按 Canary 优先、Guard 最后串行复用单节点安全下载；设备侧自治升级、Provider/Coordinator 修复轮次和 Guard/Rollback 尚未接入；
+- 7+1 自治升级的真实 CAN 总线、节点掉线、缺包和回滚场景仍需实机验证；上位机目前按 Classic CAN 数据面发送首轮广播；
 - Trial 启动状态的真实回读；
 - Jetson Nano/TCP Transport。
 

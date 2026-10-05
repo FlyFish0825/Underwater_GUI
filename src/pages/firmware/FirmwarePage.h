@@ -32,6 +32,7 @@ class FirmwareLogRecordingDialog;
 class BootloaderDownloadController;
 class BootloaderFirmwareReader;
 class BootloaderUpgradeSequence;
+class BootloaderAutonomousUpgrade;
 class AppProgressBar;
 
 class FirmwarePage final : public QWidget
@@ -80,6 +81,7 @@ class FirmwarePage final : public QWidget
     bool confirmDangerousOperation(BootCommand command, quint8 target);
     bool sendCommonCommand(BootCommand command, const QString &label, quint8 byte2 = 0,
                            const QByteArray &params = QByteArray());
+    void configureCommandDialog(BootloaderCommandDialog *dialog);
     void showCommandCenter();
     void handleBootResponse(const BootResponse &response);
     void handlePeerMessage(const PeerControlMessage &message);
@@ -101,7 +103,9 @@ class FirmwarePage final : public QWidget
     QBoxLayout *m_leftColumnLayout = nullptr;
     QBoxLayout *m_rightColumnLayout = nullptr;
     QBoxLayout *m_fileCardLayoutOwner = nullptr;
+    QBoxLayout *m_protocolCardLayoutOwner = nullptr;
     QFrame *m_firmwareFilePanel = nullptr;
+    QWidget *m_readControls = nullptr;
     QLabel *m_fileName = nullptr;
     QLabel *m_fileVersion = nullptr;
     QLabel *m_fileSize = nullptr;
@@ -150,6 +154,7 @@ class FirmwarePage final : public QWidget
     BootloaderDownloadController *m_downloadController = nullptr;
     BootloaderFirmwareReader *m_firmwareReader = nullptr;
     BootloaderUpgradeSequence *m_upgradeSequence = nullptr;
+    BootloaderAutonomousUpgrade *m_autonomousUpgrade = nullptr;
     // 高级命令窗口关闭后自动清空，支持重复打开。
     QPointer<BootloaderCommandDialog> m_commandDialog;
     QStringList m_runtimeLog;

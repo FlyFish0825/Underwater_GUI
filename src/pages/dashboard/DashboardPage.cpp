@@ -24,7 +24,6 @@
 #include <QVBoxLayout>
 #include <QVariant>
 
-#include <algorithm>
 #include <functional>
 
 namespace
@@ -92,24 +91,26 @@ QPushButton *axisButton(const QString &text, QWidget *parent)
     return button;
 }
 
-class MiniBarChart final : public QWidget
+class ThrusterBiBarChart final : public QWidget
 {
   public:
-    explicit MiniBarChart(const QColor &color, QWidget *parent = nullptr)
-        : QWidget(parent), m_color(color)
+    explicit ThrusterBiBarChart(QWidget *parent = nullptr) : QWidget(parent)
     {
-        setMinimumSize(72, 34);
+        setMinimumSize(220, 116);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
 
     QSize sizeHint() const override
     {
-        return QSize(104, 38);
+        return QSize(360, 132);
     }
 
-    void setValues(const QVector<double> &values)
+    void setValues(const QVector<double> &rpmValues, const QVector<double> &currentValues,
+                   const QVector<bool> &validValues)
     {
-        m_values = values;
+        m_rpmValues = rpmValues;
+        m_currentValues = currentValues;
+        m_validValues = validValues;
         update();
     }
 
@@ -119,36 +120,85 @@ class MiniBarChart final : public QWidget
         Q_UNUSED(event)
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(QPen(QColor(QStringLiteral("#dce6ef")), 1));
-        painter.drawLine(0, height() - 2, width(), height() - 2);
+        const QRectF plot = QRectF(28.0, 22.0, qMax(1, width() - 36), qMax(1, height() - 42));
+        const qreal baseline = plot.top() + plot.height() / 2.0;
+        const qreal halfHeight = qMax(1.0, plot.height() / 2.0 - 8.0);
+        painter.setPen(QPen(QColor(QStringLiteral("#d8e3ec")), 1));
+        painter.drawLine(plot.left(), baseline, plot.right(), baseline);
+        painter.setPen(QColor(QStringLiteral("#8ba0b4")));
+        painter.setFont(QFont(painter.font().family(), 9));
+        painter.drawText(QRectF(0, 0, 25, 18), Qt::AlignRight | Qt::AlignVCenter,
+                         QStringLiteral("正"));
+        painter.drawText(QRectF(0, height() - 20, 25, 18), Qt::AlignRight | Qt::AlignVCenter,
+                         QStringLiteral("负"));
 
-        if (m_values.isEmpty())
+        const int count = qMax(m_rpmValues.size(), m_currentValues.size());
+        if (count <= 0)
         {
             painter.setPen(QColor(QStringLiteral("#9cafc1")));
-            painter.drawText(rect(), Qt::AlignCenter, QStringLiteral("--"));
+            painter.drawText(plot, Qt::AlignCenter, QStringLiteral("等待有效数据"));
             return;
         }
 
-        const double maximum = *std::max_element(m_values.constBegin(), m_values.constEnd());
-        const double safeMaximum = maximum > 0.0 ? maximum : 1.0;
-        const qreal gap = 3.0;
-        const qreal barWidth = qMax(3.0, (width() - gap * (m_values.size() + 1)) /
-                                             static_cast<qreal>(m_values.size()));
-        const qreal baseline = height() - 3.0;
+        const qreal groupWidth = plot.width() / static_cast<qreal>(count);
+        const qreal barWidth = qBound(3.0, groupWidth * 0.22, 11.0);
+        const QColor rpmColor(QStringLiteral("#4aa8eb"));
+        const QColor currentColor(QStringLiteral("#65bea3"));
+        const QColor invalidColor(QStringLiteral("#c7d5e1"));
         painter.setPen(Qt::NoPen);
-        painter.setBrush(m_color);
-        for (int i = 0; i < m_values.size(); ++i)
+        for (int i = 0; i < count; ++i)
         {
-            const qreal x = gap + i * (barWidth + gap);
-            const qreal barHeight = qBound(3.0, (m_values.at(i) / safeMaximum) * (height() - 8),
-                                           static_cast<qreal>(height() - 8));
-            painter.drawRoundedRect(QRectF(x, baseline - barHeight, barWidth, barHeight), 2, 2);
+            const qreal center = plot.left() + (i + 0.5) * groupWidth;
+            const qreal rpmX = center - barWidth - 1.0;
+            const qreal currentX = center + 1.0;
+            const bool valid = i < m_validValues.size() && m_validValues.at(i);
+            const double rpm = i < m_rpmValues.size() ? m_rpmValues.at(i) : 0.0;
+            const double current = i < m_currentValues.size() ? m_currentValues.at(i) : 0.0;
+
+            auto drawBar = [&](const qreal x, const double value, const double maximum,
+                               const QColor &color)
+            {
+                if (!valid)
+                {
+                    painter.setBrush(Qt::NoBrush);
+                    painter.setPen(QPen(invalidColor, 1));
+                    painter.drawRoundedRect(QRectF(x, baseline - 2.0, barWidth, 4.0), 1, 1);
+                    painter.setPen(Qt::NoPen);
+                    return;
+                }
+                const qreal barHeight = qBound(0.0, qAbs(value) / maximum * halfHeight, halfHeight);
+                if (barHeight <= 0.5)
+                    return;
+                painter.setBrush(color);
+                const qreal y = value >= 0.0 ? baseline - barHeight : baseline;
+                painter.drawRoundedRect(QRectF(x, y, barWidth, barHeight), 2, 2);
+            };
+            drawBar(rpmX, rpm, 6000.0, rpmColor);
+            drawBar(currentX, current, 10.0, currentColor);
+
+            painter.setPen(QColor(QStringLiteral("#7189a3")));
+            painter.drawText(QRectF(center - groupWidth / 2.0, height() - 18.0, groupWidth, 16.0),
+                             Qt::AlignCenter, QStringLiteral("T%1").arg(i + 1));
         }
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(rpmColor);
+        painter.drawRoundedRect(QRectF(plot.left(), 5.0, 8.0, 8.0), 2, 2);
+        painter.setPen(QColor(QStringLiteral("#52718f")));
+        painter.drawText(QRectF(plot.left() + 12.0, 0.0, 42.0, 18.0), Qt::AlignLeft | Qt::AlignVCenter,
+                         QStringLiteral("转速"));
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(currentColor);
+        painter.drawRoundedRect(QRectF(plot.left() + 62.0, 5.0, 8.0, 8.0), 2, 2);
+        painter.setPen(QColor(QStringLiteral("#52718f")));
+        painter.drawText(QRectF(plot.left() + 74.0, 0.0, 42.0, 18.0), Qt::AlignLeft | Qt::AlignVCenter,
+                         QStringLiteral("电流"));
     }
 
   private:
-    QColor m_color;
-    QVector<double> m_values;
+    QVector<double> m_rpmValues;
+    QVector<double> m_currentValues;
+    QVector<bool> m_validValues;
 };
 
 class RovTopView final : public QWidget
@@ -724,11 +774,8 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     stateColumn->setSpacing(12);
 
     auto *stateCard = new CardWidget(QStringLiteral("机器人状态"), IconKind::Status);
-    auto *stateUpdateRow = new QHBoxLayout;
-    stateUpdateRow->addStretch();
     m_stateUpdate = makeLabel(QStringLiteral("更新时间：--"), QStringLiteral("mutedLabel"));
-    stateUpdateRow->addWidget(m_stateUpdate);
-    stateCard->contentLayout()->addLayout(stateUpdateRow);
+    stateCard->headerLayout()->addWidget(m_stateUpdate);
     auto *stateGrid = new QGridLayout;
     stateGrid->setSpacing(8);
     stateGrid->addWidget(metricTile(QStringLiteral("深度"), m_depthValue, QStringLiteral("--")), 0,
@@ -910,18 +957,8 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
         summaryGrid->addWidget(summaryValues[column], 1, column, Qt::AlignCenter);
         summaryGrid->setColumnStretch(column, 1);
     }
-    m_averageRpmValue = makeMetricLabel(QStringLiteral("平均转速  --"));
-    m_averageCurrentValue = makeMetricLabel(QStringLiteral("平均电流  --"));
-    m_averageTemperatureValue = makeMetricLabel(QStringLiteral("平均温度  --"));
-    m_rpmChart = new MiniBarChart(QColor(QStringLiteral("#66b3f3")), summary);
-    m_currentChart = new MiniBarChart(QColor(QStringLiteral("#79b8ee")), summary);
-    m_temperatureChart = new MiniBarChart(QColor(QStringLiteral("#8bc6f3")), summary);
-    summaryGrid->addWidget(m_averageRpmValue, 2, 0);
-    summaryGrid->addWidget(m_rpmChart, 2, 1);
-    summaryGrid->addWidget(m_averageCurrentValue, 3, 0);
-    summaryGrid->addWidget(m_currentChart, 3, 1);
-    summaryGrid->addWidget(m_averageTemperatureValue, 4, 0);
-    summaryGrid->addWidget(m_temperatureChart, 4, 1);
+    m_motorChart = new ThrusterBiBarChart(summary);
+    summaryGrid->addWidget(m_motorChart, 2, 0, 1, 4);
     summary->contentLayout()->addLayout(summaryGrid);
     bottomRow->addWidget(summary, 4);
 
@@ -1160,15 +1197,11 @@ void DashboardPage::refreshView()
         m_thrustLimitInput->setEnabled(available);
     }
 
-    QVector<double> rpmValues;
-    QVector<double> currentValues;
-    QVector<double> temperatureValues;
+    QVector<double> rpmValues(kDashboardThrusterCount, 0.0);
+    QVector<double> currentValues(kDashboardThrusterCount, 0.0);
+    QVector<bool> validValues(kDashboardThrusterCount, false);
     int online = 0;
     int offline = 0;
-    double rpmTotal = 0.0;
-    double currentTotal = 0.0;
-    double temperatureTotal = 0.0;
-    int numericCount = 0;
     for (int i = 0; i < kDashboardThrusterCount; ++i)
     {
         const bool present = i < m_snapshot.thrusters.size();
@@ -1182,13 +1215,9 @@ void DashboardPage::refreshView()
             itemOnline ? ++online : ++offline;
             if (itemValid)
             {
-                rpmTotal += item.rpm;
-                currentTotal += item.currentA;
-                temperatureTotal += item.temperatureC;
-                ++numericCount;
-                rpmValues.append(item.rpm);
-                currentValues.append(item.currentA);
-                temperatureValues.append(item.temperatureC);
+                rpmValues[i] = item.rpm;
+                currentValues[i] = item.currentA;
+                validValues[i] = true;
             }
             m_thrusterRpmValues.at(i)->setText(itemValid ? QString::number(item.rpm, 'f', 0)
                                                          : QStringLiteral("--"));
@@ -1232,24 +1261,8 @@ void DashboardPage::refreshView()
     setTone(m_onlineThrusterValue, "good");
     setTone(m_offlineThrusterValue, offline > 0 ? "warn" : "good");
     setTone(m_warningValue, m_snapshot.alarmCount > 0 ? "bad" : "good");
-    if (numericCount > 0)
-    {
-        m_averageRpmValue->setText(
-            QStringLiteral("平均转速  %1").arg(rpmTotal / numericCount, 0, 'f', 0));
-        m_averageCurrentValue->setText(
-            QStringLiteral("平均电流  %1 A").arg(currentTotal / numericCount, 0, 'f', 4));
-        m_averageTemperatureValue->setText(
-            QStringLiteral("平均温度  %1 °C").arg(temperatureTotal / numericCount, 0, 'f', 3));
-    }
-    else
-    {
-        m_averageRpmValue->setText(QStringLiteral("平均转速  --"));
-        m_averageCurrentValue->setText(QStringLiteral("平均电流  --"));
-        m_averageTemperatureValue->setText(QStringLiteral("平均温度  --"));
-    }
-    static_cast<MiniBarChart *>(m_rpmChart)->setValues(rpmValues);
-    static_cast<MiniBarChart *>(m_currentChart)->setValues(currentValues);
-    static_cast<MiniBarChart *>(m_temperatureChart)->setValues(temperatureValues);
+    static_cast<ThrusterBiBarChart *>(m_motorChart)->setValues(rpmValues, currentValues,
+                                                                validValues);
 
     if (!available)
     {

@@ -61,9 +61,6 @@ class DashboardPage final : public QWidget
     QLabel *m_onlineThrusterValue = nullptr;
     QLabel *m_offlineThrusterValue = nullptr;
     QLabel *m_warningValue = nullptr;
-    QLabel *m_averageRpmValue = nullptr;
-    QLabel *m_averageCurrentValue = nullptr;
-    QLabel *m_averageTemperatureValue = nullptr;
     QLabel *m_recordingStatus = nullptr;
     QLabel *m_recordingCounters = nullptr;
     QPushButton *m_recordingStart = nullptr;
@@ -72,9 +69,7 @@ class DashboardPage final : public QWidget
     QCheckBox *m_enableControl = nullptr;
     QSlider *m_thrustLimitSlider = nullptr;
     QSpinBox *m_thrustLimitInput = nullptr;
-    QWidget *m_rpmChart = nullptr;
-    QWidget *m_currentChart = nullptr;
-    QWidget *m_temperatureChart = nullptr;
+    QWidget *m_motorChart = nullptr;
     QVector<QLabel *> m_thrusterRpmValues;
     QVector<QLabel *> m_thrusterCurrentValues;
     QVector<QLabel *> m_thrusterTemperatureValues;

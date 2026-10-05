@@ -54,6 +54,8 @@ add_library(rov_ui_common STATIC
 add_library(rov_communication STATIC
     src/communication/bootloader/BootloaderDownloadController.cpp
     src/communication/bootloader/BootloaderDownloadController.h
+    src/communication/bootloader/BootloaderAutonomousUpgrade.cpp
+    src/communication/bootloader/BootloaderAutonomousUpgrade.h
     src/communication/bootloader/BootloaderFirmwareReader.cpp
     src/communication/bootloader/BootloaderFirmwareReader.h
     src/communication/bootloader/BootloaderUpgradeSequence.cpp
