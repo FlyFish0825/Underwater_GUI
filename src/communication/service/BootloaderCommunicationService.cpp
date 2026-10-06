@@ -93,6 +93,15 @@ bool BootloaderCommunicationService::isOpen() const
     return m_transport->isOpen();
 }
 
+bool BootloaderCommunicationService::sendSensorFrame(const SensorFrame &frame)
+{
+    // Sensor configuration never competes with firmware block/control traffic.
+    if (!isOpen() || isFlowTransferActive() || m_canBitratePending)
+        return false;
+    const QByteArray packet = encodeSensorFrame(frame);
+    return !packet.isEmpty() && m_transport->writeBytes(packet);
+}
+
 bool BootloaderCommunicationService::sendCanFrame(const CanGatewayFrame &frame)
 {
     if (m_canBitratePending)
@@ -249,6 +258,20 @@ void BootloaderCommunicationService::processReceivedBytes(const QByteArray &byte
             packetLength = 20 + payloadLength;
             expectedTail = 0x58U;
         }
+        else if (family == 0x5BU)
+        {
+            if (m_receiveBuffer.size() < 12)
+                return;
+            const int payloadLength = SensorWire::read16(m_receiveBuffer, 10);
+            if (payloadLength > SensorWire::kMaxPayload
+                || static_cast<quint8>(m_receiveBuffer.at(2)) != 1U)
+            {
+                m_receiveBuffer.remove(0, 1);
+                continue;
+            }
+            packetLength = SensorWire::kOverhead + payloadLength;
+            expectedTail = 0x5BU;
+        }
         else if (family == 0x59U)
         {
             if (m_receiveBuffer.size() < 12)
@@ -299,6 +322,15 @@ void BootloaderCommunicationService::processReceivedBytes(const QByteArray &byte
         {
             for (const auto &heartbeat : m_heartbeatDecoder.feed(packet))
                 emit heartbeatReceived(heartbeat);
+        }
+        else if (family == 0x5BU)
+        {
+            SensorFrame frame;
+            QString error;
+            if (decodeSensorFrame(packet, frame, &error))
+                emit sensorFrameReceived(frame);
+            else
+                emit errorOccurred(error);
         }
         else
         {

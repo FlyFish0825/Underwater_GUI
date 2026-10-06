@@ -9,6 +9,7 @@
 #include "pages/manipulator/ManipulatorPage.h"
 #include "pages/motor_debug/MotorDebugPage.h"
 #include "pages/settings/SettingsPlaceholder.h"
+#include "data/services/SensorDataService.h"
 #include "pages/vision/VisionPage.h"
 #include "ui/common/AnimatedNavButton.h"
 #include "ui/common/UiPrimitives.h"
@@ -39,6 +40,7 @@
 #include <QVector>
 #include <QWindow>
 #include <QtMath>
+#include <QScrollBar>
 
 #include <functional>
 
@@ -449,7 +451,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         {QStringLiteral("视觉"), QStringLiteral("相机 · 图像处理"), IconKind::Vision},
         {QStringLiteral("设置"), QStringLiteral("系统 · 通信配置"), IconKind::Settings}};
     QVector<QToolButton *> buttons;
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < int(sizeof(entries) / sizeof(entries[0])); ++i)
     {
         auto *button =
             navigationButton(entries[i].label, entries[i].description, entries[i].icon, sidebar);
@@ -485,7 +487,22 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     };
     auto *motorDebugScroll = scrollablePage(motorDebug, QStringLiteral("motorDebugPageScroll"));
     auto *firmwareScroll = scrollablePage(firmware, QStringLiteral("firmwarePageScroll"));
-    m_pages->addWidget(dashboard);
+    auto *dashboardScroll = scrollablePage(dashboard, QStringLiteral("dashboardPageScroll"));
+    dashboardScroll->setProperty("fitContentWidth", true);
+    m_pages->addWidget(dashboardScroll);
+    connect(dashboard, &DashboardPage::sensorDetailsVisibilityChanged, this,
+            [this, dashboardScroll, dashboard](bool expanded) {
+                // Wait for layout before scrolling; never open another page or window.
+                QTimer::singleShot(0, this, [this, dashboardScroll, dashboard, expanded]() {
+                    updatePageViewport();
+                    if (expanded) {
+                        if (auto *heading = dashboard->findChild<QWidget *>(QStringLiteral("sensorDetailsHeading")))
+                            dashboardScroll->verticalScrollBar()->setValue(heading->mapTo(dashboard, QPoint(0, 0)).y() - 8);
+                    } else {
+                        dashboardScroll->verticalScrollBar()->setValue(0);
+                    }
+                });
+            });
     m_pages->addWidget(motorDebugScroll);
     m_pages->addWidget(firmwareScroll);
     m_pages->addWidget(manipulator);
@@ -498,6 +515,37 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_camera = new CameraCaptureService(this);
     m_recorder = new ResearchDataRecorder(this);
     auto *communication = firmware->communicationService();
+    auto *sensorData = new SensorDataService(this);
+    sensorData->setSender([communication](const SensorFrame &frame) {
+        return communication != nullptr && communication->sendSensorFrame(frame);
+    });
+    connect(communication, &BootloaderCommunicationService::sensorFrameReceived,
+            sensorData, &SensorDataService::handleFrame);
+    connect(dashboard, &DashboardPage::sensorRequestIssued, sensorData,
+            [sensorData](const SensorRequest &request) { sensorData->request(request); });
+    connect(sensorData, &SensorDataService::snapshotChanged, dashboard, &DashboardPage::setSensorSnapshot);
+    connect(sensorData, &SensorDataService::parameterReceived, dashboard, &DashboardPage::setSensorParameterFeedback);
+    connect(sensorData, &SensorDataService::commandFinished, this,
+            [this](quint8, quint32, SensorResult, const QString &message) {
+                handleRequest(QStringLiteral("传感器：%1").arg(message));
+            });
+    const auto initializeSensors = [sensorData]() {
+        sensorData->setConnected(true);
+        for (const quint8 target : {kImuSensor, kDepthSensor})
+        {
+            SensorRequest request;
+            request.target = target;
+            request.operation = SensorOperation::GetInfo;
+            sensorData->request(request);
+        }
+    };
+    connect(communication, &BootloaderCommunicationService::opened, sensorData,
+            [initializeSensors](const QString &) { initializeSensors(); });
+    connect(communication, &BootloaderCommunicationService::closed, sensorData,
+            [sensorData]() { sensorData->setConnected(false); });
+    if (communication->isOpen())
+        QTimer::singleShot(0, sensorData, initializeSensors);
+    dashboard->setSensorSnapshot(sensorData->snapshot());
     connect(settings, &SettingsPlaceholder::canBitrateApplyRequested, this,
             [settings, communication](const quint32 nominalBps, const quint32 dataBps)
             {
@@ -1098,6 +1146,16 @@ void MainWindow::updatePageViewport()
             pageSize = required.expandedTo(viewportSize);
             scale = qMin(static_cast<qreal>(viewportSize.width()) / pageSize.width(),
                          static_cast<qreal>(viewportSize.height()) / pageSize.height());
+        }
+    }
+    if (auto *scroll = qobject_cast<QScrollArea *>(m_pages->currentWidget());
+        scroll != nullptr && scroll->property("fitContentWidth").toBool() && scroll->widget())
+    {
+        const int requiredWidth = scroll->widget()->minimumSizeHint().width() + 24;
+        if (requiredWidth > viewportSize.width())
+        {
+            scale = qreal(viewportSize.width()) / requiredWidth;
+            pageSize = QSize(requiredWidth, qCeil(viewportSize.height() / scale));
         }
     }
     m_pages->setMinimumSize(pageSize);

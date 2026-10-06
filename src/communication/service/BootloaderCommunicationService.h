@@ -5,6 +5,7 @@
 #include "communication/protocol/CanGatewayProtocol.h"
 #include "communication/protocol/ObserverMotorProtocol.h"
 #include "communication/protocol/SystemHeartbeatProtocol.h"
+#include "communication/protocol/SensorProtocol.h"
 #include "communication/transport/SerialTransport.h"
 
 #include <QObject>
@@ -26,6 +27,7 @@ class BootloaderCommunicationService final : public QObject
     void close();
     bool isOpen() const;
     bool sendCanFrame(const CanGatewayFrame &frame);
+    bool sendSensorFrame(const SensorFrame &frame);
     bool sendObserverMotorControl(const ObserverMotorProtocol::ControlFrame &control,
                                   QString *error = nullptr);
     bool sendObserverMotorCalibration(ObserverMotorProtocol::CalibrationAction action,
@@ -47,6 +49,7 @@ class BootloaderCommunicationService final : public QObject
     void frameReceived(const CanGatewayFrame &frame);
     void frameSent(const CanGatewayFrame &frame);
     void heartbeatReceived(const SystemHeartbeat &heartbeat);
+    void sensorFrameReceived(const rov::SensorFrame &frame);
     void opened(const QString &portName);
     void closed();
     void errorOccurred(const QString &message);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "contracts/dashboard/DashboardContract.h"
+#include "contracts/sensors/SensorContract.h"
 
 #include <QVector>
 #include <QWidget>
@@ -14,6 +15,8 @@ class QSpinBox;
 namespace rov
 {
 
+class SensorPanel;
+
 class DashboardPage final : public QWidget
 {
     Q_OBJECT
@@ -22,9 +25,14 @@ class DashboardPage final : public QWidget
     explicit DashboardPage(QWidget *parent = nullptr);
 
     void setSnapshot(const DashboardSnapshot &snapshot);
+    void setSensorSnapshot(const SensorSnapshot &snapshot);
+    void setSensorParameterFeedback(const SensorParameterFeedback &feedback);
+    void setSensorDetailsExpanded(bool expanded);
     void setRecordingStatus(bool active, quint64 accepted, quint64 dropped, const QString &path);
 
   signals:
+    void sensorRequestIssued(const rov::SensorRequest &request);
+    void sensorDetailsVisibilityChanged(bool expanded);
     void armRequested();
     void disarmRequested();
     void holdPositionRequested();
@@ -40,10 +48,16 @@ class DashboardPage final : public QWidget
 
   private:
     void refreshView();
+    void refreshSensorValues();
     void logRequest(const QString &message);
     void openThrusterDetails(int index);
 
     DashboardSnapshot m_snapshot;
+    // Independent from motor feedback: a motor refresh must not erase sensor data.
+    SensorSnapshot m_sensorSnapshot;
+    SensorPanel *m_sensorPanel = nullptr;
+    QPushButton *m_sensorToggle = nullptr;
+    QLabel *m_sensorSources = nullptr;
     QLabel *m_depthValue = nullptr;
     QLabel *m_rollValue = nullptr;
     QLabel *m_pitchValue = nullptr;

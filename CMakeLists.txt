@@ -73,6 +73,8 @@ add_library(rov_communication STATIC
     src/communication/protocol/CanFlowControlProtocol.h
     src/communication/protocol/ObserverMotorProtocol.cpp
     src/communication/protocol/ObserverMotorProtocol.h
+    src/communication/protocol/SensorProtocol.cpp
+    src/communication/protocol/SensorProtocol.h
     src/communication/protocol/SystemHeartbeatProtocol.cpp
     src/communication/protocol/SystemHeartbeatProtocol.h
     src/communication/service/BootloaderCommunicationService.cpp
@@ -99,6 +101,12 @@ add_library(rov_motor_data STATIC
     src/data/services/ObserverMotorDataService.h
 )
 
+add_library(rov_sensor_data STATIC
+    src/data/services/SensorDataService.cpp
+    src/data/services/SensorDataService.h
+    src/contracts/sensors/SensorContract.h
+)
+
 add_library(rov_camera STATIC
     src/data/services/CameraCaptureService.cpp
     src/data/services/CameraCaptureService.h
@@ -112,6 +120,8 @@ add_library(rov_research_recording STATIC
 add_library(rov_page_dashboard STATIC
     src/pages/dashboard/DashboardPage.cpp
     src/pages/dashboard/DashboardPage.h
+    src/pages/dashboard/SensorPanel.cpp
+    src/pages/dashboard/SensorPanel.h
 )
 
 add_library(rov_page_motor_debug STATIC
@@ -175,6 +185,7 @@ set(ROV_UI_TARGETS
     rov_page_manipulator
     rov_page_vision
     rov_page_settings
+    rov_sensor_data
 )
 
 foreach(target IN LISTS ROV_UI_TARGETS)
@@ -187,6 +198,7 @@ target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history)
 target_link_libraries(rov_firmware_history_ui PUBLIC rov_firmware_history rov_ui_common)
 target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history_ui)
 target_link_libraries(rov_motor_data PUBLIC rov_communication)
+target_link_libraries(rov_sensor_data PUBLIC rov_communication)
 if (WIN32)
     target_link_libraries(rov_camera PRIVATE ole32 oleaut32 strmiids uuid)
 endif()
@@ -218,6 +230,7 @@ target_link_libraries(rov_ui PRIVATE
     rov_motor_data
     rov_camera
     rov_research_recording
+    rov_sensor_data
 )
 
 if (WIN32)
@@ -282,4 +295,21 @@ if (BUILD_TESTING)
     target_include_directories(rov_research_data_recorder_test PRIVATE src)
     target_link_libraries(rov_research_data_recorder_test PRIVATE Qt5::Core rov_research_recording)
     add_test(NAME rov_research_data_recorder_test COMMAND rov_research_data_recorder_test)
+endif()
+
+# AA5B sensor tests use synthetic frames only; they never open a physical COM port.
+if (BUILD_TESTING)
+    add_executable(rov_sensor_protocol_test EXCLUDE_FROM_ALL tests/SensorProtocolTest.cpp)
+    target_link_libraries(rov_sensor_protocol_test PRIVATE rov_sensor_data)
+    add_test(NAME rov_sensor_protocol_test COMMAND rov_sensor_protocol_test)
+
+    add_executable(rov_sensor_page_test EXCLUDE_FROM_ALL tests/SensorPageTest.cpp)
+    target_link_libraries(rov_sensor_page_test PRIVATE rov_page_dashboard)
+    add_test(NAME rov_sensor_page_test COMMAND rov_sensor_page_test -platform offscreen)
+endif()
+
+# Hardware probing is explicitly opt-in; never a CTest/default-build side effect.
+if(BUILD_TESTING)
+    add_executable(rov_sensor_hardware_probe EXCLUDE_FROM_ALL tests/SensorHardwareProbe.cpp)
+    target_link_libraries(rov_sensor_hardware_probe PRIVATE Qt5::Core rov_communication)
 endif()

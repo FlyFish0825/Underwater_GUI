@@ -1,4 +1,5 @@
 #include "pages/dashboard/DashboardPage.h"
+#include "pages/dashboard/SensorPanel.h"
 
 #include "ui/common/UiPrimitives.h"
 
@@ -697,8 +698,8 @@ namespace rov
 DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
 {
     setObjectName(QStringLiteral("dashboardPage"));
-    // Reuse the main window's existing small-screen scaling without changing other pages.
-    setProperty("fitViewportScale", true);
+    // MainWindow hosts this page in a vertical scroll area. Expanding sensor
+    // controls must not shrink the whole overview to fit the added height.
     m_thrusterDisabled = QVector<bool>(kDashboardThrusterCount, false);
     setStyleSheet(QStringLiteral(
         "QLabel#thrusterTitle { color: #18365b; font-weight: 650; }"
@@ -776,6 +777,11 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     auto *stateCard = new CardWidget(QStringLiteral("机器人状态"), IconKind::Status);
     m_stateUpdate = makeLabel(QStringLiteral("更新时间：--"), QStringLiteral("mutedLabel"));
     stateCard->headerLayout()->addWidget(m_stateUpdate);
+    m_sensorToggle = makeButton(QStringLiteral("IMU / 深度计配置"), QStringLiteral("softButton"));
+    m_sensorToggle->setObjectName(QStringLiteral("dashboardSensorToggle"));
+    m_sensorToggle->setCheckable(true);
+    m_sensorToggle->setToolTip(QStringLiteral("在总览中展开传感器实时数据、参数与校准；不切换页面"));
+    stateCard->headerLayout()->addWidget(m_sensorToggle);
     auto *stateGrid = new QGridLayout;
     stateGrid->setSpacing(8);
     stateGrid->addWidget(metricTile(QStringLiteral("深度"), m_depthValue, QStringLiteral("--")), 0,
@@ -798,7 +804,15 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     {
         stateGrid->setColumnStretch(column, 1);
     }
+    m_depthValue->setObjectName(QStringLiteral("dashboardDepthValue"));
+    m_rollValue->setObjectName(QStringLiteral("dashboardRollValue"));
+    m_pitchValue->setObjectName(QStringLiteral("dashboardPitchValue"));
+    m_yawValue->setObjectName(QStringLiteral("dashboardYawValue"));
     stateCard->contentLayout()->addLayout(stateGrid);
+    m_sensorSources = makeLabel(QString(), QStringLiteral("mutedLabel"));
+    m_sensorSources->setObjectName(QStringLiteral("dashboardSensorSources"));
+    m_sensorSources->setWordWrap(true);
+    stateCard->contentLayout()->addWidget(m_sensorSources);
     stateColumn->addWidget(stateCard);
 
     auto *controlCard = new CardWidget(QStringLiteral("六自由度手动控制"), IconKind::Action);
@@ -1044,6 +1058,13 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     bottomRow->addWidget(quick, 4);
     root->addLayout(bottomRow);
 
+    m_sensorPanel = new SensorPanel(this);
+    m_sensorPanel->setVisible(false);
+    root->addWidget(m_sensorPanel);
+    connect(m_sensorPanel, &SensorPanel::requestIssued, this, &DashboardPage::sensorRequestIssued);
+    connect(m_sensorPanel, &SensorPanel::collapseRequested, this, [this]() { setSensorDetailsExpanded(false); });
+    connect(m_sensorToggle, &QPushButton::toggled, this, &DashboardPage::setSensorDetailsExpanded);
+
     connect(m_enableControl, &QCheckBox::toggled, this,
             [this](const bool enabled)
             {
@@ -1082,6 +1103,64 @@ void DashboardPage::setSnapshot(const DashboardSnapshot &snapshot)
     m_snapshot = snapshot;
     refreshView();
     emit snapshotAvailable(snapshot);
+}
+
+void DashboardPage::setSensorSnapshot(const SensorSnapshot &snapshot)
+{
+    m_sensorSnapshot = snapshot;
+    m_sensorPanel->setSnapshot(snapshot);
+    refreshSensorValues();
+}
+
+void DashboardPage::setSensorParameterFeedback(const SensorParameterFeedback &feedback)
+{
+    m_sensorPanel->setParameterFeedback(feedback);
+}
+
+void DashboardPage::setSensorDetailsExpanded(const bool expanded)
+{
+    const QSignalBlocker blocker(m_sensorToggle);
+    m_sensorToggle->setChecked(expanded);
+    m_sensorToggle->setText(expanded ? QStringLiteral("收起传感器配置")
+                                   : QStringLiteral("IMU / 深度计配置"));
+    m_sensorPanel->setVisible(expanded);
+    updateGeometry();
+    emit sensorDetailsVisibilityChanged(expanded);
+}
+
+void DashboardPage::refreshSensorValues()
+{
+    const bool system = hasSystemData(m_snapshot);
+    const bool systemDepth = system && m_snapshot.depthValid;
+    const bool systemAttitude = system && m_snapshot.attitudeValid;
+    const bool sensorDepth = m_sensorSnapshot.connected && m_sensorSnapshot.depthValid;
+    const bool sensorAttitude = m_sensorSnapshot.connected && m_sensorSnapshot.eulerValid;
+    // Display-only fallback. Do not relabel raw sensor measurements as fused
+    // AA58 robot state, alter control permissions, or mutate the recorded snapshot.
+    m_depthValue->setText(formatNumber(systemDepth || sensorDepth,
+        systemDepth ? m_snapshot.depthM : m_sensorSnapshot.depthFilteredM, 2, QStringLiteral(" m")));
+    m_rollValue->setText(formatNumber(systemAttitude || sensorAttitude,
+        systemAttitude ? m_snapshot.rollDeg : m_sensorSnapshot.eulerDeg[0], 1, QStringLiteral("°")));
+    m_pitchValue->setText(formatNumber(systemAttitude || sensorAttitude,
+        systemAttitude ? m_snapshot.pitchDeg : m_sensorSnapshot.eulerDeg[1], 1, QStringLiteral("°")));
+    m_yawValue->setText(formatNumber(systemAttitude || sensorAttitude,
+        systemAttitude ? m_snapshot.yawDeg : m_sensorSnapshot.eulerDeg[2], 1, QStringLiteral("°")));
+    QString depthSource;
+    if (systemDepth) depthSource = QStringLiteral("整机状态");
+    else if (sensorDepth) depthSource = QStringLiteral("深度计测量 / 滤波值");
+    else if (!m_sensorSnapshot.connected) depthSource = QStringLiteral("网关未连接");
+    else if (!m_sensorSnapshot.devices[1].online) depthSource = QStringLiteral("深度计离线 / 待数据");
+    else if (!(m_sensorSnapshot.devices[1].status & SensorStatus::ModelConfirmed)) depthSource = QStringLiteral("深度计型号未确认");
+    else if (!m_sensorSnapshot.zeroValid) depthSource = QStringLiteral("深度计未设置水面零点");
+    else depthSource = QStringLiteral("深度计数据无效 / 已过期");
+    const QString attitudeSource = systemAttitude ? QStringLiteral("整机状态")
+        : sensorAttitude ? QStringLiteral("IMU 测量 / 非整机融合") : QStringLiteral("IMU 待数据 / 已过期");
+    m_sensorSources->setText(QStringLiteral("深度：%1  ·  姿态：%2%3")
+        .arg(depthSource, attitudeSource,
+             m_sensorSnapshot.connected && (m_sensorSnapshot.devices[0].status & SensorStatus::PinBlocked)
+                 ? QStringLiteral("\nIMU 配置发送受引脚保护，接收数据可独立显示。") : QString()));
+    m_depthValue->setToolTip(depthSource);
+    for (QLabel *value : {m_rollValue, m_pitchValue, m_yawValue}) value->setToolTip(attitudeSource);
 }
 
 void DashboardPage::setRecordingStatus(const bool active, const quint64 accepted,
@@ -1147,14 +1226,7 @@ void DashboardPage::openThrusterDetails(const int index)
 void DashboardPage::refreshView()
 {
     const bool available = hasSystemData(m_snapshot);
-    m_depthValue->setText(formatNumber(available && m_snapshot.depthValid, m_snapshot.depthM, 1,
-                                       QStringLiteral(" m")));
-    m_rollValue->setText(formatNumber(available && m_snapshot.attitudeValid, m_snapshot.rollDeg, 1,
-                                      QStringLiteral("°")));
-    m_pitchValue->setText(formatNumber(available && m_snapshot.attitudeValid, m_snapshot.pitchDeg,
-                                       1, QStringLiteral("°")));
-    m_yawValue->setText(formatNumber(available && m_snapshot.attitudeValid, m_snapshot.yawDeg, 1,
-                                     QStringLiteral("°")));
+    refreshSensorValues();
     m_voltageValue->setText(formatNumber(available && m_snapshot.busVoltageValid,
                                          m_snapshot.busVoltageV, 3, QStringLiteral(" V")));
     m_modeValue->setText(available && !m_snapshot.robotMode.isEmpty() ? m_snapshot.robotMode
