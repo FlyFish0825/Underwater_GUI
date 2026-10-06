@@ -47,6 +47,9 @@ class SensorDataService final : public QObject
         quint16 currentOsr = 0, currentRateHz = 0;
         QVector<SensorRequest> steps; // At most 4; no retries or rollback writes.
     };
+    struct ImuRateSample { qint64 receivedMs; quint32 timestampUs; };
+    double imuReceivedRateHz(int group) const;
+    void refreshImuRates();
     bool sendRequest(const SensorRequest &request, bool automatic);
     void refresh();
     void processDepthStartup();
@@ -60,6 +63,11 @@ class SensorDataService final : public QObject
     DepthStartup m_depthStartup = DepthStartup::Idle;
     qint64 m_depthStartupDeadlineMs = 0;
     SensorSnapshot m_state;
+    QVector<SensorRequest> m_imuReads; // One-shot GET_STATUS + two cached parameter reads.
+    std::array<QVector<ImuRateSample>, 2> m_imuRates; // Raw / combined attitude, <=512 each.
+    std::array<qint64, 3> m_imuDeliveryAgeMs{{0, 0, 0}}; // raw / quaternion / Euler
+    qint64 m_imuRateStartedMs = -1;
+    quint32 m_imuRateNotBeforeUs = 0;
     std::array<qint64, 2> m_lastSeen{{-1, -1}};
     std::array<qint64, 2> m_statusSeen{{-1, -1}};
     // A matched reply anchors the gateway clock. Pre-handshake / old queued

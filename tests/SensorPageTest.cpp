@@ -54,11 +54,10 @@ int main(int argc,char **argv)
     auto *editor=panel->findChild<QSpinBox *>(QStringLiteral("sensor1Param0001Editor"));
     auto *info=panel->findChild<QPushButton *>(QStringLiteral("sensor1Command01"));
     auto *zero=panel->findChild<QPushButton *>(QStringLiteral("sensor2Command0c"));
-    auto *save=panel->findChild<QPushButton *>(QStringLiteral("sensor1Command05"));
     auto *feedback=panel->findChild<QLabel *>(QStringLiteral("sensor1Param0001Feedback"));
     auto *tabs=panel->findChild<QTabWidget *>(QStringLiteral("sensorTabs"));
-    CHECK(raw&&att&&dep&&write&&read&&editor&&info&&zero&&save&&feedback&&tabs);
-    if(!(raw&&att&&dep&&write&&read&&editor&&info&&zero&&save&&feedback&&tabs)) return 1;
+    CHECK(raw&&att&&dep&&write&&read&&editor&&info&&zero&&feedback&&tabs);
+    if(!(raw&&att&&dep&&write&&read&&editor&&info&&zero&&feedback&&tabs)) return 1;
     CHECK(raw->item(0,1)->text()==QStringLiteral("--"));
     CHECK(!write->isEnabled()&&!info->isEnabled()&&!zero->isEnabled());
     int requests=0; SensorRequest observed;
@@ -68,7 +67,7 @@ int main(int argc,char **argv)
     CHECK(info->isEnabled()&&!write->isEnabled());
     s.devices[0].infoKnown=true; s.devices[0].name=QStringLiteral("7E23 IMU (test fixture)");
     s.devices[0].capabilities=(1U<<5)|(1U<<7); s.devices[0].status=SensorStatus::PinBlocked;
-    page->setSensorSnapshot(s); CHECK(!write->isEnabled()&&read->isEnabled()&&!save->isEnabled());
+    page->setSensorSnapshot(s); CHECK(!write->isEnabled()&&read->isEnabled());
     CHECK(panel->findChild<QLabel *>(QStringLiteral("imuDeviceStatus"))->text().contains(QStringLiteral("PA9")));
     // Passive RX is independent of the configuration TX lock; motors may be offline.
     s.devices[0].status|=SensorStatus::Online|SensorStatus::RawValid|SensorStatus::EulerValid;
@@ -86,7 +85,7 @@ int main(int argc,char **argv)
     SensorParameterFeedback f; f.target=1; f.parameterId=1; f.value=25; f.confirmed=false;
     page->setSensorParameterFeedback(f);
     CHECK(editor->value()==50&&feedback->text().contains(QStringLiteral("未确认")));
-    f.confirmed=true; page->setSensorParameterFeedback(f); CHECK(feedback->text().contains(QStringLiteral("设备确认")));
+    f.confirmed=true; page->setSensorParameterFeedback(f); CHECK(!feedback->text().contains(QStringLiteral("设备确认"))); // IMU cache stays unconfirmed
     s.devices[0].pending=true; page->setSensorSnapshot(s); CHECK(!write->isEnabled()&&!editor->isEnabled());
     s.devices[1].infoKnown=true; s.devices[1].name=QStringLiteral("MS5837 (test fixture)");
     s.devices[1].capabilities=(1U<<10)|(1U<<11)|(1U<<5); s.devices[1].online=true;
@@ -264,6 +263,93 @@ int main(int argc,char **argv)
         live.connected = false; live.devices[1].pending = false; linkedPage.setSensorSnapshot(live);
         CHECK(!rateApply->isEnabled() && !osrApply->isEnabled());
         CHECK(rate->value() == 100 && osr->currentData().toInt() == 512 && calls == 2);
+    }
+
+
+    {
+        DashboardPage imuPage;
+        SensorSnapshot s; s.connected=true; auto &imu=s.devices[0];
+        imu.infoKnown=true;imu.online=true;imu.capabilities=0xFFFFFFFFU;imu.model=0;
+        imu.name=QStringLiteral("7E23 IMU (synthetic)");imu.firmware=QStringLiteral("1.0.0");
+        imu.status=0x43F;s.rawValid=s.quaternionValid=s.eulerValid=true;
+        s.rawAgeMs=10;s.quaternionAgeMs=15;s.attitudeAgeMs=20;
+        s.imuRawRateHz=50.0;s.imuAttitudeRateHz=100.0;s.imuRateCheck=ImuRateCheck::Matches;
+        s.imuRateMessage=QStringLiteral("观测一致：仅原始流验证，不是设备 ACK");
+        imuPage.setSensorSnapshot(s);
+        auto *config=imuPage.findChild<SensorPanel *>();
+        auto *rate=config->findChild<QSpinBox *>(QStringLiteral("sensor1Param0001Editor"));
+        auto *mode=config->findChild<QComboBox *>(QStringLiteral("sensor1Param0003Editor"));
+        auto *writeRate=config->findChild<QPushButton *>(QStringLiteral("sensor1Param0001Write"));
+        auto *writeMode=config->findChild<QPushButton *>(QStringLiteral("sensor1Param0003Write"));
+        auto *rateStatus=config->findChild<QLabel *>(QStringLiteral("imuRateObservation"));
+        CHECK(rate && rate->minimum()==10 && rate->maximum()==100);
+        CHECK(mode && !mode->currentData().isValid() && mode->findData(6)>=0 && mode->findData(9)>=0);
+        for(const QString &cmd:{QStringLiteral("05"),QStringLiteral("06"),QStringLiteral("09"),QStringLiteral("0a"),QStringLiteral("0b")})
+            CHECK(!config->findChild<QPushButton *>(QStringLiteral("sensor1Command")+cmd));
+        CHECK(rateStatus && rateStatus->text().contains(QStringLiteral("50.0 Hz")) && rateStatus->text().contains(QStringLiteral("100.0 Hz")));
+        CHECK(config->findChild<QLabel *>(QStringLiteral("imuDeviceStatus"))->text().contains(QStringLiteral("四元数")));
+        int commands=0;SensorRequest last;
+        QObject::connect(&imuPage,&DashboardPage::sensorRequestIssued,[&](const SensorRequest &r){++commands;last=r;});
+        writeMode->click();CHECK(commands==0); // placeholder is not an implicit 6-axis write
+        rate->setValue(50);writeRate->click();CHECK(commands==1 && last.target==1 && last.parameterId==1 && last.value.toInt()==50);
+        mode->setCurrentIndex(mode->findData(9));writeMode->click();CHECK(commands==2 && last.parameterId==3 && last.value.toInt()==9);
+        SensorParameterFeedback f;f.target=1;f.parameterId=1;f.value=25;f.confirmed=false;
+        f.message=QStringLiteral("最后下发缓存 / 未确认（非设备读回）");imuPage.setSensorParameterFeedback(f);
+        CHECK(rate->value()==50 && config->findChild<QLabel *>(QStringLiteral("sensor1Param0001Feedback"))->text().contains(QStringLiteral("缓存")));
+        imu.status|=SensorStatus::PinBlocked;imuPage.setSensorSnapshot(s);
+        CHECK(!writeRate->isEnabled() && !writeMode->isEnabled());
+        CHECK(config->findChild<QPushButton *>(QStringLiteral("sensor1Param0001Read"))->isEnabled());
+        CHECK(config->findChild<QTableWidget *>(QStringLiteral("imuAttitudeReadout"))->item(0,1)->text()!=QStringLiteral("--"));
+        CHECK(!imuPage.findChild<QLabel *>(QStringLiteral("dashboardSensorSources"))->isVisible());
+        auto *tabs=config->findChild<QTabWidget *>(QStringLiteral("sensorTabs"));CHECK(tabs->count()==2);
+        CHECK(config->findChild<QTableWidget *>(QStringLiteral("depthReadout"))->rowCount()==7);
+        s.eulerValid=false;s.imuAttitudeRateHz=-1;imuPage.setSensorSnapshot(s);
+        CHECK(config->findChild<QTableWidget *>(QStringLiteral("imuAttitudeReadout"))->item(0,1)->text()==QStringLiteral("--"));
+        CHECK(config->findChild<QTableWidget *>(QStringLiteral("imuAttitudeReadout"))->item(3,1)->text()!=QStringLiteral("--"));
+    }
+
+
+    // Attachment policy wins over capability bits: no hardware-calibration/reset buttons.
+    {
+        DashboardPage imuPage;
+        SensorSnapshot live; live.connected=true;
+        auto &d=live.devices[0]; d.infoKnown=true; d.online=true; d.capabilities=0x1E7;
+        d.status=0x43F; d.firmware=QStringLiteral("1.0.0"); d.name=QStringLiteral("7E23 IMU (synthetic)");
+        live.rawValid=live.quaternionValid=live.eulerValid=true;
+        live.rawAgeMs=live.quaternionAgeMs=live.attitudeAgeMs=10;
+        live.quaternionWxyz={1,0,0,0}; live.eulerDeg={1,2,3};
+        live.imuRawRateHz=25; live.imuAttitudeRateHz=50; live.imuRateMessage=QStringLiteral("观测一致，参数仍未确认");
+        imuPage.setSensorSnapshot(live);
+        for (const QString &cmd : {QStringLiteral("05"),QStringLiteral("06"),QStringLiteral("09"),QStringLiteral("0a"),QStringLiteral("0b")})
+            CHECK(!imuPage.findChild<QPushButton *>(QStringLiteral("sensor1Command")+cmd));
+        auto *choice=imuPage.findChild<QComboBox *>(QStringLiteral("sensor1Param0003Editor"));
+        auto *writeMode=imuPage.findChild<QPushButton *>(QStringLiteral("sensor1Param0003Write"));
+        auto *imuRates=imuPage.findChild<QLabel *>(QStringLiteral("imuRateObservation"));
+        auto *imuValues=imuPage.findChild<QTableWidget *>(QStringLiteral("imuAttitudeReadout"));
+        auto *rawValues=imuPage.findChild<QTableWidget *>(QStringLiteral("imuRawReadout"));
+        CHECK(choice && writeMode && imuRates && imuValues && rawValues);
+        if(choice && writeMode && imuRates && imuValues && rawValues) {
+            CHECK(choice->count()==3 && !choice->currentData().isValid() && !writeMode->isEnabled());
+            CHECK(imuRates->text().contains(QStringLiteral("25.0 Hz")) && imuRates->text().contains(QStringLiteral("50.0 Hz")));
+            for(int i=6;i<9;++i) CHECK(rawValues->item(i,2)->text()==QStringLiteral("协议单位"));
+            int requests=0; SensorRequest last;
+            QObject::connect(&imuPage,&DashboardPage::sensorRequestIssued,[&](const SensorRequest &r){++requests;last=r;});
+            choice->setCurrentIndex(choice->findData(9));
+            CHECK(writeMode->isEnabled() && requests==0);
+            writeMode->click(); CHECK(requests==1 && last.target==1 && last.parameterId==3 && last.value.toInt()==9);
+            SensorParameterFeedback cache; cache.target=1; cache.parameterId=3; cache.value=6; cache.confirmed=true;
+            imuPage.setSensorParameterFeedback(cache);
+            CHECK(choice->currentData().toInt()==9);
+            CHECK(!imuPage.findChild<QLabel *>(QStringLiteral("sensor1Param0003Feedback"))->text().contains(QStringLiteral("设备确认")));
+            d.status|=SensorStatus::PinBlocked; imuPage.setSensorSnapshot(live);
+            CHECK(!writeMode->isEnabled() && imuValues->item(0,1)->text()==QStringLiteral("1.000"));
+            live.eulerValid=false; imuPage.setSensorSnapshot(live);
+            CHECK(imuValues->item(0,1)->text()==QStringLiteral("--") && imuValues->item(3,1)->text()==QStringLiteral("1.000000"));
+            live.quaternionValid=false; live.eulerValid=true; imuPage.setSensorSnapshot(live);
+            CHECK(imuValues->item(0,1)->text()==QStringLiteral("1.000") && imuValues->item(3,1)->text()==QStringLiteral("--"));
+            imuPage.setSensorSnapshot(SensorSnapshot{});
+            CHECK(!writeMode->isEnabled() && requests==1);
+        }
     }
 
     std::cout<<"dashboard sensor integration: "<<checks<<" checks, "<<failures<<" failures\n";

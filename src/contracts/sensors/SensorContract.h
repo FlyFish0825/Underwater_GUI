@@ -94,6 +94,9 @@ struct SensorDeviceState
     QString lastReplyHex;
 };
 
+// Host observation only: Matches never changes the device's UNCONFIRMED result.
+enum class ImuRateCheck { NotRequested, Observing, Matches, Differs, Insufficient, Cancelled };
+
 struct SensorSnapshot
 {
     bool connected = false;
@@ -121,7 +124,16 @@ struct SensorSnapshot
     quint32 attitudeTimestampUs = 0;
     quint32 depthTimestampUs = 0; // D2 read completion, device uptime us (u32 wrap).
     qint64 rawAgeMs = -1;
-    qint64 attitudeAgeMs = -1;
+    qint64 attitudeAgeMs = -1; // Euler group; a raw frame cannot refresh this age.
+    qint64 quaternionAgeMs = -1;
+    // Received, validated frames per second over a rolling ~2 s window; -1 = unavailable.
+    // Uses device timestamps, not SEQ deltas (the target shares SEQ among all stream groups).
+    double imuRawRateHz = -1.0;
+    double imuAttitudeRateHz = -1.0;
+    ImuRateCheck imuRateCheck = ImuRateCheck::NotRequested;
+    int imuRequestedRateHz = 0;
+    double imuRateObservedHz = -1.0;
+    QString imuRateMessage = QStringLiteral("尚未提交频率设置");
     qint64 depthAgeMs = -1; // Age since production, including USB delivery age; -1 = absent.
 };
 

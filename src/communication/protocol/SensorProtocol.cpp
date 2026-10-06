@@ -106,17 +106,14 @@ bool makeSensorRequestPayload(const SensorRequest &r, QByteArray &p, QString &er
         return fail(QStringLiteral("不支持的传感器命令"));
     if (r.operation == SensorOperation::ZeroDepth && r.target != kDepthSensor)
         return fail(QStringLiteral("归零只适用于深度计"));
+    // Product decision: no IMU hardware calibration, clear/reset, save, self-test or reboot.
+    // Keep wire enums for decoding/diagnostics, but no GUI business request can emit them.
     if (r.operation == SensorOperation::Calibrate)
-    {
-        if (r.target != kImuSensor || r.calibrationType < 1 || r.calibrationType > 3
-            || r.calibrationAction > 1 || (r.calibrationType == 3 && r.calibrationAction != 1)
-            || !std::isfinite(r.referenceTemperatureC)
-            || r.referenceTemperatureC < -100 || r.referenceTemperatureC > 150)
-            return fail(QStringLiteral("校准类型、动作或参考温度非法"));
-        p.append(char(r.calibrationType)); p.append(char(r.calibrationAction));
-        SensorWire::append16(p, quint16(qint16(std::lround(r.referenceTemperatureC * 100.0))));
-        return true;
-    }
+        return fail(QStringLiteral("禁止 IMU 硬件校准/清除；本项目使用上位机软件校准"));
+    if (r.target == kImuSensor && (r.operation == SensorOperation::SaveConfig
+        || r.operation == SensorOperation::RestoreDefaults || r.operation == SensorOperation::SelfTest
+        || r.operation == SensorOperation::Reboot))
+        return fail(QStringLiteral("当前 IMU 协议不开放此操作，命令未发送"));
     if (r.operation != SensorOperation::GetParameter && r.operation != SensorOperation::SetParameter)
         return true;
 

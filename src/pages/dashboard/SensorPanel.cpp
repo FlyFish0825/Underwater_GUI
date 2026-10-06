@@ -93,6 +93,7 @@ SensorPanel::SensorPanel(QWidget *parent) : QWidget(parent)
     auto *il = new QVBoxLayout(imu); il->setSpacing(10);
     auto *imuDevice = new CardWidget(QStringLiteral("主 IMU · USART1"), IconKind::Status);
     m_imuInfo = makeLabel(QString(), QStringLiteral("mutedLabel")); m_imuInfo->setTextFormat(Qt::PlainText);
+    m_imuInfo->setObjectName(QStringLiteral("imuDeviceInfo")); m_imuInfo->setWordWrap(true);
     m_imuStatus = makeLabel(QString()); m_imuStatus->setWordWrap(true);
     m_imuStatus->setObjectName(QStringLiteral("imuDeviceStatus"));
     m_imuCommand = makeLabel(QString()); m_imuCommand->setWordWrap(true);
@@ -126,23 +127,22 @@ SensorPanel::SensorPanel(QWidget *parent) : QWidget(parent)
     auto *imuConfig = new CardWidget(QStringLiteral("IMU 参数 · 请求值与设备反馈分开"), IconKind::Settings);
     auto *ig = new QGridLayout;
     addParameter(ig, 0, kImuSensor, 0x0001, QStringLiteral("输出频率 / Hz"), integerEditor(10, 100, 25), 5);
-    auto *algorithm = new AppComboBox; algorithm->addItem(QStringLiteral("六轴算法"), 6); algorithm->addItem(QStringLiteral("九轴算法"), 9);
+    auto *algorithm = new AppComboBox; m_imuAlgorithm = algorithm;
+    algorithm->addItem(QStringLiteral("未选择（不下发）"), QVariant());
+    algorithm->addItem(QStringLiteral("六轴算法"), 6); algorithm->addItem(QStringLiteral("九轴算法"), 9);
     addParameter(ig, 1, kImuSensor, 0x0003, QStringLiteral("算法模式"), algorithm, 6);
+    connect(algorithm, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this]() { setSnapshot(m_snapshot); }); // Enable only a real selection; never send here.
     imuConfig->contentLayout()->addLayout(ig);
-    auto *imuNote = makeLabel(QStringLiteral("频率、算法命令没有原生 ACK；“已发送/缓存”不代表设备确认。无原生读回或保存能力时，不显示伪造的成功。"), QStringLiteral("mutedLabel"));
+    auto *imuNote = makeLabel(QStringLiteral("读取仅返回下发缓存，不代表设备确认。设置频率后自动观察约 2 s 原始流；合并姿态流可能约为其两倍。此设备不使用硬件校准，不开放清除、保存和恢复操作。"), QStringLiteral("mutedLabel"));
     imuNote->setWordWrap(true); imuConfig->contentLayout()->addWidget(imuNote); il->addWidget(imuConfig);
-    auto *cal = new CardWidget(QStringLiteral("校准与配置管理"), IconKind::Action);
-    auto *cg = new QGridLayout;
-    cg->addWidget(actionButton(QStringLiteral("校准加速度 / 陀螺仪"), kImuSensor, SensorOperation::Calibrate, 7, true, true, 1, 1), 0, 0);
-    cg->addWidget(actionButton(QStringLiteral("校准磁力计"), kImuSensor, SensorOperation::Calibrate, 8, true, true, 2, 1), 0, 1);
-    cg->addWidget(actionButton(QStringLiteral("清除加速度 / 陀螺仪校准"), kImuSensor, SensorOperation::Calibrate, 7, true, true, 1, 0), 1, 0);
-    cg->addWidget(actionButton(QStringLiteral("清除磁力计校准"), kImuSensor, SensorOperation::Calibrate, 8, true, true, 2, 0), 1, 1);
-    cg->addWidget(actionButton(QStringLiteral("恢复用户默认值"), kImuSensor, SensorOperation::RestoreDefaults, 13, true, true), 2, 0);
-    auto *save = actionButton(QStringLiteral("保存配置（按能力开放）"), kImuSensor, SensorOperation::SaveConfig, 12, true, true);
-    save->setToolTip(QStringLiteral("当前 IMU 协议未提供独立保存命令，默认不可用；不等同于上位机本地保存。"));
-    cg->addWidget(save, 2, 1); cal->contentLayout()->addLayout(cg);
-    auto *calNote = makeLabel(QStringLiteral("校准前确认安装状态；加速度 / 陀螺仪校准保持静止。温度校准、自检和重启接口已预留，未确认设备支持时不开放。"), QStringLiteral("mutedLabel"));
-    calNote->setWordWrap(true); cal->contentLayout()->addWidget(calNote); il->addWidget(cal); il->addStretch();
+    // Reuse the existing IMU configuration area. Hardware calibration/reset controls are absent,
+    // regardless of firmware capability bits 7/8; software calibration is a separate host workflow.
+    m_imuRateStatus = makeLabel(QString(), QStringLiteral("mutedLabel"));
+    m_imuRateStatus->setObjectName(QStringLiteral("imuRateObservation"));
+    m_imuRateStatus->setWordWrap(true); m_imuRateStatus->setTextFormat(Qt::PlainText);
+    imuConfig->contentLayout()->addWidget(m_imuRateStatus);
+    il->addStretch();
     tabs->addTab(imu, QStringLiteral("IMU"));
 
     auto *depth = new QWidget;
@@ -251,6 +251,7 @@ void SensorPanel::addParameter(QGridLayout *grid, int row, quint8 target, quint1
     auto *read = makeButton(QStringLiteral("读取"), QStringLiteral("softButton"));
     const bool samplingPair = target == kDepthSensor && (id == 0x0001 || id == 0x0101);
     auto *write = makeButton(samplingPair ? QStringLiteral("应用组合") : QStringLiteral("应用"), QStringLiteral("primaryButton"));
+    write->setProperty("needsAlgorithm", target == kImuSensor && id == 0x0003);
     if (samplingPair) write->setToolTip(QStringLiteral("同时应用左侧选定的 OSR 和频率，自动安排下发顺序并回读确认。"));
     read->setObjectName(QStringLiteral("sensor%1Param%2Read").arg(target).arg(id, 4, 16, QLatin1Char('0')));
     write->setObjectName(QStringLiteral("sensor%1Param%2Write").arg(target).arg(id, 4, 16, QLatin1Char('0')));
@@ -277,8 +278,9 @@ void SensorPanel::addParameter(QGridLayout *grid, int row, quint8 target, quint1
         }
         else if (target == kDepthSensor && id == 0x0105) r.value = 2;
         else if (auto *combo = qobject_cast<QComboBox *>(editor)) r.value = combo->currentData();
-        else if (auto *spin = qobject_cast<QSpinBox *>(editor)) r.value = spin->value();
+        else if (auto *spin = qobject_cast<QSpinBox *>(editor)) { spin->interpretText(); r.value = spin->value(); }
         else if (auto *decimal = qobject_cast<QDoubleSpinBox *>(editor)) r.value = decimal->value();
+        if (!r.value.isValid()) return; // The algorithm placeholder is not a six-axis default.
         emit requestIssued(r);
     });
 }
@@ -290,17 +292,28 @@ void SensorPanel::setSnapshot(const SensorSnapshot &s)
     m_connection->setText(s.connected ? QStringLiteral("网关已连接 · 传感器使用同一 USB CDC 链路；上传开关不停止底层采样")
                                      : QStringLiteral("网关未连接，请在设置页连接 USB CDC"));
     const auto &i = s.devices[0]; const auto &d = s.devices[1];
-    m_imuInfo->setText(deviceInfo(i));
+    m_imuInfo->setText(deviceInfo(i) + QStringLiteral("   |   型号不可读，不推断六/九轴"));
     const QString model = d.model == 2 ? QStringLiteral("MS5837-02BA")
                         : d.model == 30 ? QStringLiteral("MS5837-30BA") : QStringLiteral("未确认");
     m_depthInfo->setText(deviceInfo(d) + (d.infoKnown ? QStringLiteral("   |   型号：%1").arg(model) : QString()));
     m_imuStatus->setText((i.status & SensorStatus::PinBlocked)
-        ? QStringLiteral("%1 · PA9 配置发送未启用（引脚保护），只接收不发送 · %2 · 接收 %3 / 错误 %4")
+        ? QStringLiteral("%1 · PA9 配置发送受保护/占用（PIN_BLOCKED），只读与接收可用 · %2 · 接收 %3 / 错误 %4")
             .arg(i.online ? QStringLiteral("IMU 接收在线") : QStringLiteral("IMU 尚无有效接收"), ageText(s.rawAgeMs))
             .arg(i.goodFrames).arg(i.errors)
         : QStringLiteral("%1 · %2 · 姿态%3 · 接收 %4 / 错误 %5")
             .arg(i.online ? QStringLiteral("IMU 在线") : QStringLiteral("IMU 离线 / 尚无数据"), ageText(s.rawAgeMs), ageText(s.attitudeAgeMs))
             .arg(i.goodFrames).arg(i.errors));
+    m_imuStatus->setText(m_imuStatus->text()
+        + QStringLiteral("\n原始%1 · 四元数%2 · 欧拉角%3").arg(ageText(s.rawAgeMs), ageText(s.quaternionAgeMs), ageText(s.attitudeAgeMs))
+        + (i.statusKnown ? QStringLiteral(" · 原始采样 %1 · 设备%2").arg(i.sampleSequence).arg(ageText(i.sampleAgeMs)) : QString()));
+    m_imuStatus->setToolTip(QStringLiteral("状态 0x%1；CONFIG_UNKNOWN 仅表示配置缓存未知，不抹掉有效测量。\n原始帧时刻 %2 µs；合并姿态帧时刻 %3 µs。三组有效位独立，合并帧不提供各组独立原生时间戳。")
+        .arg(i.status,8,16,QLatin1Char('0')).arg(s.rawTimestampUs).arg(s.attitudeTimestampUs));
+    const auto rateText = [](double hz) { return hz >= 0 ? QString::number(hz,'f',1) + QStringLiteral(" Hz") : QStringLiteral("--"); };
+    m_imuRateStatus->setText(QStringLiteral("近 2 s 实收：原始 %1 · 合并姿态 %2\n最近频率设置：%3")
+        .arg(rateText(s.imuRawRateHz), rateText(s.imuAttitudeRateHz), s.imuRateMessage));
+    m_imuCommand->setToolTip(i.lastRequestHex.isEmpty() ? QStringLiteral("尚无命令报文")
+        : QStringLiteral("最近请求编码（提交帧，不代表发送成功）：\n%1\n匹配回复 RX：\n%2").arg(i.lastRequestHex,
+            i.lastReplyHex.isEmpty() ? QStringLiteral("尚无匹配回复") : i.lastReplyHex));
     m_depthStatus->setText(QStringLiteral("%1 · PROM %2 · 型号%3 · 零点%4 · %5 · 错误 %6")
         .arg(d.online ? QStringLiteral("I2C 设备在线") : QStringLiteral("设备离线 / 尚无数据"),
              (d.status & SensorStatus::PromValid) ? QStringLiteral("已校验") : QStringLiteral("未通过"),
@@ -344,6 +357,8 @@ void SensorPanel::setSnapshot(const SensorSnapshot &s)
         bool enabled = s.connected && !device.pending;
         if (c.capability >= 0) enabled = enabled && device.infoKnown && (device.capabilities & (1U << c.capability));
         if (c.deviceAction && c.target == kImuSensor) enabled = enabled && !(device.status & SensorStatus::PinBlocked);
+        if (c.button->property("needsAlgorithm").toBool())
+            enabled = enabled && m_imuAlgorithm && m_imuAlgorithm->currentData().isValid();
         if (c.button->property("needsPressure").toBool()) enabled = enabled && s.pressureValid;
         if (c.button->property("needsImuOnline").toBool()) enabled = enabled && device.online;
         c.button->setEnabled(enabled);
@@ -360,6 +375,8 @@ void SensorPanel::setParameterFeedback(const SensorParameterFeedback &f)
         if (p.target == f.target && p.id == f.parameterId)
             p.feedback->setText(!f.value.isValid()
                 ? (f.message.isEmpty() ? QStringLiteral("未读取") : f.message)
-                : QStringLiteral("%1（%2）").arg(f.value.toString(), f.confirmed ? QStringLiteral("设备确认") : QStringLiteral("缓存 / 未确认")));
+                : QStringLiteral("%1（%2）").arg(f.value.toString(),
+                    f.target == kImuSensor ? (f.message.isEmpty() ? QStringLiteral("缓存 / 未确认") : f.message)
+                    : f.confirmed ? QStringLiteral("设备确认") : QStringLiteral("缓存 / 未确认")));
 }
 } // namespace rov

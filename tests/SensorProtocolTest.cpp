@@ -102,7 +102,7 @@ static void testRequests()
     r.value = 1.0; CHECK(!makeSensorRequestPayload(r, p, error));
     r.target = 1; r.operation = SensorOperation::ZeroDepth; CHECK(!makeSensorRequestPayload(r, p, error));
     r.operation = SensorOperation::Calibrate; r.calibrationType = 2; r.calibrationAction = 0;
-    CHECK(makeSensorRequestPayload(r, p, error)); CHECK(p.size() == 4);
+    CHECK(!makeSensorRequestPayload(r, p, error)); CHECK(p.isEmpty()); // hardware calibration forbidden
     r.calibrationType = 4; CHECK(!makeSensorRequestPayload(r, p, error));
 }
 static void testService()
@@ -147,7 +147,7 @@ static void testService()
     staleRaw.payload.replace(4,4,QByteArray::fromHex("0000803f"));
     service.handleFrame(staleRaw);
     CHECK(std::abs(service.snapshot().accelG[0]+0.4)<1e-6);
-    SensorFrame attitude; attitude.command=0x81; attitude.target=1; attitude.flags=8;
+    SensorFrame attitude; attitude.command=0x81; attitude.target=1; attitude.flags=8; attitude.sequence=2;
     SensorWire::append32(attitude.payload, SensorStatus::Online|SensorStatus::RawValid|SensorStatus::QuaternionValid|SensorStatus::EulerValid);
     for (float value : {1.0f,0.0f,0.0f,0.0f,0.5f,-0.5f,3.14159265f}) SensorWire::appendFloat(attitude.payload,value);
     service.handleFrame(attitude);
@@ -163,7 +163,7 @@ static void testService()
     dep=depthFrame(depthFlags & ~SensorStatus::ModelConfirmed); dep.sequence=3; service.handleFrame(dep);
     CHECK(!service.snapshot().depthValid && !service.snapshot().pressureValid);
     waitMs(2600);
-    auto freshRaw=rawFrame(3); freshRaw.timestampUs=2600000U;
+    auto freshRaw=rawFrame(4); freshRaw.timestampUs=2600000U;
     service.handleFrame(freshRaw);
     CHECK(service.snapshot().rawValid && !service.snapshot().eulerValid && !service.snapshot().quaternionValid);
     CHECK(!service.snapshot().pressureValid);
@@ -180,11 +180,11 @@ static void testService()
     service.handleFrame(guardedRaw);
     CHECK(service.snapshot().rawValid && service.snapshot().devices[0].online);
     CHECK(service.snapshot().devices[0].status&SensorStatus::PinBlocked);
-    attitude.payload.replace(0,4,QByteArray::fromHex("0f020000"));
+    attitude.sequence=11; attitude.payload.replace(0,4,QByteArray::fromHex("0f020000"));
     service.handleFrame(attitude);
     CHECK(service.snapshot().eulerValid && service.snapshot().quaternionValid);
     CHECK(service.snapshot().rawValid);
-    auto offlineRaw=rawFrame(11);
+    auto offlineRaw=rawFrame(12);
     offlineRaw.payload.replace(0,4,QByteArray::fromHex("00020000"));
     service.handleFrame(offlineRaw);
     CHECK(!service.snapshot().rawValid && !service.snapshot().eulerValid);
@@ -946,10 +946,412 @@ static void testDepthStartupReference()
     }
 }
 
+
+// IMU supplement 2026-10-06. All generated frames below are fixtures, not device captures.
+struct ImuHostFixture
+{
+    SensorDataService service;
+    QElapsedTimer clock;
+    QVector<SensorFrame> sent;
+    QHash<quint16, SensorParameterFeedback> parameters;
+    SensorResult outcome = SensorResult::Ok;
+    bool cached = true, blocked = false, sixFlag = false, falseOk = false, wrongInfo = false;
+    int requestedRate = 25;
+    quint32 sequence = 0xFFFFFFC0U; // Exercise stream and source timestamp wrap during rate observation.
+    ImuHostFixture()
+    {
+        clock.start(); service.setConnected(true);
+        QObject::connect(&service,&SensorDataService::parameterReceived,&service,
+            [this](const SensorParameterFeedback &f) { if(f.target==1)parameters.insert(f.parameterId,f); });
+        QObject::connect(&service,&SensorDataService::commandFinished,&service,
+            [this](quint8,quint32,SensorResult result,const QString &) { outcome=result; });
+        service.setSender([this](const SensorFrame &request) {
+            sent.append(request);
+            CHECK(request.command==1 || request.command==2 || request.command==3 || request.command==4
+                  || request.command==7 || request.command==8);
+            SensorResult result=SensorResult::Ok; QByteArray body;
+            if(request.command==1) {
+                body.append(char(1)); body.append(char(wrongInfo?6:0)); SensorWire::append32(body,0x1E7);
+                body.append(QByteArray("7E23 IMU").leftJustified(16,'\0'));
+                body.append(QByteArray("1.0.0").leftJustified(8,'\0'));
+            } else if(request.command==2) {
+                SensorWire::append32(body,request.target==1?flags():0x9F3);
+                for(quint32 n:{62641U,3U,62641U,0U})SensorWire::append32(body,n);
+            } else if(request.command==3 || request.command==4) {
+                CHECK(request.target==1 && request.payload.size()>1);
+                const quint16 id=SensorWire::read16(request.payload,0);
+                CHECK(id==1 || id==3);
+                if(request.command==4) requestedRate=id==1?SensorWire::read16(request.payload,4):requestedRate;
+                if(request.command==3 && !cached) result=SensorResult::NotReady;
+                else {
+                    result=falseOk?SensorResult::Ok:SensorResult::Unconfirmed;
+                    SensorWire::append16(body,id); body.append(char(id==1?4:2)); body.append(char(id==1?2:1));
+                    if(id==1)SensorWire::append16(body,quint16(requestedRate)); else body.append(char(9));
+                }
+            }
+            auto ack=replyFor(request,result,body); ack.timestampUs=nowUs();
+            if(sixFlag && result==SensorResult::Unconfirmed)ack.flags=6;
+            service.handleFrame(ack);
+            return true;
+        });
+    }
+    quint32 nowUs() const {return 0xFFF00000U+quint32(clock.elapsed()*1000);}
+    quint32 flags() const {return 0x43FU | (blocked?SensorStatus::PinBlocked:0U);}
+    bool command(SensorOperation operation,quint16 id=0,int value=0,quint8 target=1)
+    {SensorRequest r;r.target=target;r.operation=operation;r.parameterId=id;r.value=value;return service.request(r);}
+    void tick(int n=1) {for(int i=0;i<n;++i)CHECK(QMetaObject::invokeMethod(service.findChild<QTimer *>(),"timeout",Qt::DirectConnection));}
+    SensorFrame raw(int oldMs=0)
+    {
+        auto f=rawFrame(++sequence); f.timestampUs=nowUs()-quint32(oldMs*1000);
+        f.payload.replace(0,4,QByteArray::fromHex(blocked?"3f060000":"3f040000"));
+        return f;
+    }
+    SensorFrame attitude(quint32 status=0x43F)
+    {
+        SensorFrame f;f.command=0x81;f.flags=8;f.target=1;f.sequence=++sequence;f.timestampUs=nowUs();
+        SensorWire::append32(f.payload,status);
+        for(float v:{1.0f,0.0f,0.0f,0.0f,0.25f,-0.5f,1.5707963268f})SensorWire::appendFloat(f.payload,v);
+        return f;
+    }
+    void stream(int periodMs,bool rawEnabled=true)
+    {
+        QTimer data;data.setTimerType(Qt::PreciseTimer);data.setInterval(periodMs);
+        QObject::connect(&data,&QTimer::timeout,&service,[&]() {
+            if(rawEnabled) {
+                const auto sample=raw();service.handleFrame(sample);service.handleFrame(sample); // duplicate must not count twice
+            }
+            service.handleFrame(attitude()); service.handleFrame(attitude()); // same-ms, distinct combined frames
+        });
+        data.start();waitMs(2200);data.stop();tick();
+    }
+};
+static void testImuDiscoveryAndPolicy()
+{
+    ImuHostFixture f;
+    CHECK(f.command(SensorOperation::GetInfo)); f.tick(4);
+    CHECK(f.sent.size()==4 && f.sent[1].command==2 && f.sent[2].payload.toHex()=="0100" && f.sent[3].payload.toHex()=="0300");
+    auto s=f.service.snapshot();
+    CHECK(s.devices[0].model==0 && s.devices[0].firmware==QStringLiteral("1.0.0") && s.devices[0].capabilities==0x1E7);
+    CHECK(s.devices[0].sampleSequence==62641 && s.devices[0].errors==0);
+    CHECK(f.parameters[1].value.toInt()==25 && !f.parameters[1].confirmed);
+    CHECK(f.parameters[1].message.contains(QStringLiteral("缓存")) && f.parameters[3].value.toInt()==9);
+    CHECK(s.imuRateCheck==ImuRateCheck::NotRequested);
+    f.tick(4);CHECK(f.sent.size()==4); // no persistent polling or automatic configuration
+    for(int cmd:{5,6,9,10,11}) {
+        const int before=f.sent.size();
+        CHECK(!f.command(static_cast<SensorOperation>(cmd)) && f.sent.size()==before);
+    }
+    for(int type:{1,2,3})for(int action:{0,1}) {
+        SensorRequest r;r.operation=SensorOperation::Calibrate;r.calibrationType=quint8(type);r.calibrationAction=quint8(action);
+        QByteArray payload;QString error;
+        CHECK(!makeSensorRequestPayload(r,payload,error) && payload.isEmpty());
+        CHECK(!f.service.request(r));
+    }
+    f.cached=false;CHECK(f.command(SensorOperation::GetInfo));f.tick(4);
+    CHECK(!f.parameters[1].value.isValid() && f.parameters[1].message.contains("NOT_READY"));
+    CHECK(!f.parameters[3].value.isValid() && f.parameters[3].message.contains("NOT_READY"));
+    f.cached=true;f.sixFlag=true;CHECK(f.command(SensorOperation::GetParameter,1));
+    CHECK(f.outcome==SensorResult::Unconfirmed && !f.parameters[1].confirmed);
+    f.sixFlag=false;f.falseOk=true;CHECK(f.command(SensorOperation::GetParameter,1));
+    CHECK(f.outcome==SensorResult::IoError && !f.parameters[1].value.isValid()); // no fabricated parameter ACK
+    f.falseOk=false;f.blocked=true;CHECK(f.command(SensorOperation::GetStatus));
+    f.service.handleFrame(f.raw()); f.service.handleFrame(f.attitude(f.flags()));
+    s=f.service.snapshot();CHECK(s.rawValid && s.eulerValid && s.quaternionValid && (s.devices[0].status&SensorStatus::PinBlocked));
+    const int before=f.sent.size();CHECK(!f.command(SensorOperation::SetParameter,1,50) && f.sent.size()==before);
+    CHECK(f.command(SensorOperation::GetParameter,1)); // protected TX does not prohibit reads
+    CHECK(f.command(SensorOperation::StopStream));CHECK(f.command(SensorOperation::StartStream));
+    f.service.setConnected(false);f.service.setConnected(true);
+    CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::NotRequested && !f.service.snapshot().devices[0].infoKnown);
+    f.wrongInfo=true;CHECK(f.command(SensorOperation::GetInfo));
+    CHECK(f.outcome==SensorResult::IoError && !f.service.snapshot().devices[0].infoKnown);
+}
+static void testImuGroupsAndFreshness()
+{
+    ImuHostFixture f;CHECK(f.command(SensorOperation::GetStatus));
+    CHECK(f.command(SensorOperation::GetStatus,0,0,2));
+    auto dep=depthFrame(0x9F3);dep.timestampUs=f.nowUs();f.service.handleFrame(dep);
+    f.service.handleFrame(f.raw());f.service.handleFrame(f.attitude());
+    auto s=f.service.snapshot();CHECK(s.rawValid && s.eulerValid && s.quaternionValid);
+    CHECK(s.devices[0].model==0 && (s.devices[0].status&SensorStatus::ConfigUnknown));
+    CHECK(std::abs(s.eulerDeg[2]-90.0)<0.001 && std::abs(s.gyroRadS[0]+0.1)<0.0001);
+    CHECK(s.depthValid && s.pressurePa==121325); // IMU pressure/temp bits did not touch MS5837
+    auto onlyQuat=f.attitude(SensorStatus::Online|SensorStatus::RawValid|SensorStatus::QuaternionValid);
+    f.service.handleFrame(onlyQuat);CHECK(f.service.snapshot().quaternionValid && !f.service.snapshot().eulerValid);
+    auto onlyEuler=f.attitude(SensorStatus::Online|SensorStatus::RawValid|SensorStatus::EulerValid);
+    onlyEuler.payload.replace(4,16,QByteArray(16,'\0')); // invalid quaternion placeholder must not invalidate valid Euler
+    f.service.handleFrame(onlyEuler);CHECK(!f.service.snapshot().quaternionValid && f.service.snapshot().eulerValid);
+    auto sample=f.raw();f.service.handleFrame(sample);
+    const auto timestamp=f.service.snapshot().rawTimestampUs;
+    auto bad=sample;bad.sequence=++f.sequence;bad.payload.chop(1);f.service.handleFrame(bad);
+    CHECK(f.service.snapshot().rawTimestampUs==timestamp);
+    bad=f.raw();bad.payload.replace(4,4,QByteArray::fromHex("0000c07f"));f.service.handleFrame(bad);
+    CHECK(std::isfinite(f.service.snapshot().accelG[0]));
+    f.service.handleFrame(f.raw(600));CHECK(f.service.snapshot().rawTimestampUs==timestamp); // queued old sample rejected
+    waitMs(550);CHECK(f.command(SensorOperation::GetStatus)); // status cannot keep measurement values alive
+    CHECK(!f.service.snapshot().rawValid && !f.service.snapshot().eulerValid && !f.service.snapshot().quaternionValid);
+    f.service.handleFrame(f.raw());CHECK(f.service.snapshot().rawValid && !f.service.snapshot().eulerValid);
+    CHECK(f.service.snapshot().depthValid); // the depth watchdog remains 2500 ms, not 500 ms
+    f.service.setConnected(false);f.service.setConnected(true);CHECK(f.command(SensorOperation::GetStatus));
+    f.service.handleFrame(f.raw(450));CHECK(f.service.snapshot().rawValid && f.service.snapshot().rawAgeMs>=450);
+    waitMs(100);CHECK(!f.service.snapshot().rawValid); // delivery delay consumes freshness budget
+}
+static void testImuRateObservation()
+{
+    {
+        ImuHostFixture f;CHECK(f.command(SensorOperation::SetParameter,1,50));
+        CHECK(f.outcome==SensorResult::Unconfirmed && f.service.snapshot().imuRateCheck==ImuRateCheck::Observing);
+        CHECK(!f.parameters[1].confirmed && f.parameters[1].message.contains(QStringLiteral("UART")));
+        CHECK(f.command(SensorOperation::GetStatus,0,0,2)); // unrelated target cannot cancel the verification
+        f.stream(20);
+        auto s=f.service.snapshot();
+        CHECK(s.imuRateCheck==ImuRateCheck::Matches && std::abs(s.imuRateObservedHz-50)<5);
+        CHECK(s.imuRawRateHz>45 && s.imuRawRateHz<55 && s.imuAttitudeRateHz>90 && s.imuAttitudeRateHz<110);
+        CHECK(!f.parameters[1].confirmed && f.outcome==SensorResult::Ok); // no invented second command ACK
+        CHECK(f.command(SensorOperation::GetParameter,1));CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Matches);
+        CHECK(f.parameters[1].message.contains(QStringLiteral("缓存")) && !f.parameters[1].confirmed);
+    }
+    {
+        ImuHostFixture f;CHECK(f.command(SensorOperation::SetParameter,1,50));f.stream(40);
+        const auto s=f.service.snapshot();CHECK(s.imuRateCheck==ImuRateCheck::Differs);
+        CHECK(s.imuRateObservedHz>22 && s.imuRateObservedHz<28);
+        CHECK(s.imuAttitudeRateHz>45 && s.imuAttitudeRateHz<55); // 0x81~=50 must not certify raw=50
+        CHECK(!f.parameters[1].confirmed);
+    }
+    {
+        ImuHostFixture f;CHECK(f.command(SensorOperation::SetParameter,1,100));f.stream(20,false);
+        CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Insufficient);
+        CHECK(f.service.snapshot().imuRateObservedHz<0); // no raw frames, despite live combined attitude
+        CHECK(f.sent.size()==1); // no automatic retry or start-stream side effect
+    }
+    {
+        ImuHostFixture f;CHECK(f.command(SensorOperation::SetParameter,1,100));
+        CHECK(f.command(SensorOperation::StopStream,0,0,2));CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Observing);
+        CHECK(f.command(SensorOperation::StopStream));CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Cancelled);
+        CHECK(f.command(SensorOperation::SetParameter,1,25));CHECK(f.service.snapshot().imuRequestedRateHz==25);
+        f.service.setConnected(false);f.service.setConnected(true);f.tick(5);
+        CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::NotRequested && f.service.snapshot().imuRawRateHz<0);
+    }
+}
+
+
+// IMU acceptance cases based on the supplied imu-aa5b-host-protocol.md.
+// These are synthetic streams, never an assertion of a new physical capture.
+struct ImuDocumentFixture
+{
+    SensorDataService service;
+    QElapsedTimer clock;
+    quint32 base = 8000000U, streamSequence = 0;
+    quint32 flags = 0x43FU;
+    bool cacheKnown = false, replyEnabled = true, sendOk = true;
+    quint8 unconfirmedFlags = 2;
+    int cacheRate = 25, cacheAlgorithm = 9, completions = 0;
+    SensorResult outcome = SensorResult::Ok;
+    SensorParameterFeedback feedback;
+    QVector<SensorFrame> sent;
+    ImuDocumentFixture()
+    {
+        clock.start(); service.setConnected(true);
+        QObject::connect(&service, &SensorDataService::parameterReceived, &service,
+            [this](const SensorParameterFeedback &f) { feedback = f; });
+        QObject::connect(&service, &SensorDataService::commandFinished, &service,
+            [this](quint8,quint32,SensorResult r,const QString &) { outcome=r; ++completions; });
+        service.setSender([this](const SensorFrame &f) {
+            sent.append(f);
+            if (!sendOk) return false;
+            if (!replyEnabled) return true;
+            SensorResult result=SensorResult::Ok; QByteArray body;
+            if (f.command==1)
+                body=QByteArray::fromHex("0100e70100003745323320494d550000000000000000312e302e30000000");
+            else if (f.command==2) body=statusBody();
+            else if (f.command==3 || f.command==4)
+            {
+                const quint16 id=SensorWire::read16(f.payload,0);
+                if (f.command==4) {
+                    cacheKnown=true;
+                    if(id==1) cacheRate=SensorWire::read16(f.payload,4);
+                    else cacheAlgorithm=quint8(f.payload.at(4));
+                }
+                result=cacheKnown ? SensorResult::Unconfirmed : SensorResult::NotReady;
+                if (cacheKnown) {
+                    SensorWire::append16(body,id); body.append(char(id==1?4:2)); body.append(char(id==1?2:1));
+                    if(id==1) SensorWire::append16(body,quint16(cacheRate)); else body.append(char(cacheAlgorithm));
+                }
+            }
+            auto ack=replyFor(f,result,body); ack.timestampUs=nowUs();
+            if(result==SensorResult::Unconfirmed) ack.flags=unconfirmedFlags;
+            service.handleFrame(ack);
+            return true;
+        });
+    }
+    quint32 nowUs() const { return base + quint32(clock.elapsed()*1000); }
+    QByteArray statusBody() const {
+        QByteArray b; for (quint32 n : {flags,62641U,3U,62641U,0U}) SensorWire::append32(b,n); return b;
+    }
+    bool request(SensorOperation op, quint16 id=0, int value=25) {
+        SensorRequest r; r.target=kImuSensor; r.operation=op; r.parameterId=id; r.value=value;
+        return service.request(r);
+    }
+    void tick() {
+        auto *timer=service.findChild<QTimer *>(); CHECK(timer);
+        if(timer) CHECK(QMetaObject::invokeMethod(timer,"timeout",Qt::DirectConnection));
+    }
+    SensorFrame raw(quint32 stamp) {
+        auto f=rawFrame(++streamSequence); f.timestampUs=stamp;
+        QByteArray b; SensorWire::append32(b,flags);
+        for(float v : {0.25f,-0.5f,1.f,0.2f,-0.4f,0.6f,12.f,-24.f,36.f}) SensorWire::appendFloat(b,v);
+        f.payload=b; return f;
+    }
+    SensorFrame attitude(quint32 stamp,quint32 valid=0x43FU) {
+        SensorFrame f; f.target=1; f.command=0x81; f.flags=8;
+        f.sequence=++streamSequence; f.timestampUs=stamp; SensorWire::append32(f.payload,valid);
+        for(float v : {1.f,0.f,0.f,0.f,0.5f,-0.5f,3.14159265f}) SensorWire::appendFloat(f.payload,v);
+        return f;
+    }
+    void produce(int rawHz,int duration=2250,int dropEvery=0) {
+        const qint64 begin=clock.elapsed(); qint64 next=0; int n=0;
+        while(clock.elapsed()-begin<duration) {
+            const qint64 t=clock.elapsed()-begin;
+            while(next<=t) {
+                const quint32 stamp=base+quint32((begin+next)*1000);
+                auto f=raw(stamp);
+                if(!dropEvery || (++n % dropEvery)!=0) {service.handleFrame(f); service.handleFrame(f);} // duplicate must not count
+                service.handleFrame(attitude(stamp)); service.handleFrame(attitude(stamp)); // combined groups may share one ms
+                next+=1000/rawHz;
+            }
+            QCoreApplication::processEvents(); QThread::msleep(2);
+        }
+        tick();
+    }
+};
+static void testImuDocumentCommands()
+{
+    // Independent Python crc_hqx vectors for the documented layout; not hardware captures.
+    SensorFrame wire;
+    CHECK(decodeSensorFrame(QByteArray::fromHex("aa5b01410201010000771f0000127a00000100e70100003745323320494d550000000000000000312e302e30000000c0805baa"),wire));
+    CHECK(wire.payload.size()==31 && SensorWire::read32(wire.payload,3)==0x1E7U);
+    CHECK(wire.payload.mid(23,5)=="1.0.0" && quint8(wire.payload.at(2))==0);
+    CHECK(decodeSensorFrame(QByteArray::fromHex("aa5b01420201020000771500e8157a00003f040000b1f4000003000000b1f4000000000000dc185baa"),wire));
+    CHECK(wire.payload.size()==21 && SensorWire::read32(wire.payload,5)==62641U && SensorWire::read32(wire.payload,9)==3);
+    CHECK(decodeSensorFrame(QByteArray::fromHex("aa5b01440201010000770700d0197a00070100040232006ad15baa"),wire));
+    CHECK(quint8(wire.payload.at(0))==7 && wire.payload.mid(1).toHex()=="010004023200");
+    SensorRequest r; r.target=1; r.operation=SensorOperation::SetParameter; r.parameterId=1; r.value=50;
+    QByteArray p; QString error; CHECK(makeSensorRequestPayload(r,p,error));
+    SensorFrame request; request.command=4; request.target=1; request.sequence=0x77000001U; request.payload=p;
+    CHECK(encodeSensorFrame(request).toHex()=="aa5b010401010100007706000000000001000402320088145baa");
+    for(int v : {10,25,50,100}) {r.value=v; CHECK(makeSensorRequestPayload(r,p,error));}
+    for(int v : {0,5,9,101}) {r.value=v; CHECK(!makeSensorRequestPayload(r,p,error));}
+    r.parameterId=3;
+    for(int v : {6,9}) {r.value=v; CHECK(makeSensorRequestPayload(r,p,error)); CHECK(p.size()==5 && p.at(2)==2);}
+    r.value=7; CHECK(!makeSensorRequestPayload(r,p,error));
+    ImuDocumentFixture f;
+    for(auto op : {SensorOperation::Calibrate,SensorOperation::SaveConfig,SensorOperation::RestoreDefaults,SensorOperation::SelfTest,SensorOperation::Reboot})
+        CHECK(!f.request(op));
+    CHECK(f.sent.isEmpty());
+    CHECK(f.request(SensorOperation::GetInfo));
+    for(int i=0;i<4;++i) f.tick();
+    CHECK(f.sent.size()==4 && f.sent[1].command==2 && f.sent[2].payload.toHex()=="0100" && f.sent[3].payload.toHex()=="0300");
+    auto s=f.service.snapshot();
+    CHECK(s.devices[0].infoKnown && s.devices[0].firmware=="1.0.0" && s.devices[0].model==0);
+    CHECK(s.devices[0].sampleSequence==62641 && !f.feedback.value.isValid() && f.feedback.message.contains("NOT_READY"));
+    CHECK(!s.devices[1].infoKnown && !s.depthValid);
+    f.tick(); CHECK(f.sent.size()==4); // no polling, default SET or START_STREAM
+    f.cacheKnown=true; f.unconfirmedFlags=6;
+    CHECK(f.request(SensorOperation::GetParameter,1));
+    CHECK(f.outcome==SensorResult::Unconfirmed && !f.feedback.confirmed && f.feedback.value.toInt()==25);
+    CHECK(f.feedback.message.contains(QStringLiteral("非设备读回")));
+    f.unconfirmedFlags=2;
+    CHECK(f.request(SensorOperation::SetParameter,3,6));
+    CHECK(!f.feedback.confirmed && f.feedback.message.contains("UART") && f.service.snapshot().devices[0].model==0);
+    CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::NotRequested); // no inferred algorithm verification
+    f.flags|=SensorStatus::PinBlocked;
+    CHECK(f.request(SensorOperation::GetStatus));
+    const int before=f.sent.size();
+    CHECK(!f.request(SensorOperation::SetParameter,1,50)); CHECK(f.sent.size()==before);
+    CHECK(f.request(SensorOperation::GetParameter,1)); // guarded UART does not block cached reads
+    f.service.handleFrame(f.raw(f.nowUs()));
+    CHECK(f.service.snapshot().rawValid && (f.service.snapshot().devices[0].status&SensorStatus::PinBlocked));
+    f.replyEnabled=false; CHECK(f.request(SensorOperation::GetParameter,1));
+    auto wrong=replyFor(f.sent.last(),SensorResult::Unconfirmed,QByteArray::fromHex("010004021900"));
+    ++wrong.sequence; f.service.handleFrame(wrong); CHECK(f.service.snapshot().devices[0].pending);
+    wrong.sequence=f.sent.last().sequence; wrong.flags=2; wrong.payload[0]=0;
+    f.service.handleFrame(wrong); CHECK(f.outcome==SensorResult::IoError && !f.feedback.confirmed);
+    f.service.setConnected(false); f.service.setConnected(true); f.tick();
+    CHECK(!f.service.snapshot().devices[0].infoKnown && !f.service.snapshot().rawValid);
+}
+static void testImuIndependentFreshness()
+{
+    ImuDocumentFixture f; CHECK(f.request(SensorOperation::GetStatus));
+    f.streamSequence=0xFFFFFFFEU; f.base=0xFFFFF000U;
+    CHECK(f.request(SensorOperation::GetStatus));
+    auto raw=f.raw(f.nowUs()); f.service.handleFrame(raw);
+    f.service.handleFrame(f.attitude(f.nowUs())); // stream SEQ wraps to zero
+    auto s=f.service.snapshot();
+    CHECK(s.rawValid && s.eulerValid && s.quaternionValid && s.devices[0].model==0);
+    CHECK(s.accelG[0]==0.25 && std::abs(s.gyroRadS[1]+0.4)<0.00001 && s.magProtocolUnits[2]==36);
+    CHECK(std::abs(s.eulerDeg[2]-180)<0.001 && !s.pressureValid && !s.temperatureValid && !s.depthValid);
+    auto late=raw; late.payload.replace(0,4,QByteArray(4,0)); f.service.handleFrame(late);
+    CHECK(f.service.snapshot().rawValid); // a previous group's packet cannot overwrite the new status
+    waitMs(560);
+    f.service.handleFrame(f.raw(f.nowUs())); s=f.service.snapshot();
+    CHECK(s.rawValid && !s.eulerValid && !s.quaternionValid);
+    f.service.handleFrame(f.attitude(f.nowUs(),SensorStatus::Online|SensorStatus::RawValid|SensorStatus::QuaternionValid));
+    s=f.service.snapshot(); CHECK(s.quaternionValid && !s.eulerValid);
+    f.service.handleFrame(f.attitude(f.nowUs(),SensorStatus::Online|SensorStatus::RawValid|SensorStatus::EulerValid));
+    s=f.service.snapshot(); CHECK(s.eulerValid && !s.quaternionValid);
+    auto malformed=f.raw(f.nowUs()); malformed.payload.chop(1); f.service.handleFrame(malformed);
+    CHECK(f.service.snapshot().devices[0].sequence!=malformed.sequence);
+    auto nan=f.raw(f.nowUs()); nan.payload.replace(4,4,QByteArray::fromHex("0000c07f"));
+    f.service.handleFrame(nan); CHECK(f.service.snapshot().accelG[0]==0.25);
+    auto old=f.raw(f.nowUs()-450000U); f.service.handleFrame(old);
+    CHECK(f.service.snapshot().rawAgeMs>=450 && f.service.snapshot().rawValid);
+    waitMs(110); CHECK(f.request(SensorOperation::GetStatus));
+    CHECK(!f.service.snapshot().rawValid); // a status reply cannot rejuvenate an old raw sample
+    f.service.handleFrame(f.raw(f.nowUs())); CHECK(f.service.snapshot().rawValid);
+    f.service.setConnected(false); s=f.service.snapshot();
+    CHECK(!s.rawValid && !s.eulerValid && !s.quaternionValid && s.imuRawRateHz<0);
+}
+static void testImuRateObservationEdges()
+{
+    {
+        ImuDocumentFixture f; f.base=0xFFF00000U; // verify across microsecond wrap
+        CHECK(f.request(SensorOperation::SetParameter,1,50));
+        CHECK(f.outcome==SensorResult::Unconfirmed && f.service.snapshot().imuRateCheck==ImuRateCheck::Observing);
+        f.produce(50);
+        const auto s=f.service.snapshot();
+        CHECK(s.imuRateCheck==ImuRateCheck::Matches && std::abs(s.imuRateObservedHz-50)<2);
+        CHECK(std::abs(s.imuRawRateHz-50)<2 && std::abs(s.imuAttitudeRateHz-100)<3);
+        CHECK(!f.feedback.confirmed && f.outcome==SensorResult::Unconfirmed && f.sent.size()==1);
+        CHECK(f.request(SensorOperation::SetParameter,1,100)); // replaces previous verdict immediately
+        CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Observing && f.service.snapshot().imuRateObservedHz<0);
+        CHECK(f.request(SensorOperation::StopStream));
+        CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Cancelled);
+        CHECK(f.sent.last().target==1 && f.sent.last().command==8);
+    }
+    {
+        ImuDocumentFixture f; CHECK(f.request(SensorOperation::SetParameter,1,50));
+        f.produce(50,2250,2); // observed raw=25, combined attitude=100; SEQ gaps must not inflate rate
+        const auto s=f.service.snapshot();
+        CHECK(s.imuRateCheck==ImuRateCheck::Differs && std::abs(s.imuRateObservedHz-25)<2);
+        CHECK(std::abs(s.imuAttitudeRateHz-100)<3 && f.sent.size()==1 && !f.feedback.confirmed);
+    }
+    {
+        ImuDocumentFixture f; CHECK(f.request(SensorOperation::SetParameter,1,25));
+        for(int i=0;i<50;++i) f.service.handleFrame(f.raw(f.nowUs()-600000U));
+        waitMs(2150); f.tick();
+        CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Insufficient && f.sent.size()==1);
+        CHECK(f.request(SensorOperation::GetParameter,1));
+        CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Insufficient); // cache does not confirm output
+        f.service.setConnected(false);
+        CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::NotRequested);
+    }
+}
+
 int main(int argc,char **argv)
 {
     QCoreApplication app(argc,argv);
+    testImuDiscoveryAndPolicy(); testImuGroupsAndFreshness(); testImuRateObservation();
     testDepthStartupReference();
+    testImuDocumentCommands(); testImuIndependentFreshness(); testImuRateObservationEdges();
     testDepthRatePacketAndCommandTrace();
     testDepthPairedSampling();
     testWire(); testRequests(); testService(); testMeasuredDepthProtocol();

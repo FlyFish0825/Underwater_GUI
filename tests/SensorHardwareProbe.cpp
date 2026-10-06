@@ -13,6 +13,7 @@
 #include <QDateTime>
 #include <iostream>
 #include <functional>
+#include <cmath>
 
 using namespace rov;
 static void waitMs(int ms) {
@@ -23,7 +24,7 @@ struct Probe {
     BootloaderCommunicationService communication;
     QVector<SensorFrame> replies;
     QJsonArray trace, checks;
-    QJsonObject depthReadOnly;
+    QJsonObject depthReadOnly, imuReport;
     quint32 next=0x61060000U;
     int heartbeats=0, depthFrames=0, imuFrames=0, failures=0;
     SensorFrame lastDepth;
@@ -34,7 +35,7 @@ struct Probe {
             if(f.flags&2U) replies.append(f);
             if(f.flags==8U && f.command==0x82) { ++depthFrames; lastDepth=f; }
             if(f.flags==8U && (f.command==0x80 || f.command==0x81)) ++imuFrames;
-            if(trace.size()<500) trace.append(QJsonObject{{"direction","rx"},{"packet",QString(encodeSensorFrame(f).toHex(' '))}});
+            if(trace.size()<500 || (f.flags&2U)) trace.append(QJsonObject{{"direction","rx"},{"packet",QString(encodeSensorFrame(f).toHex(' '))}});
         });
         QObject::connect(&communication,&BootloaderCommunicationService::heartbeatReceived,
                          [this](const SystemHeartbeat &){++heartbeats;});
@@ -188,6 +189,97 @@ struct Probe {
         depthReadOnly.insert("restored",result(osrAfter)==0 && result(rateAfter)==0 && osrAfter.payload==osrFrame.payload && rateAfter.payload==rateFrame.payload);
     }
 
+
+    // Only explicit --imu-rate-test may send SET 0001, and it restores a verified baseline.
+    // Default --imu-read-only does not change IMU settings, depth zero, or forwarding.
+    void runImu(bool exercise) {
+        SensorDataService service; // Depth startup policy is OFF in this tool.
+        QHash<quint16,SensorParameterFeedback> parameters;
+        SensorResult lastResult=SensorResult::Timeout;
+        QObject::connect(&communication,&BootloaderCommunicationService::sensorFrameReceived,
+                         &service,&SensorDataService::handleFrame);
+        QObject::connect(&service,&SensorDataService::parameterReceived,&service,
+                         [&](const SensorParameterFeedback &f){if(f.target==1)parameters.insert(f.parameterId,f);});
+        QObject::connect(&service,&SensorDataService::commandFinished,&service,
+                         [&](quint8 t,quint32,SensorResult r,const QString &){if(t==1)lastResult=r;});
+        service.setSender([&](const SensorFrame &f) {
+            const bool safeRead=f.command>=1 && f.command<=3;
+            const bool rateWrite=exercise && f.target==1 && f.command==4 && f.payload.size()==6
+                && SensorWire::read16(f.payload,0)==1;
+            if(!safeRead && !rateWrite)return false;
+            trace.append(QJsonObject{{"direction","tx"},{"packet",QString(encodeSensorFrame(f).toHex(' '))}});
+            return communication.sendSensorFrame(f);
+        });
+        service.setConnected(true);
+        SensorRequest info;info.target=1;info.operation=SensorOperation::GetInfo;
+        const bool submitted=service.request(info);
+        QElapsedTimer timer;timer.start();
+        while(submitted && timer.elapsed()<5000 && parameters.size()<2)waitMs(5);
+        auto snapshot=service.snapshot();
+        check(submitted && snapshot.devices[0].infoKnown,"IMU GET_INFO accepted by production service");
+        if(!snapshot.devices[0].infoKnown)return;
+        check(snapshot.devices[0].model==0,"IMU identity remains unknown, never inferred from axes");
+        check(snapshot.devices[0].statusKnown,"IMU automatic GET_STATUS decoded");
+        check(parameters.size()==2,"IMU two cached parameters automatically queried");
+        for(quint16 id:{quint16(1),quint16(3)}) {
+            const auto f=parameters.value(id);
+            check(parameters.contains(id) && !f.confirmed
+                  && (f.value.isValid() || f.message.contains("NOT_READY")),
+                  QString("IMU parameter %1 is cache/unset, not verified device readback").arg(id));
+        }
+        SensorRequest depth;depth.target=2;depth.operation=SensorOperation::GetStatus;service.request(depth);
+        waitMs(2400);snapshot=service.snapshot();
+        check(snapshot.rawValid,"fresh IMU raw acceleration/gyro/magnetic group");
+        check(snapshot.quaternionValid && snapshot.eulerValid,"fresh independent quaternion and Euler fields");
+        check(snapshot.imuRawRateHz>0 && snapshot.imuAttitudeRateHz>0,"separate observed raw and combined attitude rates");
+        check(snapshot.rawAgeMs>=0 && snapshot.rawAgeMs<=500,"IMU source timestamp plus delivery freshness");
+        check(snapshot.devices[1].online && depthFrames>0,"depth TARGET=2 coexists without any IMU-derived depth");
+        check(heartbeats>0,"AA58 heartbeat coexists with IMU AA5B");
+        const auto numbers=[](const auto &values){QJsonArray a;for(double v:values)a.append(v);return a;};
+        imuReport=QJsonObject{{"mode",exercise?"imu-rate-test":"imu-read-only"},
+            {"firmware",snapshot.devices[0].firmware},{"model",int(snapshot.devices[0].model)},
+            {"status",double(snapshot.devices[0].status)},{"raw_valid",snapshot.rawValid},
+            {"quaternion_valid",snapshot.quaternionValid},{"euler_valid",snapshot.eulerValid},
+            {"raw_rate_hz",snapshot.imuRawRateHz},{"combined_attitude_rate_hz",snapshot.imuAttitudeRateHz},
+            {"raw_age_ms",double(snapshot.rawAgeMs)},{"raw_timestamp_us",double(snapshot.rawTimestampUs)},
+            {"attitude_timestamp_us",double(snapshot.attitudeTimestampUs)},
+            {"sample_sequence",double(snapshot.devices[0].sampleSequence)},
+            {"errors",double(snapshot.devices[0].errors)},
+            {"accel_g",numbers(snapshot.accelG)},{"gyro_rad_s",numbers(snapshot.gyroRadS)},
+            {"mag_protocol_units",numbers(snapshot.magProtocolUnits)},
+            {"quaternion_wxyz",numbers(snapshot.quaternionWxyz)},{"euler_degrees",numbers(snapshot.eulerDeg)},
+            {"limitations","No hardware calibration/clear/reset/save/IMU mode or depth configuration writes. No sensor accuracy calibration. Parameters have no native ACK."}};
+        for(quint16 id:{quint16(1),quint16(3)})
+            imuReport.insert(QString("parameter_%1").arg(id),QJsonObject{{"value",QJsonValue::fromVariant(parameters[id].value)},
+                {"confirmed",parameters[id].confirmed},{"message",parameters[id].message}});
+        if(!exercise)return;
+        const int original=parameters[1].value.toInt();
+        const bool canRestore=parameters[1].value.isValid() && original>=10 && original<=100
+            && snapshot.rawValid && std::abs(snapshot.imuRawRateHz-original)<=qMax(1.0,original*0.1)
+            && !(snapshot.devices[0].status&SensorStatus::PinBlocked);
+        if(!canRestore) {
+            imuReport.insert("rate_test_skipped","PIN_BLOCKED or no cached rate matching observation; no write was attempted because baseline cannot be safely restored.");
+            return;
+        }
+        const auto setRate=[&](int hz,const QString &key) {
+            SensorRequest request;request.target=1;request.operation=SensorOperation::SetParameter;request.parameterId=1;request.value=hz;
+            const bool sent=service.request(request);QElapsedTimer deadline;deadline.start();
+            while(sent && deadline.elapsed()<5000) {
+                waitMs(5);const auto s=service.snapshot();
+                if(!s.devices[0].pending && s.imuRateCheck!=ImuRateCheck::Observing && s.imuRateCheck!=ImuRateCheck::NotRequested)break;
+            }
+            const auto s=service.snapshot();
+            const bool ok=sent && lastResult==SensorResult::Unconfirmed && s.imuRateCheck==ImuRateCheck::Matches;
+            check(ok,key);
+            imuReport.insert(key,QJsonObject{{"requested_hz",hz},{"observed_hz",s.imuRateObservedHz},
+                {"passed",ok},{"message",s.imuRateMessage},{"tx",s.devices[0].lastRequestHex},{"rx",s.devices[0].lastReplyHex}});
+            return ok;
+        };
+        setRate(original==50?25:50,"set_and_observe");
+        const bool restored=setRate(original,"restore_and_observe");
+        imuReport.insert("restored",restored);imuReport.insert("original_hz",original);
+    }
+
     void run(bool ram) {
         const auto imuInfo=request(1,1), depthInfo=request(2,1);
         check(result(imuInfo)==0 && imuInfo.payload.size()==31,"IMU GET_INFO via AA5B");
@@ -251,6 +343,9 @@ struct Probe {
             data.insert("depth_read_only",depthReadOnly);
             data.insert("hardware_limitations",depthReadOnly.value("limitations"));
         }
+        if(!imuReport.isEmpty()) {
+            data.insert("imu",imuReport);data.insert("hardware_limitations",imuReport.value("limitations"));
+        }
         return data;
     }
 };
@@ -258,13 +353,14 @@ int main(int argc,char **argv) {
     QCoreApplication app(argc,argv);const QStringList args=app.arguments();
     const int portIndex=args.indexOf("--port"),outIndex=args.indexOf("--output");
     if(portIndex<0 || portIndex+1>=args.size() || outIndex<0 || outIndex+1>=args.size()) {
-        std::cerr<<"Usage: rov_sensor_hardware_probe --port COM11 --output report.json [--exercise-ram] [--capture-only] [--depth-read-only] [--depth-sampling-test]\n";return 2;
+        std::cerr<<"Usage: rov_sensor_hardware_probe --port COM11 --output report.json [--exercise-ram] [--capture-only] [--depth-read-only] [--depth-sampling-test] [--imu-read-only] [--imu-rate-test]\n";return 2;
     }
     const QString port=args[portIndex+1];Probe p;SerialDeviceInfo device;bool found=false;
     for(const auto &d:p.communication.enumerateDevices())if(d.portName.compare(port,Qt::CaseInsensitive)==0){device=d;found=true;break;}
     p.check(found,"explicit STM32 USB CDC port found");
     if(found && p.communication.open(device)) {
-        if(args.contains("--depth-sampling-test"))p.runDepthSampling();
+        if(args.contains("--imu-read-only") || args.contains("--imu-rate-test"))p.runImu(args.contains("--imu-rate-test"));
+        else if(args.contains("--depth-sampling-test"))p.runDepthSampling();
         else if(args.contains("--depth-read-only"))p.runDepthReadOnly();
         else if(args.contains("--capture-only"))waitMs(2500);else p.run(args.contains("--exercise-ram"));
         p.communication.close();

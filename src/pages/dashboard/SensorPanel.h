@@ -53,6 +53,8 @@ class SensorPanel final : public QWidget
     QLabel *m_imuStatus = nullptr;
     QLabel *m_depthStatus = nullptr;
     QLabel *m_imuCommand = nullptr;
+    QLabel *m_imuRateStatus = nullptr;
+    QComboBox *m_imuAlgorithm = nullptr;
     QLabel *m_depthCommand = nullptr;
     QTableWidget *m_rawTable = nullptr;
     QTableWidget *m_attitudeTable = nullptr;
