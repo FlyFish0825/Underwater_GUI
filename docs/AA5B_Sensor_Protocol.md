@@ -30,7 +30,7 @@
 
 总长20+N，最大78字节，兼容现有 USB TX 队列槽大小。CRC16-CCITT-FALSE：poly=1021、init=FFFF、refin/refout=false、xorout=0000；覆盖偏移1..15+N，排除第一个AA、CRC和帧尾。
 
-FLAGS：01请求；02正常回复；06错误/未确认回复；08遥测。回复CMD=request CMD+40，SEQ原样回显。RESULT=UNCONFIRMED也用06，不能因为UART提交成功就返回OK。禁止广播配置；目标必须是01或02。
+FLAGS：01请求；02正常回复；06错误回复；08遥测。回复CMD=request CMD+40，SEQ原样回显。本轮实测 RESULT=UNCONFIRMED 使用02（兼容旧说明的06），无论FLAGS是哪一种都不能当作OK。禁止广播配置；目标必须是01或02。
 
 GET_INFO测试向量（SEQ=12345678，TARGET=01）：
 
@@ -50,7 +50,7 @@ AA 5B 01 01 01 01 78 56 34 12 00 00 00 00 00 00 52 D6 5B AA
 | 06 | RESTORE_DEFAULTS | 空 | 预留，UNSUPPORTED |
 | 07 | START_STREAM | 空 | 开启该目标转发，不自动发IMU配置命令 |
 | 08 | STOP_STREAM | 空 | 停止该目标数据转发，不停止采样/控制/状态消息 |
-| 09 | CALIBRATE | type:u8,action:u8,reference_centi_C:i16 | IMU type1陀螺仪+加速度、type2磁力计；action0清除/1开始 |
+| 09 | CALIBRATE | 固件保留 | 最新产品决策：GUI不实现，业务请求拒绝构造，禁止硬件校准/清除 |
 | 0A | SELF_TEST | 空 | 预留，UNSUPPORTED |
 | 0B | REBOOT | 空 | 预留，UNSUPPORTED |
 | 0C | ZERO_DEPTH | 空 | 深度计显式记录水面压力，必须已有有效压力 |
@@ -177,3 +177,14 @@ RAW_VALID，P0 和测量值过期后均显示 `--`；未采集零点的 NOT_READ
 安全排序写入、逐步匹配确认、最终回读，不扩展 AA5B 帧。任何一步失败即终止剩余操作，
 部分成功不宣称整体成功；掉线不续写。详细顺序、主机契约字段、测试与实机恢复证据见
 `ms5837-host-integration-20261006.md` 第 10 节。
+
+
+## IMU 附件协议对齐（最新，2026-10-06）
+
+以本轮 `imu-aa5b-host-protocol.md` 为 TARGET=1 的依据，完整说明和实测见
+`imu-host-integration-20261006.md`。覆盖上文早期 IMU 硬件校准/保存/恢复开放描述：
+这些控件与请求入口现已关闭，不因能力位置位而放开。不修改深度计已有水面参考策略。
+IMU GET_INFO 后自动只读状态和两个参数；参数 GET/SET 均为 UNCONFIRMED 缓存/下发值，
+NOT_READY 是无缓存。频率设置后用约 2 秒 0x80 实收流验证，0x81 合并帧率独立显示；
+观测一致也不设置设备参数 confirmed。三组按有效位独立显示，mag 不标 uT，型号不推断。
+软件校准算法未在附件中定义，本轮不擅自增加算法或声称已经校准。

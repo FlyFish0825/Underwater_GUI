@@ -577,3 +577,12 @@ pressure=101202 Pa、temperature≈22.59 °C、P0=101325 Pa、depth≈-0.012189 
 启用该策略并仅修正顶栏状态汇总；`DashboardPage.cpp` 隐藏指定说明；
 `SensorPanel.cpp` 更新原参数说明。更新两项既有传感器测试、README 和本文档。
 未更改通信协议字节、SerialTransport、Bootloader、电机控制/权限、导航或 CMake 目标。
+
+
+## 12. 分批交付状态（2026-10-06）
+
+深度计运行时代码、对应测试及本接入说明已在 `976bc71` 提交并推送到
+`origin/feature/sensor-console-20261006`。上文未提交等状态为当时的阶段记录。
+临时补丁脚本、阶段备份和编译中间产物已清理；主程序、运行库、正式测试入口、实机采集
+及成功/失败验收记录保留。清理后最终版本完整 CTest 10/10 通过。
+完整批次、清理边界和保留产物见 [`分批交付与清理说明`](sensor-console-release-20261006.md)。
