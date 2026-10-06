@@ -141,7 +141,7 @@ bool makeSensorRequestPayload(const SensorRequest &r, QByteArray &p, QString &er
     bool valid = false;
     switch (r.parameterId)
     {
-    case 0x0001: valid = depth ? v >= 1 && v <= 50 : v >= 10 && v <= 100; break;
+    case 0x0001: valid = depth ? v >= 1 && v <= 100 : v >= 10 && v <= 100; break;
     case 0x0003: valid = v == 6 || v == 9; break;
     case 0x0101: valid = v == 256 || v == 512 || v == 1024 || v == 2048 || v == 4096 || v == 8192; break;
     case 0x0102: valid = v >= 900 && v <= 1300; break;

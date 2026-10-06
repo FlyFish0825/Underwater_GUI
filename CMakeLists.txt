@@ -311,5 +311,5 @@ endif()
 # Hardware probing is explicitly opt-in; never a CTest/default-build side effect.
 if(BUILD_TESTING)
     add_executable(rov_sensor_hardware_probe EXCLUDE_FROM_ALL tests/SensorHardwareProbe.cpp)
-    target_link_libraries(rov_sensor_hardware_probe PRIVATE Qt5::Core rov_communication)
+    target_link_libraries(rov_sensor_hardware_probe PRIVATE Qt5::Core rov_sensor_data)
 endif()

@@ -40,6 +40,20 @@ constexpr quint32 ConfigUnknown = 1U << 10;
 constexpr quint32 ModelConfirmed = 1U << 11;
 }
 
+// Fixed 02BA business constraint shared by the view and service. See host protocol section 5.1.
+// Driver rounds maximum conversion time UP to ms before adding both timing margins.
+constexpr int depth02baMaxRateHz(int osr)
+{
+    switch (osr)
+    {
+    case 256: case 512: case 1024: return 100;
+    case 2048: return 71;
+    case 4096: return 45;
+    case 8192: return 25;
+    default: return 0; // Unknown is not a usable configuration.
+    }
+}
+
 struct SensorRequest
 {
     quint8 target = kImuSensor;
@@ -49,6 +63,10 @@ struct SensorRequest
     quint8 calibrationType = 1;
     quint8 calibrationAction = 1;
     double referenceTemperatureC = 25.0;
+    // Host-only paired intent for depth SET 0001/0101; both zero = ordinary single parameter.
+    // The service sequences existing GET/SET commands; these fields never extend a wire payload.
+    quint16 samplingOsr = 0;
+    quint16 samplingRateHz = 0;
 };
 
 struct SensorDeviceState
@@ -61,10 +79,19 @@ struct SensorDeviceState
     quint32 status = 0;
     quint32 goodFrames = 0;
     quint32 errors = 0;
+    // Latest telemetry stream SEQ, not the device's completed-sample counter.
     quint32 sequence = 0;
+    bool statusKnown = false;
+    quint32 sampleSequence = 0;
+    // Device-reported sample age advanced by host monotonic time; -1 = no sample/unknown.
+    qint64 sampleAgeMs = -1;
     QString name = QStringLiteral("--");
     QString firmware = QStringLiteral("--");
     QString lastCommand = QStringLiteral("尚未发送命令");
+    // Bounded, latest command only. Request is the submitted encoding, not proof of a successful write.
+    // Reply is populated only for the matching TARGET/CMD/SEQ; telemetry never overwrites it.
+    QString lastRequestHex;
+    QString lastReplyHex;
 };
 
 struct SensorSnapshot
@@ -77,10 +104,12 @@ struct SensorSnapshot
     bool rawValid = false;
     bool quaternionValid = false;
     bool eulerValid = false;
+    bool depthRawValid = false; // Depth D1/D2 validity; independent of IMU rawValid.
     bool pressureValid = false;
     bool temperatureValid = false;
     bool depthValid = false;
-    bool zeroValid = false;
+    bool zeroValid = false; // Device zero configuration exists; not proof of a received P0 value.
+    bool surfacePressureValid = false; // P0 from a fresh DEPTH_DATA with ZERO_VALID.
     double pressurePa = 0.0;
     double temperatureC = 0.0;
     double depthRawM = 0.0;
@@ -90,10 +119,10 @@ struct SensorSnapshot
     quint32 rawAdcD2 = 0;
     quint32 rawTimestampUs = 0;
     quint32 attitudeTimestampUs = 0;
-    quint32 depthTimestampUs = 0;
+    quint32 depthTimestampUs = 0; // D2 read completion, device uptime us (u32 wrap).
     qint64 rawAgeMs = -1;
     qint64 attitudeAgeMs = -1;
-    qint64 depthAgeMs = -1;
+    qint64 depthAgeMs = -1; // Age since production, including USB delivery age; -1 = absent.
 };
 
 struct SensorParameterFeedback
@@ -102,6 +131,7 @@ struct SensorParameterFeedback
     quint16 parameterId = 0;
     QVariant value;
     bool confirmed = false;
+    QString message; // Nonempty with invalid value: explicit read/write failure, not a cached zero.
 };
 
 } // namespace rov

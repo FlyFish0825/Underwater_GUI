@@ -8,6 +8,8 @@ class QLabel;
 class QPushButton;
 class QGridLayout;
 class QTableWidget;
+class QSpinBox;
+class QComboBox;
 
 namespace rov
 {
@@ -43,6 +45,7 @@ class SensorPanel final : public QWidget
                               int capability = -1, bool confirmation = false,
                               bool deviceAction = false, quint8 calType = 1, quint8 calAction = 1);
     static bool confirmAction(const QString &message);
+    void updateDepthRateLimit();
     SensorSnapshot m_snapshot;
     QLabel *m_connection = nullptr;
     QLabel *m_imuInfo = nullptr;
@@ -54,6 +57,9 @@ class SensorPanel final : public QWidget
     QTableWidget *m_rawTable = nullptr;
     QTableWidget *m_attitudeTable = nullptr;
     QTableWidget *m_depthTable = nullptr;
+    QSpinBox *m_depthRate = nullptr;
+    QComboBox *m_depthOsr = nullptr;
+    QLabel *m_depthSamplingNote = nullptr;
     QVector<Control> m_controls;
     QVector<ParameterRow> m_parameters;
 };

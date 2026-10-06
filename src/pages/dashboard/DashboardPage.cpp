@@ -813,6 +813,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent)
     m_sensorSources->setObjectName(QStringLiteral("dashboardSensorSources"));
     m_sensorSources->setWordWrap(true);
     stateCard->contentLayout()->addWidget(m_sensorSources);
+    m_sensorSources->hide(); // Diagnostics remain in the existing details panel/tooltips, not the overview.
     stateColumn->addWidget(stateCard);
 
     auto *controlCard = new CardWidget(QStringLiteral("六自由度手动控制"), IconKind::Action);
@@ -1155,8 +1156,15 @@ void DashboardPage::refreshSensorValues()
     else depthSource = QStringLiteral("深度计数据无效 / 已过期");
     const QString attitudeSource = systemAttitude ? QStringLiteral("整机状态")
         : sensorAttitude ? QStringLiteral("IMU 测量 / 非整机融合") : QStringLiteral("IMU 待数据 / 已过期");
-    m_sensorSources->setText(QStringLiteral("深度：%1  ·  姿态：%2%3")
-        .arg(depthSource, attitudeSource,
+    const QString depthMeasurements = m_sensorSnapshot.connected
+        && (m_sensorSnapshot.pressureValid || m_sensorSnapshot.temperatureValid)
+        ? QStringLiteral("\n深度计：压力 %1 · 温度 %2 · 数据产生时刻 %3 µs")
+              .arg(formatNumber(m_sensorSnapshot.pressureValid, m_sensorSnapshot.pressurePa, 1, QStringLiteral(" Pa")),
+                   formatNumber(m_sensorSnapshot.temperatureValid, m_sensorSnapshot.temperatureC, 2, QStringLiteral(" °C")))
+              .arg(m_sensorSnapshot.depthTimestampUs)
+        : QString();
+    m_sensorSources->setText(QStringLiteral("深度：%1  ·  姿态：%2%3%4")
+        .arg(depthSource, attitudeSource, depthMeasurements,
              m_sensorSnapshot.connected && (m_sensorSnapshot.devices[0].status & SensorStatus::PinBlocked)
                  ? QStringLiteral("\nIMU 配置发送受引脚保护，接收数据可独立显示。") : QString()));
     m_depthValue->setToolTip(depthSource);

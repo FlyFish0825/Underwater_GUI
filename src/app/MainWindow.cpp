@@ -379,6 +379,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     topLayout->addStretch();
     auto *deviceStatus =
         statusDotLabel(QStringLiteral("设备离线"), QStringLiteral("#8a8f98"));
+    deviceStatus->setObjectName(QStringLiteral("topDeviceStatus"));
     topLayout->addWidget(deviceStatus);
     topLayout->addWidget(makeLabel(QStringLiteral("|  ROV-001"), QStringLiteral("mutedLabel")));
 
@@ -516,6 +517,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_recorder = new ResearchDataRecorder(this);
     auto *communication = firmware->communicationService();
     auto *sensorData = new SensorDataService(this);
+    sensorData->setDepthStartupEnabled(true); // This vehicle boots at the surface by operator policy.
     sensorData->setSender([communication](const SensorFrame &frame) {
         return communication != nullptr && communication->sendSensorFrame(frame);
     });
@@ -546,6 +548,28 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     if (communication->isOpen())
         QTimer::singleShot(0, sensorData, initializeSensors);
     dashboard->setSensorSnapshot(sensorData->snapshot());
+    // Status presentation is not motor control authority: a live depth sensor is a live device,
+    // even when there are no motor nodes. Use existing service snapshots, never raw bytes.
+    const auto updateDeviceStatus = [this, deviceStatus, sensorData, communication]() {
+        bool motorOnline = false;
+        for (const auto &node : m_motorData->snapshot().nodes) motorOnline |= node.online;
+        const auto sensors = sensorData->snapshot();
+        const bool depthOnline = sensors.devices[1].online;
+        const bool imuOnline = sensors.devices[0].online;
+        const QString text = motorOnline ? QStringLiteral("电机节点在线")
+            : depthOnline ? QStringLiteral("深度计在线")
+            : imuOnline ? QStringLiteral("IMU 在线")
+            : communication->isOpen() ? QStringLiteral("网关已连接") : QStringLiteral("设备离线");
+        const bool online = motorOnline || depthOnline || imuOnline;
+        deviceStatus->setText(QStringLiteral("●  ") + text);
+        deviceStatus->setStyleSheet(QStringLiteral("color: %1; font-weight: 600;")
+            .arg(online ? QStringLiteral("#078d4a") : QStringLiteral("#8a8f98")));
+    };
+    connect(sensorData, &SensorDataService::snapshotChanged, this, updateDeviceStatus);
+    connect(m_motorData, &ObserverMotorDataService::snapshotChanged, this, updateDeviceStatus);
+    connect(communication, &BootloaderCommunicationService::opened, this, updateDeviceStatus);
+    connect(communication, &BootloaderCommunicationService::closed, this, updateDeviceStatus);
+    updateDeviceStatus();
     connect(settings, &SettingsPlaceholder::canBitrateApplyRequested, this,
             [settings, communication](const quint32 nominalBps, const quint32 dataBps)
             {
@@ -603,7 +627,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(firmware->communicationService(), &BootloaderCommunicationService::closed, m_motorData,
             &ObserverMotorDataService::reset);
     connect(m_motorData, &ObserverMotorDataService::snapshotChanged, this,
-            [this, dashboard, motorDebug, deviceStatus](const ObserverMotorFleetSnapshot &fleet)
+            [this, dashboard, motorDebug](const ObserverMotorFleetSnapshot &fleet)
             {
                 dashboard->setSnapshot(dashboardFromMotorFleet(fleet));
                 const quint8 nodeId = motorDebug->selectedNodeId();
@@ -611,21 +635,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
                     m_motorData->nodeSnapshot(nodeId), m_debugSeriesHistory, m_debugHistoryNodeId,
                     m_debugHistoryLimit));
                 motorDebug->setCalibrationSnapshots(m_motorData->calibrationSnapshots());
-                bool anyNodeOnline = false;
-                for (const ObserverMotorNodeSnapshot &node : fleet.nodes)
-                {
-                    if (node.online)
-                    {
-                        anyNodeOnline = true;
-                        break;
-                    }
-                }
-                deviceStatus->setText(anyNodeOnline ? QStringLiteral("●  电机节点在线")
-                                                    : QStringLiteral("●  设备离线"));
-                deviceStatus->setStyleSheet(
-                    QStringLiteral("color: %1; font-weight: 600;")
-                        .arg(anyNodeOnline ? QStringLiteral("#078d4a")
-                                           : QStringLiteral("#8a8f98")));
+
             });
     connect(m_motorData, &ObserverMotorDataService::calibrationSnapshotChanged, this,
             [motorDebug, this](const quint8, const MotorCalibrationSnapshot &)
