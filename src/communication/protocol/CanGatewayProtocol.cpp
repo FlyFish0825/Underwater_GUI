@@ -18,6 +18,54 @@ quint8 CanGatewayDecoder::crc8(const QByteArray &bytes)
     return crc;
 }
 
+qint64 CanGatewayTimestampUnwrapper::extend(const quint32 rawUs)
+{
+    if (m_highWaterUs < 0) return m_highWaterUs = rawUs;
+    const quint32 delta = rawUs - quint32(m_highWaterUs);
+    if (delta == 0x80000000U) return -1; // Exactly half a cycle is ambiguous.
+    const qint64 step = delta < 0x80000000U ? qint64(delta) : qint64(delta) - (qint64(1) << 32);
+    const qint64 value = m_highWaterUs + step;
+    if (value < 0) return -1; // Delayed pre-first-epoch sample: preserve raw, do not guess.
+    if (value > m_highWaterUs) m_highWaterUs = value;
+    return value; // A delayed frame never moves the unwrap anchor backwards.
+}
+
+bool decodeCanGatewayFrame(const QByteArray &packet, CanGatewayFrame &out, QString *error)
+{
+    if (error) error->clear();
+    const auto fail = [error](const QString &text) { if (error) *error = text; return false; };
+    if (packet.size() < 14 || packet.left(2) != QByteArray::fromHex("AA55"))
+        return fail(QStringLiteral("AA55 帧头或最小长度错误"));
+    const int bodyLength = quint8(packet.at(2));
+    if (bodyLength < 8 || bodyLength > CanGatewayWire::kMaxBody || packet.size() != bodyLength + 6)
+        return fail(QStringLiteral("AA55 BODY_LEN 或总长度错误"));
+    if (packet.right(2) != QByteArray::fromHex("55AA"))
+        return fail(QStringLiteral("AA55 帧尾错误"));
+    if (CanGatewayDecoder::crc8(packet.mid(2, bodyLength + 1)) != quint8(packet.at(bodyLength + 3)))
+        return fail(QStringLiteral("AA55 CRC8 错误"));
+    if (quint8(packet.at(9)) == 0x80U)
+        return fail(QStringLiteral("AA55 配置回复不能当作 CAN 数据"));
+    const int n = quint8(packet.at(10));
+    const bool timestamped = bodyLength == 12 + n;
+    const bool compact = bodyLength == 8 + n;
+    // Keep historical fixed-72-byte bodies, except the inherently ambiguous N=60:
+    // exact 12+N takes priority per the supplied new uplink specification.
+    const bool legacyFixed = bodyLength == 72;
+    if (n > 64 || (!timestamped && !compact && !legacyFixed))
+        return fail(QStringLiteral("AA55 BODY_LEN 与 LEN 不匹配"));
+    const auto le16 = [&packet](int o) {
+        return quint16(quint8(packet.at(o))) | (quint16(quint8(packet.at(o + 1))) << 8U);
+    };
+    const auto le32 = [&le16](int o) { return quint32(le16(o)) | (quint32(le16(o + 2)) << 16U); };
+    CanGatewayFrame frame;
+    frame.sequence = le16(3); frame.canId = le32(5); frame.flags = quint8(packet.at(9));
+    frame.data = packet.mid(11, n); // Never expose the trailer as CAN payload.
+    frame.hasTimestamp = timestamped;
+    if (timestamped) frame.timestampUs = le32(11 + n);
+    out = frame;
+    return true;
+}
+
 QVector<CanGatewayFrame> CanGatewayDecoder::feed(const QByteArray &bytes)
 {
     QVector<CanGatewayFrame> frames;
@@ -28,64 +76,26 @@ QVector<CanGatewayFrame> CanGatewayDecoder::feed(const QByteArray &bytes)
         const int header = m_buffer.indexOf(QByteArray::fromHex("AA55"));
         if (header < 0)
         {
-            if (m_buffer.size() > 1)
-                m_buffer = m_buffer.right(1);
+            m_buffer = m_buffer.endsWith(char(0xAA)) ? QByteArray(1, char(0xAA)) : QByteArray();
             break;
         }
-        if (header > 0)
-            m_buffer.remove(0, header);
-        if (m_buffer.size() < 3)
-            break;
-
-        const int bodyLength = static_cast<quint8>(m_buffer.at(2));
-        if (bodyLength < 8 || bodyLength > 72)
+        if (header > 0) m_buffer.remove(0, header);
+        if (m_buffer.size() < 3) break;
+        const int bodyLength = quint8(m_buffer.at(2));
+        if (bodyLength < 8 || bodyLength > CanGatewayWire::kMaxBody)
         {
             m_lastError = QStringLiteral("非法 BODY_LEN=%1").arg(bodyLength);
-            m_buffer.remove(0, 2);
-            continue;
+            m_buffer.remove(0, 1); continue;
         }
         const int packetLength = bodyLength + 6;
-        if (m_buffer.size() < packetLength)
-            break;
-
-        if (static_cast<quint8>(m_buffer.at(bodyLength + 4)) != 0x55
-            || static_cast<quint8>(m_buffer.at(bodyLength + 5)) != 0xAA)
-        {
-            m_lastError = QStringLiteral("帧尾错误");
-            m_buffer.remove(0, 2);
-            continue;
-        }
-        const QByteArray checked = m_buffer.mid(2, bodyLength + 1);
-        const quint8 expected = crc8(checked);
-        const quint8 actual = static_cast<quint8>(m_buffer.at(bodyLength + 3));
-        if (expected != actual)
-        {
-            m_lastError = QStringLiteral("CRC 错误（期望 %1，收到 %2）")
-                              .arg(expected, 2, 16, QLatin1Char('0'))
-                              .arg(actual, 2, 16, QLatin1Char('0'))
-                              .toUpper();
-            m_buffer.remove(0, 2);
-            continue;
-        }
-        const QByteArray body = m_buffer.mid(3, bodyLength);
-        const quint8 dataLength = static_cast<quint8>(body.at(7));
-        const bool compactBody = bodyLength == 8 + dataLength;
-        const bool fixedBody = bodyLength == 72;
-        if ((!compactBody && !fixedBody) || dataLength > 64)
-        {
-            m_lastError = QStringLiteral("BODY_LEN 与 LEN 不匹配");
-            m_buffer.remove(0, 2);
-            continue;
-        }
+        if (m_buffer.size() < packetLength) break;
         CanGatewayFrame frame;
-        frame.sequence = static_cast<quint16>(static_cast<quint8>(body.at(0)))
-                         | static_cast<quint16>(static_cast<quint8>(body.at(1))) << 8U;
-        frame.canId = static_cast<quint32>(static_cast<quint8>(body.at(2)))
-                      | static_cast<quint32>(static_cast<quint8>(body.at(3))) << 8U
-                      | static_cast<quint32>(static_cast<quint8>(body.at(4))) << 16U
-                      | static_cast<quint32>(static_cast<quint8>(body.at(5))) << 24U;
-        frame.flags = static_cast<quint8>(body.at(6));
-        frame.data = body.mid(8, dataLength);
+        QString error;
+        if (!decodeCanGatewayFrame(m_buffer.left(packetLength), frame, &error))
+        {
+            m_lastError = error;
+            m_buffer.remove(0, 1); continue;
+        }
         frames.append(frame);
         m_buffer.remove(0, packetLength);
     }

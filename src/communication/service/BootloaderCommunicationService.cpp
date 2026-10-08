@@ -51,7 +51,10 @@ BootloaderCommunicationService::BootloaderCommunicationService(QObject *parent)
                 processReceivedBytes(bytes);
             });
     connect(m_transport, &SerialTransport::opened, this, &BootloaderCommunicationService::opened);
-    connect(m_transport, &SerialTransport::closed, this, &BootloaderCommunicationService::closed);
+    connect(m_transport, &SerialTransport::closed, this, [this]() {
+        m_gatewayTimestamp.reset(); m_receiveBuffer.clear();
+        emit closed();
+    });
     connect(m_transport, &SerialTransport::errorOccurred, this,
             &BootloaderCommunicationService::errorOccurred);
 }
@@ -63,7 +66,7 @@ QVector<SerialDeviceInfo> BootloaderCommunicationService::enumerateDevices() con
 
 bool BootloaderCommunicationService::open(const SerialDeviceInfo &device)
 {
-    m_decoder.reset();
+    m_gatewayTimestamp.reset();
     m_flowDecoder.reset();
     m_heartbeatDecoder.reset();
     m_receiveBuffer.clear();
@@ -234,7 +237,7 @@ void BootloaderCommunicationService::processReceivedBytes(const QByteArray &byte
             if (m_receiveBuffer.size() < 3)
                 return;
             const int bodyLength = static_cast<quint8>(m_receiveBuffer.at(2));
-            if (bodyLength < 8 || bodyLength > 72)
+            if (bodyLength < 8 || bodyLength > CanGatewayWire::kMaxBody)
             {
                 m_receiveBuffer.remove(0, 1);
                 continue;
@@ -303,34 +306,52 @@ void BootloaderCommunicationService::processReceivedBytes(const QByteArray &byte
         }
 
         const QByteArray packet = m_receiveBuffer.left(packetLength);
-        m_receiveBuffer.remove(0, packetLength);
         if (family == 0x55U)
         {
-            if (isCanGatewayConfigResponsePacket(packet))
+            QString error;
+            CanGatewayConfigResponse response;
+            CanGatewayFrame frame;
+            const bool config = isCanGatewayConfigResponsePacket(packet);
+            const bool valid = config ? decodeCanGatewayConfigResponse(packet, response, &error)
+                                      : decodeCanGatewayFrame(packet, frame, &error);
+            if (!valid)
             {
-                handleCanBitrateConfigResponse(packet);
+                // Rescan a damaged candidate; never lose a valid following/nested family frame.
+                m_receiveBuffer.remove(0, 1);
+                emit errorOccurred(error);
+                continue;
             }
+            m_receiveBuffer.remove(0, packetLength);
+            if (config) handleCanBitrateConfigResponse(response);
             else
             {
-                for (const auto &frame : m_decoder.feed(packet))
-                    emit frameReceived(frame);
-                if (!m_decoder.lastError().isEmpty())
-                    emit errorOccurred(m_decoder.lastError());
+                if (frame.hasTimestamp)
+                    frame.timestampExtendedUs = m_gatewayTimestamp.extend(frame.timestampUs);
+                emit frameReceived(frame);
             }
+            continue;
         }
-        else if (family == 0x58U)
-        {
-            for (const auto &heartbeat : m_heartbeatDecoder.feed(packet))
-                emit heartbeatReceived(heartbeat);
-        }
-        else if (family == 0x5BU)
+        if (family == 0x5BU)
         {
             SensorFrame frame;
             QString error;
-            if (decodeSensorFrame(packet, frame, &error))
-                emit sensorFrameReceived(frame);
-            else
+            if (!decodeSensorFrame(packet, frame, &error))
+            {
+                // A corrupt length/CRC can enclose the next intact frame. Rescan after the
+                // candidate header; a validated frame still owns all of its payload bytes.
+                m_receiveBuffer.remove(0, 1);
                 emit errorOccurred(error);
+                continue;
+            }
+            m_receiveBuffer.remove(0, packetLength);
+            emit sensorFrameReceived(frame);
+            continue;
+        }
+        m_receiveBuffer.remove(0, packetLength);
+        if (family == 0x58U)
+        {
+            for (const auto &heartbeat : m_heartbeatDecoder.feed(packet))
+                emit heartbeatReceived(heartbeat);
         }
         else
         {
@@ -364,17 +385,8 @@ void BootloaderCommunicationService::finishCanBitrateConfig(const CanGatewayConf
     }
 }
 
-void BootloaderCommunicationService::handleCanBitrateConfigResponse(const QByteArray &packet)
+void BootloaderCommunicationService::handleCanBitrateConfigResponse(CanGatewayConfigResponse response)
 {
-    CanGatewayConfigResponse response;
-    QString error;
-    if (!decodeCanGatewayConfigResponse(packet, response, &error))
-    {
-        finishCanBitrateConfig(CanGatewayConfigStatus::TransportError,
-                               m_pendingCanBitrate.nominalBitrate, m_pendingCanBitrate.dataBitrate,
-                               error);
-        return;
-    }
     if (!m_canBitratePending)
     {
         emit canBitrateError(QStringLiteral("收到未请求的 CAN 速率配置回复"));
@@ -390,6 +402,9 @@ void BootloaderCommunicationService::handleCanBitrateConfigResponse(const QByteA
         return;
     }
 
+    if (response.hasTimestamp)
+        response.timestampExtendedUs = m_gatewayTimestamp.extend(response.timestampUs);
+    emit canBitrateResponseReceived(response);
     const QString message = canGatewayConfigStatusText(response.status);
     finishCanBitrateConfig(response.status, response.nominalBitrate, response.dataBitrate, message);
 }

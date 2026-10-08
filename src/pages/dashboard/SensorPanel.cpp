@@ -67,6 +67,16 @@ QString ageText(qint64 age)
 {
     return age < 0 ? QStringLiteral("尚无样本") : QStringLiteral("样本龄 %1 ms").arg(age);
 }
+QString streamText(const SensorStreamState state)
+{
+    switch (state)
+    {
+    case SensorStreamState::Running: return QStringLiteral("上传已开启（设备确认）");
+    case SensorStreamState::Stopped: return QStringLiteral("测量上传已停止，底层仍采样");
+    case SensorStreamState::Unknown: return QStringLiteral("上传开关尚未确认");
+    }
+    return {};
+}
 }
 
 SensorPanel::SensorPanel(QWidget *parent) : QWidget(parent)
@@ -327,6 +337,8 @@ void SensorPanel::setSnapshot(const SensorSnapshot &s)
         diagnostics += QStringLiteral(" · 数据产生时刻 %1 µs · 流序号 %2")
                            .arg(s.depthTimestampUs).arg(d.sequence);
     m_depthStatus->setText(m_depthStatus->text() + diagnostics);
+    m_imuStatus->setText(m_imuStatus->text() + QStringLiteral("\n") + streamText(i.streamState));
+    m_depthStatus->setText(m_depthStatus->text() + QStringLiteral("\n") + streamText(d.streamState));
     m_depthStatus->setToolTip(QStringLiteral("状态字 0x%1\n数据时刻是设备 D2 读完时刻，不是 USB 接收时间；32 位微秒时钟约 71.6 分钟回绕。\n完成采样数与流序号不同；0x82/0x83 共用本 TARGET 的流序号，背压下允许跳号。")
         .arg(d.status, 8, 16, QLatin1Char('0')));
     m_imuCommand->setText(i.lastCommand); m_depthCommand->setText(d.lastCommand);

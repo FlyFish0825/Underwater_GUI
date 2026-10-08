@@ -54,6 +54,7 @@ class SensorDataService final : public QObject
     void refresh();
     void processDepthStartup();
     void applyStatus(quint8 target, quint32 status);
+    void clearMeasurements(quint8 target);
     void finish(quint8 target, SensorResult result, const QString &detail = QString());
     bool consumeTelemetry(const SensorFrame &frame, qint64 deliveryAgeMs = 0);
     bool consumeReply(const SensorFrame &frame, SensorResult result);
@@ -74,6 +75,8 @@ class SensorDataService final : public QObject
     // telemetry must not become fresh merely because USB delivered it now.
     std::array<qint64, 2> m_clockAnchorSeen{{-1, -1}};
     std::array<quint32, 2> m_clockAnchorUs{{0, 0}};
+    std::array<qint64, 2> m_streamChangedMs{{-1, -1}};
+    std::array<quint32, 2> m_streamNotBeforeUs{{0, 0}};
     qint64 m_rawSeen = -1, m_quatSeen = -1, m_eulerSeen = -1, m_depthSeen = -1;
     qint64 m_depthDeliveryAgeMs = 0;
     quint32 m_depthNotBeforeUs = 0;

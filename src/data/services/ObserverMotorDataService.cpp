@@ -10,6 +10,8 @@ namespace rov
 namespace
 {
 
+constexpr qint64 kNodeTimeoutMs = 2500;
+
 constexpr int nodeIndex(const quint8 nodeId)
 {
     return static_cast<int>(nodeId) - 1;
@@ -44,6 +46,8 @@ void ObserverMotorDataService::reset()
 {
     m_nodes.clear();
     m_lastSeenMs.clear();
+    m_temperatureAverages.clear();
+    m_temperatureClock.start();
     m_dirtyNodes.clear();
     m_dirtyCalibrationNodes.clear();
     m_calibrations.clear();
@@ -55,6 +59,7 @@ void ObserverMotorDataService::reset()
         node.nodeId = nodeId;
         m_nodes.append(node);
         m_lastSeenMs.append(-1);
+        m_temperatureAverages.append(TemperatureAverage{});
         MotorCalibrationSnapshot calibration;
         calibration.nodeId = nodeId;
         m_calibrations.append(calibration);
@@ -99,7 +104,7 @@ bool ObserverMotorDataService::handleCanFrame(const CanGatewayFrame &frame)
         node.speedRpm = feedback.speedRpm;
         node.currentA = feedback.busCurrentA;
         node.busVoltageV = feedback.busVoltageV;
-        node.temperatureC = feedback.temperatureC;
+        node.temperatureC = averageTemperature(nodeId, feedback.temperatureC, true);
         node.currentCalibrationDone = feedback.currentCalibrationDone;
         node.speedLoopEnabled = feedback.speedLoopEnabled;
         node.voltageLimited = feedback.voltageLimited;
@@ -110,7 +115,7 @@ bool ObserverMotorDataService::handleCanFrame(const CanGatewayFrame &frame)
         const auto &heartbeat = decoded.heartbeat;
         node.debugMode = heartbeat.debugMode;
         node.state = ObserverMotorProtocol::stateText(heartbeat.state);
-        node.temperatureC = heartbeat.temperatureC;
+        node.temperatureC = averageTemperature(nodeId, heartbeat.temperatureC, false);
         node.currentCalibrationDone = heartbeat.currentCalibrationDone;
         node.voltageLimited = heartbeat.voltageLimited;
         node.feedbackSequence = heartbeat.feedbackSequence;
@@ -123,7 +128,7 @@ bool ObserverMotorDataService::handleCanFrame(const CanGatewayFrame &frame)
         node.speedRpm = debug.speedRpm;
         node.currentA = debug.iqA;
         node.busVoltageV = debug.busVoltageV;
-        node.temperatureC = debug.temperatureC;
+        node.temperatureC = averageTemperature(nodeId, debug.temperatureC, true);
         node.pllElectricalSpeedRadPerSec = debug.pllElectricalSpeedRadPerSec;
         node.phaseCurrentU_A = debug.phaseCurrentU_A;
         node.phaseCurrentV_A = debug.phaseCurrentV_A;
@@ -196,6 +201,35 @@ bool ObserverMotorDataService::handleCanFrame(const CanGatewayFrame &frame)
 
     markDirty(nodeId);
     return true;
+}
+
+double ObserverMotorDataService::averageTemperature(const quint8 nodeId,
+                                                   const double temperatureC,
+                                                   const bool highResolution)
+{
+    auto &average = m_temperatureAverages[nodeIndex(nodeId)];
+    const qint64 nowMs = m_temperatureClock.elapsed();
+    const bool fresh = average.count > 0
+                       && nowMs - average.lastSampleMs <= kNodeTimeoutMs;
+    // 普通/调试反馈有效时，整数心跳不参与均值，也不能覆盖显示值。
+    // 仅有心跳时仍按最近100点平均，恢复高精度反馈时重新积累。
+    if (!highResolution && average.highResolution && fresh)
+        return average.sum / average.count;
+    if (!fresh || average.highResolution != highResolution)
+        average = TemperatureAverage{};
+
+    const int capacity = static_cast<int>(average.samples.size());
+    if (average.count == capacity)
+        average.sum -= average.samples[average.next];
+    else
+        ++average.count;
+    average.samples[average.next] = temperatureC;
+    average.sum += temperatureC;
+    average.next = (average.next + 1) % capacity;
+    average.lastSampleMs = nowMs;
+    average.highResolution = highResolution;
+    // 启动未满100点时只除以实际点数，避免用零值填充导致显示偏低。
+    return average.sum / average.count;
 }
 
 ObserverMotorNodeSnapshot ObserverMotorDataService::nodeSnapshot(const quint8 nodeId) const
@@ -315,9 +349,10 @@ void ObserverMotorDataService::refreshFreshness()
             markCalibrationDirty(calibration.nodeId);
         }
         if (!m_nodes[index].online || m_lastSeenMs.at(index) < 0
-            || nowMs - m_lastSeenMs.at(index) <= 2500)
+            || nowMs - m_lastSeenMs.at(index) <= kNodeTimeoutMs)
             continue;
         m_nodes[index].online = false;
+        m_temperatureAverages[index] = TemperatureAverage{};
         m_nodes[index].stamp.freshness = DataFreshness::Offline;
         m_nodes[index].stamp.reason = QStringLiteral("超过 2.5 秒未收到节点心跳或反馈");
         m_calibrations[index].stamp.freshness = DataFreshness::Offline;

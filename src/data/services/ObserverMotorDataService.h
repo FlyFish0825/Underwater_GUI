@@ -4,8 +4,10 @@
 #include "contracts/motor/ObserverMotorContract.h"
 
 #include <QObject>
+#include <QElapsedTimer>
 #include <QSet>
 #include <QTimer>
+#include <array>
 
 namespace rov
 {
@@ -34,6 +36,17 @@ class ObserverMotorDataService final : public QObject
     void protocolError(const QString &message);
 
   private:
+    struct TemperatureAverage
+    {
+        std::array<double, 100> samples{};
+        double sum = 0.0;
+        int count = 0;
+        int next = 0;
+        qint64 lastSampleMs = -1;
+        bool highResolution = false;
+    };
+
+    double averageTemperature(quint8 nodeId, double temperatureC, bool highResolution);
     void publishPending();
     void refreshFreshness();
     void markDirty(quint8 nodeId);
@@ -41,6 +54,8 @@ class ObserverMotorDataService final : public QObject
 
     QVector<ObserverMotorNodeSnapshot> m_nodes;
     QVector<qint64> m_lastSeenMs;
+    QVector<TemperatureAverage> m_temperatureAverages;
+    QElapsedTimer m_temperatureClock;
     QSet<quint8> m_dirtyNodes;
     QSet<quint8> m_dirtyCalibrationNodes;
     QVector<MotorCalibrationSnapshot> m_calibrations;

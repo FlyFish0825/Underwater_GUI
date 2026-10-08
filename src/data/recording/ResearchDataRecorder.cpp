@@ -217,6 +217,13 @@ QJsonObject ResearchDataRecorder::toJson(const PendingRecord &record)
         put(object, "can_id", static_cast<int>(record.frame.canId));
         put(object, "flags", static_cast<int>(record.frame.flags));
         put(object, "data_hex", QString::fromLatin1(record.frame.data.toHex(' ').toUpper()));
+        const bool hasDeviceTime = record.source == QStringLiteral("rx") && record.frame.hasTimestamp;
+        put(object, "gateway_timestamp_valid", hasDeviceTime);
+        object.insert(QStringLiteral("gateway_timestamp_us"), hasDeviceTime
+            ? QJsonValue(double(record.frame.timestampUs)) : QJsonValue(QJsonValue::Null));
+        object.insert(QStringLiteral("gateway_timestamp_extended_us"),
+            hasDeviceTime && record.frame.timestampExtendedUs >= 0
+                ? QJsonValue(double(record.frame.timestampExtendedUs)) : QJsonValue(QJsonValue::Null));
 
         ObserverMotorProtocol::DecodedFrame decoded;
         QString decodeError;
@@ -335,7 +342,7 @@ QByteArray ResearchDataRecorder::csvHeader()
         "bus_voltage_v,internal_temperature_c,armed,connected,alarm_count,pressure_pa,"
         "imu_accel_x,imu_accel_y,imu_accel_z,imu_gyro_x,imu_gyro_y,imu_gyro_z,"
         "input_surge,input_sway,input_heave,input_roll,input_pitch,input_yaw,event_type,event_"
-        "message,decode_error\n");
+        "message,decode_error,gateway_timestamp_valid,gateway_timestamp_us,gateway_timestamp_extended_us\n");
 }
 
 QString ResearchDataRecorder::csvValue(const QJsonValue &value)
@@ -472,6 +479,9 @@ void ResearchDataRecorder::run()
         put(object, "queue_limit", kQueueLimit);
         put(object, "timestamp_policy",
             QStringLiteral("UTC ISO-8601 + session monotonic microseconds"));
+        put(object, "gateway_timestamp_policy",
+            QStringLiteral("AA55 RX raw u32 device microseconds + connection-local unwrapped time; "
+                           "legacy/TX null; host UTC/monotonic columns unchanged; no ordering by device time"));
         put(object, "imu_depth_policy",
             QStringLiteral("真实协议接入前保留空值；原始 CAN 帧不丢弃"));
         meta.write(QJsonDocument(object).toJson(QJsonDocument::Indented));

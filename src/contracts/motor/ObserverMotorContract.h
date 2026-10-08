@@ -18,7 +18,7 @@ struct ObserverMotorNodeSnapshot
     // Normal feedback supplies estimated bus current; debug feedback supplies Iq.
     double currentA = 0.0;
     double busVoltageV = 0.0;
-    // MCU internal temperature: normal feedback uses -20..150 C full scale.
+    // MCU内部温度，节点独立的最近100点滑动平均；不足100点按已有点数。
     double temperatureC = 0.0;
     bool currentCalibrationDone = false;
     bool speedLoopEnabled = false;

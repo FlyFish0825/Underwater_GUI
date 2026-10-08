@@ -352,6 +352,29 @@ int main(int argc,char **argv)
         }
     }
 
+    {
+        DashboardPage streamPage;
+        SensorSnapshot live; live.connected = true;
+        live.devices[0].streamState = SensorStreamState::Stopped;
+        live.devices[1].streamState = SensorStreamState::Running;
+        streamPage.setSensorSnapshot(live);
+        const auto *imu = streamPage.findChild<QLabel *>(QStringLiteral("imuDeviceStatus"));
+        const auto *depth = streamPage.findChild<QLabel *>(QStringLiteral("depthDeviceStatus"));
+        CHECK(imu && depth);
+        if (imu && depth)
+        {
+            CHECK(imu->text().contains(QStringLiteral("测量上传已停止")));
+            CHECK(depth->text().contains(QStringLiteral("上传已开启（设备确认）")));
+            live.devices[0].streamState = SensorStreamState::Running;
+            live.devices[1].streamState = SensorStreamState::Stopped;
+            streamPage.setSensorSnapshot(live);
+            CHECK(imu->text().contains(QStringLiteral("上传已开启（设备确认）")));
+            CHECK(depth->text().contains(QStringLiteral("测量上传已停止")));
+            streamPage.setSensorSnapshot(SensorSnapshot{});
+            CHECK(imu->text().contains(QStringLiteral("上传开关尚未确认")));
+            CHECK(depth->text().contains(QStringLiteral("上传开关尚未确认")));
+        }
+    }
     std::cout<<"dashboard sensor integration: "<<checks<<" checks, "<<failures<<" failures\n";
     return failures?1:0;
 }

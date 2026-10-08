@@ -33,6 +33,7 @@ class BootloaderDownloadController;
 class BootloaderFirmwareReader;
 class BootloaderUpgradeSequence;
 class BootloaderAutonomousUpgrade;
+class BootloaderBatchCommands;
 class AppProgressBar;
 
 class FirmwarePage final : public QWidget
@@ -40,7 +41,8 @@ class FirmwarePage final : public QWidget
     Q_OBJECT
 
   public:
-    explicit FirmwarePage(QWidget *parent = nullptr);
+    // 离线页面验证可关闭设备扫描，避免测试占用真实串口。
+    explicit FirmwarePage(QWidget *parent = nullptr, bool autoConnect = true);
 
     void setSnapshot(const FirmwareSnapshot &snapshot);
 
@@ -67,6 +69,7 @@ class FirmwarePage final : public QWidget
     void refreshView();
     void updateMainColumns();
     void refreshMultiNodeCards();
+    void startBatchCommands(const QVector<BootCommand> &commands, const QString &label);
     void invalidateMultiNodePlan();
     void refreshSerialDevices();
     void browseFirmwareFile();
@@ -145,6 +148,11 @@ class FirmwarePage final : public QWidget
     QVector<AppProgressBar *> m_multiNodeProgressBars;
     QVector<QLabel *> m_multiNodeProgressValues;
     QLabel *m_multiConfigStatus = nullptr;
+    QLabel *m_batchStatus = nullptr;
+    QVector<QPushButton *> m_batchButtons;
+    QPushButton *m_batchCancelButton = nullptr;
+    QVector<QLabel *> m_batchNodeResults;
+    BootloaderBatchCommands *m_batchCommands = nullptr;
     QComboBox *m_serialDeviceCombo = nullptr;
     QComboBox *m_transferModeCombo = nullptr;
     QLabel *m_serialStatus = nullptr;

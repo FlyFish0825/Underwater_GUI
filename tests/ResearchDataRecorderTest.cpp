@@ -5,6 +5,8 @@
 #include <QDebug>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <cstdio>
 
@@ -70,6 +72,12 @@ int main(int argc, char *argv[])
     frame.flags = ObserverMotorProtocol::kCanFdFlags;
     frame.data = feedback;
     recorder.recordFrame(frame);
+    frame.hasTimestamp = true; frame.timestampUs = 0; frame.timestampExtendedUs = 4294967296LL;
+    frame.sequence = 78; recorder.recordFrame(frame);
+    frame.timestampUs = 123456; frame.timestampExtendedUs = 4295090752LL;
+    frame.sequence = 79; recorder.recordFrame(frame);
+    // RX metadata must not leak into TX records if a caller reuses a received value object.
+    frame.sequence = 80; recorder.recordFrame(frame, QStringLiteral("tx"));
 
     SixDofControlRequest input;
     input.surge = 0.5;
@@ -97,6 +105,27 @@ int main(int argc, char *argv[])
         !require(csv.contains("imu_accel_x"), "csv schema missing imu") ||
         !require(meta.contains("\"dropped_records\""), "metadata missing drop count"))
         return 1;
+
+    int frameCount = 0;
+    for (const auto &line : jsonl.split('\n'))
+    {
+        const auto obj = QJsonDocument::fromJson(line).object();
+        if (obj.value("type").toString() != "can_frame") continue;
+        ++frameCount;
+        const int seq = obj.value("sequence").toInt();
+        const bool hasTime = seq == 78 || seq == 79;
+        if (!require(obj.value("gateway_timestamp_valid").toBool() == hasTime, "timestamp validity mismatch")) return 1;
+        if (hasTime)
+        {
+            if (!require(obj.value("gateway_timestamp_us").toDouble() == (seq==78 ? 0.0 : 123456.0), "raw timestamp lost")
+                || !require(obj.value("gateway_timestamp_extended_us").toDouble() == (seq==78 ? 4294967296.0 : 4295090752.0), "extended timestamp lost")) return 1;
+        }
+        else if (!require(obj.value("gateway_timestamp_us").isNull() && obj.value("gateway_timestamp_extended_us").isNull(), "legacy or TX got fabricated device time")) return 1;
+        if (!require(obj.contains("timestamp_utc") && obj.contains("monotonic_us"), "host time columns changed")) return 1;
+        if (!require(obj.value("data_hex").toString() == QString::fromLatin1(feedback.toHex(' ').toUpper()), "timestamp entered CAN data")) return 1;
+    }
+    if (!require(frameCount==4, "recorded frame count") || !require(csv.split('\n').first().endsWith("gateway_timestamp_valid,gateway_timestamp_us,gateway_timestamp_extended_us"), "timestamp CSV columns are not appended")
+        || !require(meta.contains("gateway_timestamp_policy"), "device timestamp policy missing")) return 1;
 
     qInfo() << "ResearchDataRecorderTest: PASS";
     return 0;

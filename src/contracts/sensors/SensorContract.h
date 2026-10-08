@@ -69,11 +69,16 @@ struct SensorRequest
     quint16 samplingRateHz = 0;
 };
 
+// Only a matched OK START/STOP reply confirms forwarding state; reconnect resets it.
+// STOP controls measurement forwarding. The backend still samples and sends 0x83 status.
+enum class SensorStreamState { Unknown, Running, Stopped };
+
 struct SensorDeviceState
 {
     bool infoKnown = false;
     bool online = false;
     bool pending = false;
+    SensorStreamState streamState = SensorStreamState::Unknown;
     quint8 model = 0;
     quint32 capabilities = 0;
     quint32 status = 0;

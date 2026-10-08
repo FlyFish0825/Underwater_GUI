@@ -52,6 +52,8 @@ add_library(rov_ui_common STATIC
 )
 
 add_library(rov_communication STATIC
+    src/communication/bootloader/BootloaderBatchCommands.cpp
+    src/communication/bootloader/BootloaderBatchCommands.h
     src/communication/bootloader/BootloaderDownloadController.cpp
     src/communication/bootloader/BootloaderDownloadController.h
     src/communication/bootloader/BootloaderAutonomousUpgrade.cpp
@@ -244,6 +246,14 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(rov_bootloader_batch_commands_test EXCLUDE_FROM_ALL tests/BootloaderBatchCommandsTest.cpp)
+    target_include_directories(rov_bootloader_batch_commands_test PRIVATE src)
+    target_link_libraries(rov_bootloader_batch_commands_test PRIVATE Qt5::Core rov_communication)
+    add_test(NAME rov_bootloader_batch_commands_test COMMAND rov_bootloader_batch_commands_test)
+    add_executable(rov_firmware_batch_page_test EXCLUDE_FROM_ALL
+        tests/FirmwareBatchPageTest.cpp resources/resources.qrc)
+    target_link_libraries(rov_firmware_batch_page_test PRIVATE rov_page_firmware)
+    add_test(NAME rov_firmware_batch_page_test COMMAND rov_firmware_batch_page_test -platform offscreen)
     add_executable(rov_bootloader_firmware_reader_test EXCLUDE_FROM_ALL
         tests/BootloaderFirmwareReaderTest.cpp
     )
@@ -274,6 +284,12 @@ if (BUILD_TESTING)
     target_include_directories(rov_observer_motor_protocol_test PRIVATE src)
     target_link_libraries(rov_observer_motor_protocol_test PRIVATE Qt5::Core rov_communication)
     add_test(NAME rov_observer_motor_protocol_test COMMAND rov_observer_motor_protocol_test)
+
+    add_executable(rov_motor_temperature_average_test EXCLUDE_FROM_ALL
+        tests/MotorTemperatureAverageTest.cpp
+    )
+    target_link_libraries(rov_motor_temperature_average_test PRIVATE Qt5::Core rov_motor_data)
+    add_test(NAME rov_motor_temperature_average_test COMMAND rov_motor_temperature_average_test)
 
     add_executable(rov_system_heartbeat_protocol_test EXCLUDE_FROM_ALL
         tests/SystemHeartbeatProtocolTest.cpp
@@ -312,4 +328,11 @@ endif()
 if(BUILD_TESTING)
     add_executable(rov_sensor_hardware_probe EXCLUDE_FROM_ALL tests/SensorHardwareProbe.cpp)
     target_link_libraries(rov_sensor_hardware_probe PRIVATE Qt5::Core rov_sensor_data)
+endif()
+
+# AA55 old/new uplink compatibility; test injection never opens a physical port.
+if(BUILD_TESTING)
+    add_executable(rov_can_gateway_timestamp_test EXCLUDE_FROM_ALL tests/CanGatewayTimestampTest.cpp)
+    target_link_libraries(rov_can_gateway_timestamp_test PRIVATE rov_communication)
+    add_test(NAME rov_can_gateway_timestamp_test COMMAND rov_can_gateway_timestamp_test)
 endif()

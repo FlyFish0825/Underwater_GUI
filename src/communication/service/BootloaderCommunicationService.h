@@ -54,6 +54,8 @@ class BootloaderCommunicationService final : public QObject
     void closed();
     void errorOccurred(const QString &message);
     void canBitrateConfigured(quint16 sequence, quint8 status, quint32 nominalBps, quint32 dataBps);
+    // Validated, matched reply including optional RX timestamp; existing UI signal is unchanged.
+    void canBitrateResponseReceived(const rov::CanGatewayConfigResponse &response);
     void canBitrateError(const QString &message);
     void flowTransferProgress(int completedBlocks, int totalBlocks);
     void flowTransferFinished(bool success, const QString &message);
@@ -77,10 +79,10 @@ class BootloaderCommunicationService final : public QObject
     void processReceivedBytes(const QByteArray &bytes);
     void finishCanBitrateConfig(CanGatewayConfigStatus status, quint32 nominalBitrate,
                                 quint32 dataBitrate, const QString &message);
-    void handleCanBitrateConfigResponse(const QByteArray &packet);
+    void handleCanBitrateConfigResponse(CanGatewayConfigResponse response);
 
     SerialTransport *m_transport = nullptr;
-    CanGatewayDecoder m_decoder;
+    CanGatewayTimestampUnwrapper m_gatewayTimestamp;
     bool m_canBitratePending = false;
     quint16 m_canBitrateSequence = 0;
     CanGatewayConfigRequest m_pendingCanBitrate;

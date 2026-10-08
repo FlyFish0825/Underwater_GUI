@@ -111,6 +111,11 @@ IMU 沿用总览原标签与共享 AA5B 链路。连接后读取真实版本/状
 协议原件见 `docs/imu-aa5b-host-protocol.md`；实现、约束、原始 TX/RX 和验收结果见
 [`IMU 接入说明`](docs/imu-host-integration-20261006.md)。
 
+IMU 与深度计接口已继续对齐当前下位机：两个目标分别显示上传确认状态，停止后清除
+对应旧测量，恢复后等待新样本；状态消息仍可保持设备在线。共享 AA5B 路由补齐坏包
+恢复，并严格区分 IMU 参数 UNCONFIRMED 与动作/深度参数 OK。
+本轮变化和实机边界见 [`传感器接口对齐说明`](docs/sensor-interface-alignment-20261007.md)。
+
 传感器控制台已按深度计、IMU、文档三批整理交付；中间文件清理范围、保留产物及本次回归结果见
 [`分批交付与清理说明`](docs/sensor-console-release-20261006.md)。历史接入说明中的未提交状态为当时记录。
 
@@ -147,7 +152,7 @@ AA5B 传感器已接入总览显示，但本记录器尚未记录逐帧 AA5B 数
 
 ### 编译目录和主要产物
 
-构建统一使用 `build/gui`，不要删除它来做普通增量编译。该目录已加入 `.gitignore`，只保存在本机。
+主程序构建统一使用 `build/gui`，不要删除它来做普通增量编译。测试使用与 `build/` 同级的独立目录 `build-test/`，不得将测试产物写入 `build/`。这两个目录均已由 `.gitignore` 忽略，只保存在本机。
 
 | 路径 | 用途 |
 | --- | --- |
@@ -223,7 +228,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File '.\toolchain\env\build-gui.p
 
 若链接时报 `rov_ui.exe: Permission denied`，或部署 Qt DLL 时出现 `Copy-Item` 文件占用错误，通常是程序仍在运行并加载了这些文件。先关闭 `rov_ui.exe`，再重新运行一键构建脚本；确认输出没有 `Copy-Item` 错误，且显示 `Qt runtime deployed beside` 后，运行库部署才完成。构建脚本和 VSCode 配置都会使用 `build/gui`，共享同一份 Ninja/CMake 缓存。
 
-测试目标默认不参与主程序构建，需要验证时再显式构建对应测试目标。
+测试目标默认不参与主程序构建，需要验证时按下方“测试目录隔离”说明，在独立目录中显式构建对应测试目标。
 
 VSCode/clangd 使用 `build/gui/compile_commands.json`。需要手工确认跳转时，可执行：
 
@@ -234,11 +239,46 @@ VSCode/clangd 使用 `build/gui/compile_commands.json`。需要手工确认跳�
   --query-driver='toolchain/mingw/8.1.0/Tools/mingw810_64/bin/*' --log=error
 ```
 
+### 测试目录隔离
+
+执行测试时，必须在项目根目录创建与 `build/` 同级的 `build-test/`，不能使用 `build/test/`、`build/gui/` 或 `build/test-evidence/` 存放测试文件。
+
+- `build/`：仅用于主程序构建和运行所需产物。
+- `build-test/`：统一存放测试构建缓存、中间文件、测试程序、测试运行库、临时脚本、日志、截图、录制数据、测试报告及证据归档；可按任务建立子目录。
+- `tests/`：继续存放需要纳入版本管理的测试源码，不存放生成物。
+
+测试必须单独配置 CMake，构建目录、测试工作目录和输出路径均指向 `build-test/` 内部，不得复用或修改 `build/gui` 的缓存，也不得把测试文件复制回 `build/`。例如，在仓库根目录执行以下命令，仅构建并运行电机协议测试：
+
+```powershell
+. '.\toolchain\env\activate.ps1'
+$root = $env:ROV_UI_ROOT
+$testBuild = Join-Path $root 'build-test\gui'
+$qt = $env:ROV_UI_QT_DIR.Replace('\', '/')
+$gxx = (Join-Path $env:ROV_UI_MINGW_DIR 'bin\g++.exe').Replace('\', '/')
+
+cmake -S $root -B $testBuild -G Ninja `
+    '-DCMAKE_BUILD_TYPE=Debug' '-DBUILD_TESTING=ON' `
+    "-DCMAKE_PREFIX_PATH=$qt" "-DCMAKE_CXX_COMPILER=$gxx"
+if ($LASTEXITCODE -ne 0) { throw 'Test configuration failed.' }
+cmake --build $testBuild --target rov_observer_motor_protocol_test --parallel 2
+if ($LASTEXITCODE -ne 0) { throw 'Test build failed.' }
+ctest --test-dir $testBuild -R '^rov_observer_motor_protocol_test$' --output-on-failure
+if ($LASTEXITCODE -ne 0) { throw 'Test failed.' }
+```
+
+其他测试按需替换目标名；如需部署测试运行库，应将 `deploy-qt.ps1` 的 `-Executable` 指向 `build-test/` 中的程序。不要使用 `build-gui.ps1 -BuildName test` 代替上述独立配置，该参数仍会把产物写入 `build/test/`。测试结束后的清理仅针对对应的 `build-test/` 子目录，不影响主程序目录。
+
 ## Git 约定
 
-`build/`、`toolchain/`、日志、缓存和编译产物只保留在本机，不提交到 Git。源码、文档、协议规范、资源和参考图可以提交。完整规则见根目录 `.gitignore`。
+`build/`、`build-test/`、`toolchain/`、日志、缓存和编译产物只保留在本机，不提交到 Git。源码、文档、协议规范、资源和参考图可以提交。完整规则见根目录 `.gitignore`。
 
 ## USB CDC 通信
+
+AA55 上行现兼容旧 `BODY_LEN=8+N` 与新 `12+N`（最大 82 字节）；CAN 配置回复兼容
+23/27 字节。新增设备时间元数据与连接内 64 位扩展，DATA 和所有下行编码保持不变。
+科研记录 JSONL/CSV 在旧列后追加网关时间，不用主机时间冒充。适配范围、历史固定包体
+歧义及实机未验证边界见 [`AA55 上行适配说明`](docs/aa55-host-adaptation-20261007.md)。
+
 
 固件页按底层 `CAN_To_Uart` 工程筛选 `VID_0483`、`PID_5740`（十六进制）。启动或点击“刷新设备”后，若发现匹配设备会自动连接；找不到设备时仍可手动刷新和接管。USB CDC 不使用波特率；界面解析 `AA 55` CAN 网关帧并显示 CAN 数据，`AA 58` 心跳帧只在后台用于在线判断，不在日志中显示。心跳连续约 2.5 秒未收到时标记为疑似离线。点击“下载到选中节点”会按 `ENTER_BOOT → ERASE → WRITE → DATA → WRITE_END → VERIFY → JUMP_APP` 执行真实下载。
 

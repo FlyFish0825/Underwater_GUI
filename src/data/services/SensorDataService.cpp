@@ -57,6 +57,8 @@ void SensorDataService::setConnected(const bool connected)
     m_depthAwaitingSample = false;
     m_clockAnchorSeen = {{-1, -1}};
     m_clockAnchorUs = {{0, 0}};
+    m_streamChangedMs = {{-1, -1}};
+    m_streamNotBeforeUs = {{0, 0}};
     m_rawSeen = m_quatSeen = m_eulerSeen = m_depthSeen = -1;
     m_lastStream.clear();
     for (auto it = oldPending.cbegin(); it != oldPending.cend(); ++it)
@@ -218,11 +220,19 @@ void SensorDataService::handleFrame(const SensorFrame &frame)
     if (frame.flags == 8)
     {
         const int sensorIndex = frame.target - 1;
+        const qint64 staleMs = frame.target == kImuSensor ? kImuStaleMs : kStaleMs;
+        const bool measurement = frame.command == 0x80 || frame.command == 0x81 || frame.command == 0x82;
+        // Keep the barrier for every group during the freshness window: a new RAW
+        // frame must not release an older ATTITUDE frame. After this window the
+        // normal delivery-age check suffices, without retaining an ancient u32 epoch.
+        if (measurement && (m_state.devices.at(sensorIndex).streamState == SensorStreamState::Stopped
+            || (m_streamChangedMs.at(sensorIndex) >= 0
+                && m_clock.elapsed() - m_streamChangedMs.at(sensorIndex) <= staleMs
+                && qint32(frame.timestampUs - m_streamNotBeforeUs.at(sensorIndex)) < 0))) return;
         if (m_clockAnchorSeen.at(sensorIndex) < 0) return;
         const quint32 expectedNow = m_clockAnchorUs.at(sensorIndex)
             + quint32((m_clock.elapsed() - m_clockAnchorSeen.at(sensorIndex)) * 1000);
         const qint32 deliveryAgeUs = qint32(expectedNow - frame.timestampUs);
-        const qint64 staleMs = frame.target == kImuSensor ? kImuStaleMs : kStaleMs;
         if (deliveryAgeUs > staleMs * 1000 || deliveryAgeUs < -100000) return;
         // A pre-configuration queued sample must not restore the old model/zero values.
         if (frame.target == kDepthSensor && m_depthAwaitingSample
@@ -234,7 +244,9 @@ void SensorDataService::handleFrame(const SensorFrame &frame)
         if (m_lastStream.contains(key)
             && qint32(frame.sequence - m_lastStream.value(key).first) <= 0) return;
         if (consumeTelemetry(frame, qMax<qint64>(0, deliveryAgeUs / 1000)))
+        {
             m_lastStream.insert(key, fingerprint);
+        }
         else emit protocolError(QStringLiteral("AA5B 遥测长度、数据类型或数值非法，未更新快照"));
         return;
     }
@@ -253,9 +265,13 @@ void SensorDataService::handleFrame(const SensorFrame &frame)
     const SensorRequest completedRequest = it->request; // Signals below may re-enter the service.
     const auto result = SensorResult(quint8(frame.payload.at(0)));
     const bool good = result == SensorResult::Ok || result == SensorResult::Unconfirmed;
+    const bool cacheResultAllowed = frame.target == kImuSensor
+        && (completedRequest.operation == SensorOperation::GetParameter
+            || completedRequest.operation == SensorOperation::SetParameter);
     // Older common documentation uses FLAGS=06 for UNCONFIRMED; the measured firmware
     // uses 02. Accept both for result 7 only; it is never promoted to OK.
-    if ((result == SensorResult::Ok && frame.flags != 2) || (!good && frame.flags != 6)
+    if ((result == SensorResult::Unconfirmed && !cacheResultAllowed)
+        || (result == SensorResult::Ok && frame.flags != 2) || (!good && frame.flags != 6)
         || (!good && frame.payload.size() != 1)
         || (good && !consumeReply(frame, result)))
     {
@@ -264,6 +280,17 @@ void SensorDataService::handleFrame(const SensorFrame &frame)
     }
     // A feedback consumer may have disconnected during consumeReply().
     if (!m_pending.contains(frame.target) || m_pending.value(frame.target).sequence != frame.sequence) return;
+    if (result == SensorResult::Ok
+        && (completedRequest.operation == SensorOperation::StartStream
+            || completedRequest.operation == SensorOperation::StopStream))
+    {
+        const int index = frame.target - 1;
+        m_state.devices.at(index).streamState = completedRequest.operation == SensorOperation::StartStream
+            ? SensorStreamState::Running : SensorStreamState::Stopped;
+        m_streamChangedMs.at(index) = m_clock.elapsed();
+        m_streamNotBeforeUs.at(index) = frame.timestampUs;
+        clearMeasurements(frame.target);
+    }
     if (result == SensorResult::Ok && frame.target == kDepthSensor
         && (completedRequest.operation == SensorOperation::SetParameter
             || completedRequest.operation == SensorOperation::ZeroDepth))
@@ -393,6 +420,8 @@ bool SensorDataService::consumeReply(const SensorFrame &f, const SensorResult re
     {
         if (p.size() != 31 || quint8(p.at(1)) != f.target || result != SensorResult::Ok) return false;
         if (f.target == kImuSensor && quint8(p.at(2)) != 0) return false; // Not a 6/9-axis selector.
+        if (f.target == kDepthSensor && quint8(p.at(2)) != 0
+            && quint8(p.at(2)) != 2 && quint8(p.at(2)) != 30) return false;
         d.model = quint8(p.at(2)); d.capabilities = SensorWire::read32(p, 3);
         d.name = fixedText(p.mid(7, 16)); d.firmware = fixedText(p.mid(23, 8)); d.infoKnown = true;
         return true;
@@ -432,7 +461,26 @@ bool SensorDataService::consumeReply(const SensorFrame &f, const SensorResult re
         emit parameterReceived(feedback);
         return true;
     }
-    return p.size() == 1;
+    return p.size() == 1 && result == SensorResult::Ok;
+}
+
+void SensorDataService::clearMeasurements(const quint8 target)
+{
+    if (target == kImuSensor)
+    {
+        m_state.rawValid = m_state.quaternionValid = m_state.eulerValid = false;
+        m_rawSeen = m_quatSeen = m_eulerSeen = -1;
+        m_imuDeliveryAgeMs = {{0, 0, 0}};
+        for (auto &samples : m_imuRates) samples.clear();
+    }
+    else
+    {
+        m_state.depthRawValid = m_state.pressureValid = m_state.temperatureValid = false;
+        m_state.depthValid = m_state.surfacePressureValid = false;
+        m_depthSeen = -1;
+        m_depthDeliveryAgeMs = 0;
+        // Keep zero configuration: pausing forwarding does not erase the device's RAM reference.
+    }
 }
 
 void SensorDataService::finish(const quint8 target, SensorResult result, const QString &detail)
@@ -537,7 +585,7 @@ void SensorDataService::finish(const quint8 target, SensorResult result, const Q
         {
             m_state.imuRequestedRateHz = p.request.value.toInt();
             m_state.imuRateObservedHz = -1;
-            if (result == SensorResult::Unconfirmed)
+            if (result == SensorResult::Unconfirmed && d.streamState != SensorStreamState::Stopped)
             {
                 m_imuRates[0].clear(); // Never verify using pre-SET traffic or a parameter GET cache.
                 m_imuRateStartedMs = m_clock.elapsed();
@@ -549,8 +597,10 @@ void SensorDataService::finish(const quint8 target, SensorResult result, const Q
             else
             {
                 m_state.imuRateCheck = ImuRateCheck::Cancelled;
-                m_state.imuRateMessage = QStringLiteral("未启动频率验证：%1")
-                    .arg(completionDetail.isEmpty() ? sensorResultText(result) : completionDetail);
+                m_state.imuRateMessage = result == SensorResult::Unconfirmed && d.streamState == SensorStreamState::Stopped
+                    ? QStringLiteral("频率已下发但未确认；IMU 上传已停止，恢复上传后需重新提交频率进行观测")
+                    : QStringLiteral("未启动频率验证：%1")
+                        .arg(completionDetail.isEmpty() ? sensorResultText(result) : completionDetail);
             }
         }
         if (p.request.operation == SensorOperation::StopStream && result == SensorResult::Ok)

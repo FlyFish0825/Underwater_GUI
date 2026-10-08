@@ -28,6 +28,9 @@ struct CanGatewayConfigResponse
     CanGatewayConfigStatus status = CanGatewayConfigStatus::ApplyFailed;
     quint32 nominalBitrate = 0;
     quint32 dataBitrate = 0;
+    bool hasTimestamp = false; // 27 B reply; legacy 23 B reply has no timestamp.
+    quint32 timestampUs = 0;
+    qint64 timestampExtendedUs = -1; // Connection-local service metadata, not on wire.
 };
 
 bool isSupportedCanNominalBitrate(quint32 bitrate);

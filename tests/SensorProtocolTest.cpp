@@ -547,13 +547,138 @@ static void testRouter()
     inject(sensorWire.left(7)); inject(sensorWire.mid(7)+canWire);
     CHECK(sensor==1 && can==1); // embedded AA55 did not escape its AA5B owner
     QByteArray bad=sensorWire; bad[bad.size()-3]=char(bad.at(bad.size()-3)^1);
-    inject(bad+sensorWire); CHECK(sensor==2 && can==1);
+    inject(bad+sensorWire); CHECK(sensor==2 && can==2); // Damaged owner has no trusted payload boundary.
     SensorFrame hb; hb.command=1; hb.target=1; hb.flags=2; hb.payload=QByteArray(5,0);
     QByteArray heartbeatWire=encodeSensorFrame(hb);
     heartbeatWire[1]=char(0x58); heartbeatWire[4]=0; heartbeatWire[5]=0; heartbeatWire[23]=char(0x58);
     const quint16 crc=SensorWire::crc16(heartbeatWire.mid(1,20));
     heartbeatWire[21]=char(crc); heartbeatWire[22]=char(crc>>8);
-    inject(heartbeatWire+sensorWire+canWire); CHECK(heartbeat==1 && sensor==3 && can==2);
+    inject(heartbeatWire+sensorWire+canWire); CHECK(heartbeat==1 && sensor==3 && can==3);
+}
+
+static void testSensorRecoveryAndStreamContract()
+{
+    // A damaged AA5B candidate can have a valid length/tail enclosing a complete
+    // next frame. Check production routing for every split, not just the test decoder.
+    for (quint8 target : {kImuSensor, kDepthSensor})
+    {
+        SensorFrame valid; valid.target = target; valid.flags = 8; valid.command = 0x83;
+        valid.payload = QByteArray(20, '\0');
+        const QByteArray wire = encodeSensorFrame(valid);
+        SensorFrame owner = valid; owner.payload = wire;
+        QByteArray corrupt = encodeSensorFrame(owner);
+        corrupt[corrupt.size() - 4] = char(quint8(corrupt.at(corrupt.size() - 4)) ^ 1U);
+        for (int split = 0; split <= corrupt.size(); ++split)
+        {
+            BootloaderCommunicationService communication;
+            auto *transport = communication.findChild<SerialTransport *>();
+            int received = 0;
+            QObject::connect(&communication, &BootloaderCommunicationService::sensorFrameReceived,
+                [&](const SensorFrame &f) { CHECK(f.target == target && f.payload == valid.payload); ++received; });
+            const auto inject = [&](const QByteArray &bytes) {
+                CHECK(QMetaObject::invokeMethod(transport, "bytesReceived", Qt::DirectConnection, Q_ARG(QByteArray, bytes)));
+            };
+            inject(corrupt.left(split)); inject(corrupt.mid(split));
+            CHECK(received == 1);
+        }
+    }
+
+    SensorDataService service; service.setConnected(true);
+    QVector<SensorFrame> sent;
+    SensorResult outcome = SensorResult::Ok;
+    QElapsedTimer clock; clock.start();
+    const auto nowUs = [&]() { return 0xFFFFFF00U + quint32(clock.elapsed() * 1000); };
+    service.setSender([&](const SensorFrame &f) { sent.append(f); return true; });
+    QObject::connect(&service, &SensorDataService::commandFinished,
+        [&](quint8, quint32, SensorResult r, const QString &) { outcome = r; });
+    const auto request = [&](quint8 target, SensorOperation op) {
+        SensorRequest r; r.target = target; r.operation = op; return service.request(r);
+    };
+    const auto acknowledge = [&](SensorResult result) {
+        const SensorFrame pending = sent.last();
+        QByteArray body;
+        if (pending.command == 2 && result == SensorResult::Ok)
+        {
+            SensorWire::append32(body, pending.target == 1 ? 0xFU : 0x9F3U);
+            for (quint32 v : {100U, 0U, 100U, 0U}) SensorWire::append32(body, v);
+        }
+        auto f = replyFor(pending, result, body); f.timestampUs = nowUs(); service.handleFrame(f);
+    };
+    quint32 sequences[2] = {0, 0};
+    const auto sample = [&](quint8 target, quint32 timestamp) {
+        auto f = target == 1 ? rawFrame(++sequences[0]) : depthFrame(0x9F3U);
+        if (target == 2) f.sequence = ++sequences[1];
+        f.timestampUs = timestamp; service.handleFrame(f);
+    };
+    for (quint8 target : {kImuSensor, kDepthSensor})
+    {
+        CHECK(request(target, SensorOperation::GetStatus)); acknowledge(SensorResult::Ok);
+        sample(target, nowUs());
+    }
+    CHECK(service.snapshot().rawValid && service.snapshot().depthValid);
+    CHECK(service.snapshot().devices[0].streamState == SensorStreamState::Unknown);
+    for (quint8 target : {kImuSensor, kDepthSensor})
+    {
+        const int index = target - 1;
+        CHECK(request(target, SensorOperation::StopStream));
+        CHECK(service.snapshot().devices.at(index).streamState == SensorStreamState::Unknown);
+        acknowledge(SensorResult::Unconfirmed);
+        CHECK(outcome == SensorResult::IoError);
+        CHECK(service.snapshot().devices.at(index).streamState == SensorStreamState::Unknown);
+        CHECK(service.snapshot().rawValid && service.snapshot().depthValid);
+        CHECK(request(target, SensorOperation::StopStream)); acknowledge(SensorResult::Ok);
+        CHECK(service.snapshot().devices.at(index).streamState == SensorStreamState::Stopped);
+        sample(target, nowUs()); // Queued measurements cannot revive a stopped target.
+        CHECK(target == 1 ? !service.snapshot().rawValid : !service.snapshot().depthValid);
+        CHECK(target == 1 ? service.snapshot().depthValid : service.snapshot().rawValid);
+        CHECK(request(target, SensorOperation::GetStatus)); acknowledge(SensorResult::Ok);
+        CHECK(service.snapshot().devices.at(index).online);
+        CHECK(target == 1 ? !service.snapshot().rawValid : !service.snapshot().depthValid);
+        CHECK(request(target, SensorOperation::StartStream)); acknowledge(SensorResult::Offline);
+        CHECK(service.snapshot().devices.at(index).streamState == SensorStreamState::Stopped);
+        CHECK(request(target, SensorOperation::StartStream)); acknowledge(SensorResult::Ok);
+        CHECK(service.snapshot().devices.at(index).streamState == SensorStreamState::Running);
+        sample(target, nowUs() - 100000U); // Old, pre-START production time, also across u32 wrap.
+        CHECK(target == 1 ? !service.snapshot().rawValid : !service.snapshot().depthValid);
+        sample(target, nowUs());
+        CHECK(service.snapshot().rawValid && service.snapshot().depthValid);
+        if (target == kImuSensor)
+        {
+            SensorFrame attitude; attitude.target = 1; attitude.flags = 8; attitude.command = 0x81;
+            attitude.sequence = ++sequences[0]; attitude.timestampUs = nowUs() - 100000U;
+            SensorWire::append32(attitude.payload, 0xFU);
+            for (float v : {1.0f, 0.0f, 0.0f, 0.0f, 0.1f, 0.2f, 0.3f}) SensorWire::appendFloat(attitude.payload, v);
+            service.handleFrame(attitude);
+            CHECK(!service.snapshot().eulerValid && !service.snapshot().quaternionValid);
+            attitude.sequence = ++sequences[0]; attitude.timestampUs = nowUs(); service.handleFrame(attitude);
+            CHECK(service.snapshot().eulerValid && service.snapshot().quaternionValid);
+        }
+        const int count = sent.size();
+        for (auto op : {SensorOperation::SaveConfig, SensorOperation::RestoreDefaults,
+                        SensorOperation::SelfTest, SensorOperation::Reboot, SensorOperation::Calibrate})
+            CHECK(!request(target, op) && sent.size() == count);
+    }
+    // UNCONFIRMED is only meaningful for IMU parameter GET/SET, never depth parameters.
+    SensorRequest depth; depth.target = 2; depth.operation = SensorOperation::GetParameter; depth.parameterId = 0x0104;
+    CHECK(service.request(depth));
+    QByteArray tuple; SensorWire::append16(tuple, 0x0104); tuple.append(char(7)); tuple.append(char(4));
+    SensorWire::appendFloat(tuple, 0.0f);
+    service.handleFrame(replyFor(sent.last(), SensorResult::Unconfirmed, tuple));
+    CHECK(outcome == SensorResult::IoError);
+    service.setConnected(false); service.setConnected(true);
+    CHECK(service.snapshot().devices[0].streamState == SensorStreamState::Unknown);
+    CHECK(service.snapshot().devices[1].streamState == SensorStreamState::Unknown);
+    CHECK(!service.snapshot().rawValid && !service.snapshot().depthValid);
+    for (quint8 model : {quint8(7), quint8(30)})
+    {
+        CHECK(request(2, SensorOperation::GetInfo));
+        QByteArray info; info.append(char(2)); info.append(char(model)); SensorWire::append32(info, 0xC38U);
+        info.append(QByteArray("MS5837").leftJustified(16, '\0'));
+        info.append(QByteArray("host-v1").leftJustified(8, '\0'));
+        service.handleFrame(replyFor(sent.last(), SensorResult::Ok, info));
+        CHECK(model == 7 ? outcome == SensorResult::IoError : outcome == SensorResult::Ok);
+        CHECK(service.snapshot().devices[1].infoKnown == (model == 30));
+    }
 }
 
 static void testDepthRatePacketAndCommandTrace()
@@ -1128,6 +1253,8 @@ static void testImuRateObservation()
         CHECK(f.command(SensorOperation::StopStream,0,0,2));CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Observing);
         CHECK(f.command(SensorOperation::StopStream));CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Cancelled);
         CHECK(f.command(SensorOperation::SetParameter,1,25));CHECK(f.service.snapshot().imuRequestedRateHz==25);
+        CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::Cancelled);
+        CHECK(f.service.snapshot().imuRateMessage.contains(QStringLiteral("上传已停止")));
         f.service.setConnected(false);f.service.setConnected(true);f.tick(5);
         CHECK(f.service.snapshot().imuRateCheck==ImuRateCheck::NotRequested && f.service.snapshot().imuRawRateHz<0);
     }
@@ -1349,6 +1476,7 @@ static void testImuRateObservationEdges()
 int main(int argc,char **argv)
 {
     QCoreApplication app(argc,argv);
+    testSensorRecoveryAndStreamContract();
     testImuDiscoveryAndPolicy(); testImuGroupsAndFreshness(); testImuRateObservation();
     testDepthStartupReference();
     testImuDocumentCommands(); testImuIndependentFreshness(); testImuRateObservationEdges();

@@ -17,6 +17,7 @@ constexpr quint8 kSetBitrateCommand = 0x01U;
 constexpr quint8 kSetBitrateResponse = 0x81U;
 constexpr quint8 kRequestBodyLength = 16U;
 constexpr quint8 kResponseBodyLength = 17U;
+constexpr quint8 kTimestampedResponseBodyLength = 21U;
 
 void setError(QString *error, const QString &message)
 {
@@ -204,7 +205,7 @@ QByteArray encodeCanGatewayConfigResponse(const CanGatewayConfigResponse &respon
         return {};
 
     QByteArray body;
-    body.reserve(kResponseBodyLength);
+    body.reserve(response.hasTimestamp ? kTimestampedResponseBodyLength : kResponseBodyLength);
     appendLe16(body, response.sequence);
     body.append(4, '\0');
     body.append(static_cast<char>(kControlFlags));
@@ -212,6 +213,7 @@ QByteArray encodeCanGatewayConfigResponse(const CanGatewayConfigResponse &respon
     body.append(static_cast<char>(response.status));
     appendLe32(body, response.nominalBitrate);
     appendLe32(body, response.dataBitrate);
+    if (response.hasTimestamp) appendLe32(body, response.timestampUs);
     return makePacket(body);
 }
 
@@ -219,36 +221,44 @@ bool decodeCanGatewayConfigResponse(const QByteArray &packet,
                                     CanGatewayConfigResponse &response,
                                     QString *error)
 {
-    if (!validateEnvelope(packet, kResponseBodyLength, error))
-        return false;
+    if (error) error->clear();
+    const quint8 bodyLength = packet.size() == kTimestampedResponseBodyLength + 6
+        ? kTimestampedResponseBodyLength : kResponseBodyLength;
+    if (!validateEnvelope(packet, bodyLength, error)) return false;
     if (static_cast<quint8>(packet.at(9)) != kControlFlags
-        || static_cast<quint8>(packet.at(10)) != kSetBitrateResponse)
+        || static_cast<quint8>(packet.at(10)) != kSetBitrateResponse
+        || readLe32(packet, 5) != 0)
     {
         setError(error, QStringLiteral("不是 SET_BITRATE 配置回复"));
         return false;
     }
-    response.sequence = readLe16(packet, 3);
-    response.status = static_cast<CanGatewayConfigStatus>(static_cast<quint8>(packet.at(11)));
-    response.nominalBitrate = readLe32(packet, 12);
-    response.dataBitrate = readLe32(packet, 16);
-    if (!isValidStatus(response.status))
+    CanGatewayConfigResponse decoded;
+    decoded.sequence = readLe16(packet, 3);
+    decoded.status = static_cast<CanGatewayConfigStatus>(static_cast<quint8>(packet.at(11)));
+    decoded.nominalBitrate = readLe32(packet, 12);
+    decoded.dataBitrate = readLe32(packet, 16);
+    if (!isValidStatus(decoded.status))
     {
         setError(error, QStringLiteral("配置回复状态码不受支持"));
         return false;
     }
-    if (!isSupportedCanNominalBitrate(response.nominalBitrate)
-        || !isSupportedCanDataBitrate(response.dataBitrate))
+    if (!isSupportedCanNominalBitrate(decoded.nominalBitrate)
+        || !isSupportedCanDataBitrate(decoded.dataBitrate))
     {
         setError(error, QStringLiteral("配置回复包含非法的当前 CAN 速率"));
         return false;
     }
+    decoded.hasTimestamp = bodyLength == kTimestampedResponseBodyLength;
+    if (decoded.hasTimestamp) decoded.timestampUs = readLe32(packet, 20);
+    response = decoded;
     return true;
 }
 
 bool isCanGatewayConfigResponsePacket(const QByteArray &packet)
 {
     return packet.size() >= 11
-           && static_cast<quint8>(packet.at(2)) == kResponseBodyLength
+           && (static_cast<quint8>(packet.at(2)) == kResponseBodyLength
+               || static_cast<quint8>(packet.at(2)) == kTimestampedResponseBodyLength)
            && static_cast<quint8>(packet.at(9)) == kControlFlags;
 }
 

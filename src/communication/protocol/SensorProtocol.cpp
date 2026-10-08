@@ -110,10 +110,10 @@ bool makeSensorRequestPayload(const SensorRequest &r, QByteArray &p, QString &er
     // Keep wire enums for decoding/diagnostics, but no GUI business request can emit them.
     if (r.operation == SensorOperation::Calibrate)
         return fail(QStringLiteral("禁止 IMU 硬件校准/清除；本项目使用上位机软件校准"));
-    if (r.target == kImuSensor && (r.operation == SensorOperation::SaveConfig
+    if (r.operation == SensorOperation::SaveConfig
         || r.operation == SensorOperation::RestoreDefaults || r.operation == SensorOperation::SelfTest
-        || r.operation == SensorOperation::Reboot))
-        return fail(QStringLiteral("当前 IMU 协议不开放此操作，命令未发送"));
+        || r.operation == SensorOperation::Reboot)
+        return fail(QStringLiteral("当前传感器协议不开放保存、恢复、自检或复位，命令未发送"));
     if (r.operation != SensorOperation::GetParameter && r.operation != SensorOperation::SetParameter)
         return true;
 
