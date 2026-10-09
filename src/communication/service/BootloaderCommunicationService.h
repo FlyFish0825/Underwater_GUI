@@ -7,6 +7,7 @@
 #include "communication/protocol/SystemHeartbeatProtocol.h"
 #include "communication/protocol/SensorProtocol.h"
 #include "communication/transport/SerialTransport.h"
+#include "communication/transport/TcpTransport.h"
 
 #include <QObject>
 #include <QSet>
@@ -24,6 +25,9 @@ class BootloaderCommunicationService final : public QObject
 
     QVector<SerialDeviceInfo> enumerateDevices() const;
     bool open(const SerialDeviceInfo &device);
+    bool openTcp(const QString &host, quint16 port, bool allowWrites = false);
+    bool isTcpRequested() const;
+    bool writesAllowed() const;
     void close();
     bool isOpen() const;
     bool sendCanFrame(const CanGatewayFrame &frame);
@@ -53,6 +57,7 @@ class BootloaderCommunicationService final : public QObject
     void opened(const QString &portName);
     void closed();
     void errorOccurred(const QString &message);
+    void connectionStatusChanged(const QString &message);
     void canBitrateConfigured(quint16 sequence, quint8 status, quint32 nominalBps, quint32 dataBps);
     // Validated, matched reply including optional RX timestamp; existing UI signal is unchanged.
     void canBitrateResponseReceived(const rov::CanGatewayConfigResponse &response);
@@ -81,7 +86,11 @@ class BootloaderCommunicationService final : public QObject
                                 quint32 dataBitrate, const QString &message);
     void handleCanBitrateConfigResponse(CanGatewayConfigResponse response);
 
-    SerialTransport *m_transport = nullptr;
+    void resetSession();
+    ByteTransport *m_transport = nullptr;
+    SerialTransport *m_serial = nullptr;
+    TcpTransport *m_tcp = nullptr;
+    bool m_writesAllowed = true;
     CanGatewayTimestampUnwrapper m_gatewayTimestamp;
     bool m_canBitratePending = false;
     quint16 m_canBitrateSequence = 0;

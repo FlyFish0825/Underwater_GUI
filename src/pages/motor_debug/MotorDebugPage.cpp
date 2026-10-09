@@ -969,6 +969,15 @@ void MotorDebugPage::setSnapshot(const MotorDebugSnapshot &snapshot)
     refreshCurveWindows();
 }
 
+void MotorDebugPage::resetControlSession()
+{
+    m_running = false;
+    if (m_speedDispatchTimer != nullptr) m_speedDispatchTimer->stop();
+    if (m_runButton != nullptr) m_runButton->setText(QStringLiteral("启动"));
+    if (m_speedInput != nullptr) { const QSignalBlocker blocker(m_speedInput); m_speedInput->setValue(0); }
+    if (m_speedSlider != nullptr) { const QSignalBlocker blocker(m_speedSlider); m_speedSlider->setValue(0); }
+}
+
 void MotorDebugPage::setCalibrationSnapshots(
     const QVector<MotorCalibrationSnapshot> &snapshots)
 {

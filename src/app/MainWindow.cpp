@@ -581,7 +581,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(communication, &BootloaderCommunicationService::canBitrateError, settings,
             &SettingsPlaceholder::onCanBitrateError);
     connect(communication, &BootloaderCommunicationService::opened, settings,
-            [settings](const QString &) { settings->setGatewayConnected(true); });
+            [settings, communication](const QString &) { settings->setGatewayConnected(communication->writesAllowed()); });
     connect(communication, &BootloaderCommunicationService::closed, settings,
             [settings]() { settings->setGatewayConnected(false); });
     connect(communication, &BootloaderCommunicationService::opened, this,
@@ -606,7 +606,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             });
     // FirmwarePage may auto-connect in its constructor, before these signals
     // are subscribed. Seed settings from the live service as well.
-    settings->setGatewayConnected(communication->isOpen());
+    settings->setGatewayConnected(communication->writesAllowed());
     connect(firmware->communicationService(), &BootloaderCommunicationService::frameReceived, this,
             [this](const CanGatewayFrame &frame)
             {
@@ -626,6 +626,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             });
     connect(firmware->communicationService(), &BootloaderCommunicationService::closed, m_motorData,
             &ObserverMotorDataService::reset);
+    connect(firmware->communicationService(), &BootloaderCommunicationService::closed, motorDebug,
+            &MotorDebugPage::resetControlSession);
     connect(m_motorData, &ObserverMotorDataService::snapshotChanged, this,
             [this, dashboard, motorDebug](const ObserverMotorFleetSnapshot &fleet)
             {

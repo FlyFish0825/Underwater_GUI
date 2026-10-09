@@ -38,6 +38,8 @@ class MotorDebugPage final : public QWidget
 
     void setSnapshot(const MotorDebugSnapshot &snapshot);
     void setCalibrationSnapshots(const QVector<MotorCalibrationSnapshot> &snapshots);
+    // A lost transport session must not retain a running latch or a delayed speed request.
+    void resetControlSession();
     quint8 selectedNodeId() const;
 
   signals:

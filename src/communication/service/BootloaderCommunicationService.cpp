@@ -29,9 +29,10 @@ bool isAllowedFlowFlags(const quint8 flags)
 } // namespace
 
 BootloaderCommunicationService::BootloaderCommunicationService(QObject *parent)
-    : QObject(parent), m_transport(new SerialTransport(this)), m_flowTimeout(this),
+    : QObject(parent), m_serial(new SerialTransport(this)), m_tcp(new TcpTransport(this)), m_flowTimeout(this),
       m_canBitrateTimeout(this)
 {
+    m_transport = m_serial;
     m_flowTimeout.setSingleShot(true);
     m_canBitrateTimeout.setSingleShot(true);
     connect(&m_flowTimeout, &QTimer::timeout, this,
@@ -44,19 +45,25 @@ BootloaderCommunicationService::BootloaderCommunicationService(QObject *parent)
                                        m_pendingCanBitrate.dataBitrate,
                                        canGatewayConfigStatusText(CanGatewayConfigStatus::Timeout));
             });
-    connect(m_transport, &SerialTransport::bytesReceived, this,
-            [this](const QByteArray &bytes)
-            {
-                emit rawBytesReceived(bytes);
-                processReceivedBytes(bytes);
-            });
-    connect(m_transport, &SerialTransport::opened, this, &BootloaderCommunicationService::opened);
-    connect(m_transport, &SerialTransport::closed, this, [this]() {
-        m_gatewayTimestamp.reset(); m_receiveBuffer.clear();
-        emit closed();
-    });
-    connect(m_transport, &SerialTransport::errorOccurred, this,
-            &BootloaderCommunicationService::errorOccurred);
+    for (ByteTransport *transport : {static_cast<ByteTransport *>(m_serial), static_cast<ByteTransport *>(m_tcp)})
+    {
+        connect(transport, &ByteTransport::bytesReceived, this, [this, transport](const QByteArray &bytes) {
+            if (transport != m_transport) return;
+            emit rawBytesReceived(bytes); processReceivedBytes(bytes);
+        });
+        connect(transport, &ByteTransport::opened, this, [this, transport](const QString &endpoint) {
+            if (transport != m_transport) return;
+            resetSession(); emit opened(endpoint);
+        });
+        connect(transport, &ByteTransport::closed, this, [this, transport]() {
+            if (transport != m_transport) return;
+            resetSession(); emit closed();
+        });
+        connect(transport, &ByteTransport::errorOccurred, this, [this, transport](const QString &message) {
+            if (transport == m_transport) emit errorOccurred(message);
+        });
+    }
+    connect(m_tcp, &TcpTransport::statusChanged, this, &BootloaderCommunicationService::connectionStatusChanged);
 }
 
 QVector<SerialDeviceInfo> BootloaderCommunicationService::enumerateDevices() const
@@ -65,6 +72,20 @@ QVector<SerialDeviceInfo> BootloaderCommunicationService::enumerateDevices() con
 }
 
 bool BootloaderCommunicationService::open(const SerialDeviceInfo &device)
+{
+    close(); m_transport = m_serial; m_writesAllowed = true;
+    resetSession(); return m_serial->open(device);
+}
+
+bool BootloaderCommunicationService::openTcp(const QString &host, quint16 port, bool allowWrites)
+{
+    close(); m_transport = m_tcp; m_writesAllowed = allowWrites;
+    resetSession(); return m_tcp->open(host, port, allowWrites);
+}
+bool BootloaderCommunicationService::isTcpRequested() const { return m_tcp->connectionRequested(); }
+bool BootloaderCommunicationService::writesAllowed() const { return isOpen() && m_writesAllowed; }
+
+void BootloaderCommunicationService::resetSession()
 {
     m_gatewayTimestamp.reset();
     m_flowDecoder.reset();
@@ -76,7 +97,6 @@ bool BootloaderCommunicationService::open(const SerialDeviceInfo &device)
         finishCanBitrateConfig(CanGatewayConfigStatus::TransportError, 0, 0,
                                QStringLiteral("连接重置，未完成的 CAN 速率配置已取消"));
     }
-    return m_transport->open(device);
 }
 
 void BootloaderCommunicationService::close()
@@ -99,7 +119,7 @@ bool BootloaderCommunicationService::isOpen() const
 bool BootloaderCommunicationService::sendSensorFrame(const SensorFrame &frame)
 {
     // Sensor configuration never competes with firmware block/control traffic.
-    if (!isOpen() || isFlowTransferActive() || m_canBitratePending)
+    if (!writesAllowed() || isFlowTransferActive() || m_canBitratePending)
         return false;
     const QByteArray packet = encodeSensorFrame(frame);
     return !packet.isEmpty() && m_transport->writeBytes(packet);
@@ -107,6 +127,7 @@ bool BootloaderCommunicationService::sendSensorFrame(const SensorFrame &frame)
 
 bool BootloaderCommunicationService::sendCanFrame(const CanGatewayFrame &frame)
 {
+    if (!writesAllowed()) return false;
     if (m_canBitratePending)
     {
         emit errorOccurred(QStringLiteral("CAN 速率配置等待回复期间不能发送普通 CAN 帧"));
@@ -175,7 +196,7 @@ bool BootloaderCommunicationService::sendObserverMotorCalibration(
 
 bool BootloaderCommunicationService::setCanBitrate(const quint32 nominalBps, const quint32 dataBps)
 {
-    if (!isOpen())
+    if (!writesAllowed())
     {
         emit errorOccurred(QStringLiteral("串口尚未连接，无法配置 CAN 速率"));
         return false;
@@ -519,6 +540,7 @@ bool BootloaderCommunicationService::isFlowTransferActive() const
 bool BootloaderCommunicationService::sendFlowFrame(const CanFlowCommand command,
                                                    const QByteArray &payload)
 {
+    if (!writesAllowed()) return false;
     CanFlowFrame frame;
     frame.command = command;
     frame.sequence = m_flowFrameSequence++;
