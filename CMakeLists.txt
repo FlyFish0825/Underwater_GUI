@@ -10,7 +10,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets Concurrent PrintSupport)
+find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets Concurrent PrintSupport Network)
 
 # Qwt 6.3.x supplies the reusable QWidget plotting primitives. Its wrapper
 # disables optional modules unavailable in the locked Qt SDK (SVG/OpenGL).
@@ -83,6 +83,9 @@ add_library(rov_communication STATIC
     src/communication/service/BootloaderCommunicationService.h
     src/communication/transport/SerialTransport.cpp
     src/communication/transport/SerialTransport.h
+    src/communication/transport/ByteTransport.h
+    src/communication/transport/TcpTransport.cpp
+    src/communication/transport/TcpTransport.h
 )
 
 add_library(rov_firmware_history STATIC
@@ -196,6 +199,7 @@ foreach(target IN LISTS ROV_UI_TARGETS)
 endforeach()
 
 target_link_libraries(rov_page_firmware PUBLIC rov_communication)
+target_link_libraries(rov_communication PUBLIC Qt5::Network)
 target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history)
 target_link_libraries(rov_firmware_history_ui PUBLIC rov_firmware_history rov_ui_common)
 target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history_ui)

@@ -76,7 +76,7 @@ void parseVidPid(const QString &hardwareIds, quint16 &vid, quint16 &pid)
 } // namespace
 #endif
 
-SerialTransport::SerialTransport(QObject *parent) : QObject(parent), m_impl(new Impl)
+SerialTransport::SerialTransport(QObject *parent) : ByteTransport(parent), m_impl(new Impl)
 {
     m_impl->timer = new QTimer(this);
     m_impl->timer->setInterval(20);

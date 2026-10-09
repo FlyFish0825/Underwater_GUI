@@ -1,6 +1,6 @@
 #pragma once
 
-#include <QObject>
+#include "communication/transport/ByteTransport.h"
 #include <QVector>
 
 namespace rov
@@ -17,7 +17,7 @@ struct SerialDeviceInfo
     QString vidPidText() const;
 };
 
-class SerialTransport final : public QObject
+class SerialTransport final : public ByteTransport
 {
     Q_OBJECT
 
@@ -29,16 +29,10 @@ class SerialTransport final : public QObject
                                                 quint16 productId = 0x5740);
 
     bool open(const SerialDeviceInfo &device);
-    void close();
-    bool isOpen() const;
-    QString portName() const;
-    bool writeBytes(const QByteArray &bytes);
-
-  signals:
-    void bytesReceived(const QByteArray &bytes);
-    void opened(const QString &portName);
-    void closed();
-    void errorOccurred(const QString &message);
+    void close() override;
+    bool isOpen() const override;
+    QString portName() const override;
+    bool writeBytes(const QByteArray &bytes) override;
 
   private slots:
     void pollRead();
