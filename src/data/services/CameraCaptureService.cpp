@@ -482,6 +482,7 @@ void CameraCaptureService::startCamera(int deviceIndex)
     m_fpsWindowStartMs = QDateTime::currentMSecsSinceEpoch();
     m_fpsWindowFrames = 0;
     m_snapshot.connected = true;
+    m_snapshot.frameAvailable = false;
     m_snapshot.cameraDevice = deviceName;
     m_snapshot.resolution = QStringLiteral("%1 × %2").arg(format.width).arg(format.height);
     m_snapshot.frameRate = QStringLiteral("计算中");
@@ -495,6 +496,7 @@ void CameraCaptureService::stopCamera()
 {
     m_impl->close();
     m_snapshot.connected = false;
+    m_snapshot.frameAvailable = false;
     m_snapshot.streamState = QStringLiteral("已停止");
     m_snapshot.frameRate = QStringLiteral("--");
     emit snapshotChanged(m_snapshot);
@@ -516,8 +518,9 @@ void CameraCaptureService::acceptFrame(const QImage &frame)
         m_fpsWindowFrames = 0;
     }
     m_snapshot.lastFrame = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz"));
-    emit frameReady(frame);
+    m_snapshot.frameAvailable = true;
     emit snapshotChanged(m_snapshot);
+    emit frameReady(frame);
 }
 
 } // namespace rov

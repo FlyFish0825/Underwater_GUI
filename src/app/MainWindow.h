@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <QVector>
+#include "contracts/vision/VisionContract.h"
 
 class QLabel;
 class QButtonGroup;
@@ -23,6 +24,7 @@ class ManipulatorPage;
 class VisionPage;
 class ObserverMotorDataService;
 class CameraCaptureService;
+class StereoCameraService;
 class ResearchDataRecorder;
 
 class MainWindow final : public QMainWindow
@@ -30,7 +32,7 @@ class MainWindow final : public QMainWindow
     Q_OBJECT
 
   public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(QWidget *parent = nullptr, bool autoConnectDevices = true);
 
     void setPageIndex(int index);
 
@@ -54,6 +56,8 @@ class MainWindow final : public QMainWindow
     QLabel *m_gatewayStatus = nullptr;
     ObserverMotorDataService *m_motorData = nullptr;
     CameraCaptureService *m_camera = nullptr;
+    StereoCameraService *m_stereoCamera = nullptr;
+    CameraSource m_cameraSource = CameraSource::RobotStereo;
     ResearchDataRecorder *m_recorder = nullptr;
     QVector<QVector<double>> m_debugSeriesHistory;
     quint8 m_debugHistoryNodeId = 0;

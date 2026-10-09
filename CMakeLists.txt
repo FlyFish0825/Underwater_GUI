@@ -113,6 +113,10 @@ add_library(rov_sensor_data STATIC
 )
 
 add_library(rov_camera STATIC
+    src/communication/protocol/StereoCameraProtocol.cpp
+    src/communication/protocol/StereoCameraProtocol.h
+    src/data/services/StereoCameraService.cpp
+    src/data/services/StereoCameraService.h
     src/data/services/CameraCaptureService.cpp
     src/data/services/CameraCaptureService.h
 )
@@ -205,6 +209,7 @@ target_link_libraries(rov_firmware_history_ui PUBLIC rov_firmware_history rov_ui
 target_link_libraries(rov_page_firmware PUBLIC rov_firmware_history_ui)
 target_link_libraries(rov_motor_data PUBLIC rov_communication)
 target_link_libraries(rov_sensor_data PUBLIC rov_communication)
+target_link_libraries(rov_camera PUBLIC Qt5::Network Qt5::Concurrent)
 if (WIN32)
     target_link_libraries(rov_camera PRIVATE ole32 oleaut32 strmiids uuid)
 endif()
@@ -246,10 +251,29 @@ endif()
 
 if (WIN32)
     set_target_properties(rov_ui PROPERTIES WIN32_EXECUTABLE TRUE)
+    # Image reception needs these SDK runtimes even after a plain incremental build.
+    add_custom_command(TARGET rov_ui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:Qt5::Network> $<TARGET_FILE_DIR:rov_ui>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:Qt5::Concurrent> $<TARGET_FILE_DIR:rov_ui>
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:rov_ui>/imageformats
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:Qt5::QJpegPlugin> $<TARGET_FILE_DIR:rov_ui>/imageformats
+        VERBATIM)
 endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(rov_stereo_camera_service_test EXCLUDE_FROM_ALL tests/StereoCameraServiceTest.cpp)
+    target_link_libraries(rov_stereo_camera_service_test PRIVATE rov_camera rov_communication)
+    add_test(NAME rov_stereo_camera_service_test COMMAND rov_stereo_camera_service_test -platform offscreen)
+    get_target_property(ROV_APP_LIBRARIES rov_ui LINK_LIBRARIES)
+    add_executable(rov_stereo_camera_page_test EXCLUDE_FROM_ALL tests/StereoCameraPageTest.cpp
+        src/app/MainWindow.cpp src/app/MainWindow.h resources/resources.qrc)
+    target_link_libraries(rov_stereo_camera_page_test PRIVATE ${ROV_APP_LIBRARIES})
+    # Explicit receive-only LAN probe; never run as part of CTest.
+    add_executable(rov_stereo_camera_probe EXCLUDE_FROM_ALL tests/StereoCameraProbe.cpp
+        src/app/MainWindow.cpp src/app/MainWindow.h resources/resources.qrc)
+    target_link_libraries(rov_stereo_camera_probe PRIVATE ${ROV_APP_LIBRARIES})
+    add_test(NAME rov_stereo_camera_page_test COMMAND rov_stereo_camera_page_test -platform offscreen)
     add_executable(rov_tcp_transport_test EXCLUDE_FROM_ALL tests/TcpTransportTest.cpp)
     target_link_libraries(rov_tcp_transport_test PRIVATE rov_communication Qt5::Network)
     add_test(NAME rov_tcp_transport_test COMMAND rov_tcp_transport_test)

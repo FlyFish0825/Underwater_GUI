@@ -234,14 +234,14 @@ QPushButton:pressed {
     background: #dceeff;
 }
 
-QPushButton#primaryButton {
+QPushButton#primaryButton, QPushButton#cameraStart {
     color: #ffffff;
     background: #1585e7;
     border-color: #1585e7;
     font-weight: 600;
 }
 
-QPushButton#primaryButton:hover {
+QPushButton#primaryButton:hover, QPushButton#cameraStart:hover {
     background: #0d75d5;
 }
 
@@ -251,7 +251,7 @@ QPushButton#dangerButton {
     border-color: #ec8e94;
 }
 
-QPushButton#softButton {
+QPushButton#softButton, QPushButton#cameraStop, QPushButton#cameraSaveFrame {
     background: #eef5fb;
 }
 

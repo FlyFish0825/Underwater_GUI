@@ -1,6 +1,7 @@
 #include "pages/vision/VisionPage.h"
 
 #include "ui/common/AppComboBox.h"
+#include "ui/common/AppLineEdit.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QApplication>
@@ -16,6 +17,9 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QSettings>
+#include <QShowEvent>
+#include <QSpinBox>
 #include <QStandardPaths>
 #include <QVBoxLayout>
 
@@ -53,23 +57,71 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent)
     root->setContentsMargins(14, 12, 14, 10);
     root->setSpacing(10);
     root->addWidget(makePageHeader(QStringLiteral("视觉"),
-                                   QStringLiteral("本机相机实时预览与图像处理入口。"),
-                                   QStringLiteral("Windows DirectShow")));
+                                   QStringLiteral("机器人双目画面与本机相机实时预览。"),
+                                   QStringLiteral("相机")));
 
     auto *mainRow = new QHBoxLayout;
     mainRow->setSpacing(12);
 
     auto *cameraCard = new CardWidget(QStringLiteral("相机预览"), IconKind::Camera);
-    m_preview = new QLabel(QStringLiteral("请选择相机并启动预览"));
-    m_preview->setObjectName(QStringLiteral("card"));
+    auto *previews = new QWidget;
+    previews->setMinimumSize(520, 365);
+    auto *previewRow = new QHBoxLayout(previews);
+    previewRow->setContentsMargins(0, 0, 0, 0);
+    auto *leftPanel = new QWidget;
+    auto *leftLayout = new QVBoxLayout(leftPanel);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    m_leftTitle = makeLabel(QStringLiteral("左目"), QStringLiteral("mutedLabel"));
+    leftLayout->addWidget(m_leftTitle);
+    m_preview = new QLabel(QStringLiteral("点击启动预览，连接机器人双目相机"));
+    m_preview->setObjectName(QStringLiteral("cameraLeftPreview"));
+    m_preview->setProperty("class", QStringLiteral("card"));
+    m_preview->setWordWrap(true);
     m_preview->setAlignment(Qt::AlignCenter);
-    m_preview->setMinimumSize(520, 365);
-    m_preview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    cameraCard->contentLayout()->addWidget(m_preview, 1);
+    m_preview->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    leftLayout->addWidget(m_preview, 1);
+    m_rightPanel = new QWidget;
+    auto *rightLayout = new QVBoxLayout(m_rightPanel);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->addWidget(makeLabel(QStringLiteral("右目"), QStringLiteral("mutedLabel")));
+    m_rightPreview = new QLabel(QStringLiteral("等待相机画面"));
+    m_rightPreview->setObjectName(QStringLiteral("cameraRightPreview"));
+    m_rightPreview->setAlignment(Qt::AlignCenter);
+    m_rightPreview->setWordWrap(true);
+    m_rightPreview->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    rightLayout->addWidget(m_rightPreview, 1);
+    previewRow->addWidget(leftPanel, 1);
+    previewRow->addWidget(m_rightPanel, 1);
+    cameraCard->contentLayout()->addWidget(previews, 1);
+    m_preview->installEventFilter(this);
+    m_rightPreview->installEventFilter(this);
+
+    auto *sourceRow = new QHBoxLayout;
+    m_sourceSelect = new AppComboBox;
+    m_sourceSelect->setObjectName(QStringLiteral("cameraSource"));
+    m_sourceSelect->addItems({QStringLiteral("机器人双目"), QStringLiteral("本机相机")});
+    sourceRow->addWidget(m_sourceSelect);
+    m_endpointControls = new QWidget;
+    auto *endpointRow = new QHBoxLayout(m_endpointControls);
+    endpointRow->setContentsMargins(0, 0, 0, 0);
+    QSettings settings;
+    m_cameraHost = new AppLineEdit(settings.value(QStringLiteral("camera/host"),
+                                                  QStringLiteral("192.168.20.70")).toString());
+    m_cameraHost->setObjectName(QStringLiteral("cameraHost"));
+    m_cameraHost->setPlaceholderText(QStringLiteral("机器人地址"));
+    m_cameraPort = new QSpinBox;
+    m_cameraPort->setObjectName(QStringLiteral("cameraPort"));
+    m_cameraPort->setRange(1, 65535);
+    m_cameraPort->setValue(settings.value(QStringLiteral("camera/port"), 9001).toInt());
+    endpointRow->addWidget(m_cameraHost, 1);
+    endpointRow->addWidget(m_cameraPort);
+    sourceRow->addWidget(m_endpointControls, 1);
+    cameraCard->contentLayout()->addLayout(sourceRow);
 
     auto *controls = new QHBoxLayout;
     controls->setSpacing(8);
     m_deviceSelect = new AppComboBox;
+    m_deviceSelect->setObjectName(QStringLiteral("localCameraDevice"));
     m_deviceSelect->setMinimumWidth(220);
     m_deviceSelect->addItem(QStringLiteral("正在检测相机…"));
     controls->addWidget(m_deviceSelect, 1);
@@ -77,6 +129,9 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent)
     m_startCamera = makeButton(QStringLiteral("启动预览"), QStringLiteral("primaryButton"));
     m_stopCamera = makeButton(QStringLiteral("停止"), QStringLiteral("softButton"));
     m_saveFrame = makeButton(QStringLiteral("保存当前帧"), QStringLiteral("softButton"));
+    m_startCamera->setObjectName(QStringLiteral("cameraStart"));
+    m_stopCamera->setObjectName(QStringLiteral("cameraStop"));
+    m_saveFrame->setObjectName(QStringLiteral("cameraSaveFrame"));
     m_stopCamera->setEnabled(false);
     m_saveFrame->setEnabled(false);
     controls->addWidget(refresh);
@@ -84,6 +139,8 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent)
     controls->addWidget(m_stopCamera);
     controls->addWidget(m_saveFrame);
     cameraCard->contentLayout()->addLayout(controls);
+    m_deviceSelect->hide();
+    refresh->hide();
 
     auto *modeCard = new CardWidget(QStringLiteral("显示模式"), IconKind::Vision);
     auto *modes = new QGridLayout;
@@ -196,30 +253,45 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent)
     mainRow->addWidget(sidePanel);
     root->addLayout(mainRow, 1);
 
-    m_requestLog = makeLabel(QStringLiteral("正在检测本机相机。"), QStringLiteral("mutedLabel"));
+    m_requestLog = makeLabel(QStringLiteral("点击启动预览，连接机器人双目相机。"), QStringLiteral("mutedLabel"));
     root->addWidget(m_requestLog);
 
     connect(refresh, &QPushButton::clicked, this,
             [this]()
             {
-                emit cameraControlRequested(
-                    CameraControlRequest{CameraControlAction::RefreshDevices, -1});
+                emit cameraControlRequested(cameraRequest(CameraControlAction::RefreshDevices));
                 logRequest(QStringLiteral("刷新相机设备"));
             });
     connect(m_startCamera, &QPushButton::clicked, this,
             [this]()
             {
-                emit cameraControlRequested(
-                    CameraControlRequest{CameraControlAction::Start, m_deviceSelect->currentIndex()});
+                QSettings settings;
+                settings.setValue(QStringLiteral("camera/host"), m_cameraHost->text().trimmed());
+                settings.setValue(QStringLiteral("camera/port"), m_cameraPort->value());
+                emit cameraControlRequested(cameraRequest(CameraControlAction::Start));
                 logRequest(QStringLiteral("启动相机预览"));
             });
     connect(m_stopCamera, &QPushButton::clicked, this,
             [this]()
             {
-                emit cameraControlRequested(CameraControlRequest{CameraControlAction::Stop, -1});
+                emit cameraControlRequested(cameraRequest(CameraControlAction::Stop));
                 logRequest(QStringLiteral("停止相机预览"));
             });
     connect(m_saveFrame, &QPushButton::clicked, this, &VisionPage::saveCurrentFrame);
+    connect(m_sourceSelect, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this, refresh](int index) {
+                m_source = index == 0 ? CameraSource::RobotStereo : CameraSource::Local;
+                const bool robot = m_source == CameraSource::RobotStereo;
+                m_endpointControls->setVisible(robot);
+                m_deviceSelect->setVisible(!robot);
+                refresh->setVisible(!robot);
+                m_rightPanel->setVisible(robot);
+                m_leftTitle->setText(robot ? QStringLiteral("左目") : QStringLiteral("本机相机"));
+                m_snapshot = {};
+                m_snapshot.streamState = QStringLiteral("未启动");
+                refreshView();
+                emit cameraSourceRequested(m_source);
+            });
 
     qApp->installEventFilter(this);
     VisionSnapshot initialSnapshot;
@@ -253,9 +325,10 @@ void VisionPage::setAvailableCameras(const QStringList &deviceNames)
     else
         m_deviceSelect->addItems(deviceNames);
     m_deviceSelect->setCurrentIndex(qBound(0, previousIndex, m_deviceSelect->count() - 1));
-    m_startCamera->setEnabled(!deviceNames.isEmpty() && !m_snapshot.connected);
-    logRequest(deviceNames.isEmpty() ? QStringLiteral("未发现相机")
-                                     : QStringLiteral("发现 %1 个相机").arg(deviceNames.size()));
+    refreshView();
+    if (m_source == CameraSource::Local)
+        logRequest(deviceNames.isEmpty() ? QStringLiteral("未发现相机")
+                                         : QStringLiteral("发现 %1 个相机").arg(deviceNames.size()));
 }
 
 void VisionPage::setCameraFrame(const QImage &frame)
@@ -263,8 +336,31 @@ void VisionPage::setCameraFrame(const QImage &frame)
     if (frame.isNull())
         return;
     m_lastImage = frame;
+    m_leftImage = frame;
+    m_rightImage = {};
     m_saveFrame->setEnabled(true);
     updatePreviewPixmap();
+}
+
+void VisionPage::setStereoFrame(const StereoCameraFrame &frame)
+{
+    if (frame.stitched.isNull()) return;
+    m_lastImage = frame.stitched;
+    m_leftImage = frame.left;
+    m_rightImage = frame.right;
+    m_saveFrame->setEnabled(true);
+    updatePreviewPixmap();
+}
+
+CameraControlRequest VisionPage::cameraRequest(CameraControlAction action) const
+{
+    CameraControlRequest request;
+    request.action = action;
+    request.source = m_source;
+    request.deviceIndex = m_deviceSelect->currentIndex();
+    request.host = m_cameraHost->text().trimmed();
+    request.port = static_cast<quint16>(m_cameraPort->value());
+    return request;
 }
 
 void VisionPage::showCameraError(const QString &message)
@@ -274,6 +370,8 @@ void VisionPage::showCameraError(const QString &message)
 
 bool VisionPage::eventFilter(QObject *watched, QEvent *event)
 {
+    if ((watched == m_preview || watched == m_rightPreview) && event->type() == QEvent::Resize)
+        updatePreviewPixmap();
     if (watched == qApp && event->type() == QEvent::ApplicationDeactivate)
         releaseManualControl();
     return QWidget::eventFilter(watched, event);
@@ -291,11 +389,18 @@ void VisionPage::resizeEvent(QResizeEvent *event)
     updatePreviewPixmap();
 }
 
+void VisionPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    updatePreviewPixmap();
+}
+
 void VisionPage::refreshView()
 {
     m_cameraDevice->setText(m_snapshot.cameraDevice);
     m_resolution->setText(m_snapshot.resolution);
-    m_frameRate->setText(m_snapshot.frameRate);
+    m_frameRate->setText(m_snapshot.nominalFrameRate.isEmpty() ? QStringLiteral("--")
+                                                             : m_snapshot.nominalFrameRate);
     m_liveFrameRate->setText(m_snapshot.frameRate);
     m_pixelFormat->setText(m_snapshot.pixelFormat);
     m_streamState->setText(m_snapshot.streamState);
@@ -304,18 +409,37 @@ void VisionPage::refreshView()
     m_nodeState->setText(m_snapshot.nodeState);
     m_processingMode->setText(m_snapshot.processingMode);
     m_modelsLoaded->setText(m_snapshot.modelsLoaded);
-    m_startCamera->setEnabled(!m_snapshot.connected && m_deviceSelect->count() > 0 &&
-                              m_deviceSelect->itemText(0) != QStringLiteral("未发现相机"));
-    m_stopCamera->setEnabled(m_snapshot.connected);
+    const bool active = m_snapshot.connected || m_snapshot.connectionRequested;
+    m_startCamera->setEnabled(!active && (m_source == CameraSource::RobotStereo ||
+        (m_deviceSelect->count() > 0 && m_deviceSelect->itemText(0) != QStringLiteral("未发现相机"))));
+    m_stopCamera->setEnabled(active);
+    m_endpointControls->setEnabled(!active);
+    m_deviceSelect->setEnabled(!active);
+    if (!m_snapshot.frameAvailable)
+    {
+        m_lastImage = {};
+        m_leftImage = {};
+        m_rightImage = {};
+        m_preview->setPixmap({});
+        m_rightPreview->setPixmap({});
+        m_preview->setText(m_snapshot.streamState);
+        m_rightPreview->setText(m_snapshot.streamState);
+        m_saveFrame->setEnabled(false);
+    }
 }
 
 void VisionPage::updatePreviewPixmap()
 {
-    if (m_lastImage.isNull() || m_preview == nullptr)
+    if (!isVisible() || m_leftImage.isNull() || m_preview == nullptr)
         return;
-    const QSize targetSize = m_preview->contentsRect().size() - QSize(12, 12);
-    m_preview->setPixmap(QPixmap::fromImage(m_lastImage).scaled(
-        targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    const auto render = [](QLabel *preview, const QImage &image) {
+        const QSize targetSize = preview->contentsRect().size() - QSize(12, 12);
+        if (!image.isNull() && targetSize.width() > 0 && targetSize.height() > 0)
+            preview->setPixmap(QPixmap::fromImage(image).scaled(
+                targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    };
+    render(m_preview, m_leftImage);
+    render(m_rightPreview, m_rightImage);
 }
 
 void VisionPage::saveCurrentFrame()

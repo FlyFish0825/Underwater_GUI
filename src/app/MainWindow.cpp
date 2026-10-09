@@ -3,6 +3,7 @@
 #include "communication/protocol/ObserverMotorProtocol.h"
 #include "data/recording/ResearchDataRecorder.h"
 #include "data/services/CameraCaptureService.h"
+#include "data/services/StereoCameraService.h"
 #include "data/services/ObserverMotorDataService.h"
 #include "pages/dashboard/DashboardPage.h"
 #include "pages/firmware/FirmwarePage.h"
@@ -346,7 +347,7 @@ QLabel *statusDotLabel(const QString &text, const QString &color)
 namespace rov
 {
 
-MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
+MainWindow::MainWindow(QWidget *parent, bool autoConnectDevices) : QMainWindow(parent)
 {
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setWindowTitle(QStringLiteral("水下机器人上位机"));
@@ -470,7 +471,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     // 避免 QStackedWidget 在滚动容器重新挂载页面时自动改变索引。
     auto *dashboard = new DashboardPage;
     auto *motorDebug = new MotorDebugPage;
-    auto *firmware = new FirmwarePage;
+    auto *firmware = new FirmwarePage(nullptr, autoConnectDevices);
     auto *manipulator = new ManipulatorPage;
     auto *vision = new VisionPage;
     auto *settings = new SettingsPlaceholder(firmware->connectionBar());
@@ -514,6 +515,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     // 不直接接触 USB CDC、AA55 或 CAN ID。
     m_motorData = new ObserverMotorDataService(this);
     m_camera = new CameraCaptureService(this);
+    m_stereoCamera = new StereoCameraService(this);
     m_recorder = new ResearchDataRecorder(this);
     auto *communication = firmware->communicationService();
     auto *sensorData = new SensorDataService(this);
@@ -912,6 +914,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(vision, &VisionPage::cameraControlRequested, this,
             [this](const CameraControlRequest &request)
             {
+                if (request.source == CameraSource::RobotStereo)
+                {
+                    if (request.action == CameraControlAction::Start)
+                        m_stereoCamera->startCamera(request.host, request.port);
+                    else if (request.action == CameraControlAction::Stop)
+                        m_stereoCamera->stopCamera();
+                    return;
+                }
                 switch (request.action)
                 {
                 case CameraControlAction::RefreshDevices:
@@ -928,11 +938,34 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(m_camera, &CameraCaptureService::devicesChanged, vision,
             &VisionPage::setAvailableCameras);
     connect(m_camera, &CameraCaptureService::snapshotChanged, vision,
-            &VisionPage::setSnapshot);
-    connect(m_camera, &CameraCaptureService::frameReady, vision, &VisionPage::setCameraFrame);
+            [this, vision](const VisionSnapshot &snapshot) {
+                if (m_cameraSource == CameraSource::Local) vision->setSnapshot(snapshot);
+            });
+    connect(m_camera, &CameraCaptureService::frameReady, vision, [this, vision](const QImage &frame) {
+        if (m_cameraSource == CameraSource::Local) vision->setCameraFrame(frame);
+    });
     connect(m_camera, &CameraCaptureService::errorOccurred, vision,
-            &VisionPage::showCameraError);
-    QTimer::singleShot(0, m_camera, &CameraCaptureService::refreshDevices);
+            [this, vision](const QString &error) {
+                if (m_cameraSource == CameraSource::Local) vision->showCameraError(error);
+            });
+    connect(m_stereoCamera, &StereoCameraService::snapshotChanged, vision,
+            [this, vision](const VisionSnapshot &snapshot) {
+                if (m_cameraSource == CameraSource::RobotStereo) vision->setSnapshot(snapshot);
+            });
+    connect(m_stereoCamera, &StereoCameraService::frameReady, vision,
+            [this, vision](const StereoCameraFrame &frame) {
+                if (m_cameraSource == CameraSource::RobotStereo) vision->setStereoFrame(frame);
+            });
+    connect(m_stereoCamera, &StereoCameraService::errorOccurred, vision,
+            [this, vision](const QString &error) {
+                if (m_cameraSource == CameraSource::RobotStereo) vision->showCameraError(error);
+            });
+    connect(vision, &VisionPage::cameraSourceRequested, this, [this](CameraSource source) {
+        m_cameraSource = source;
+        m_stereoCamera->stopCamera();
+        m_camera->stopCamera();
+        if (source == CameraSource::Local) m_camera->refreshDevices();
+    });
 
     updatePageViewport();
     QTimer::singleShot(0, this, [this]() { updatePageViewport(); });
@@ -948,6 +981,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     if (m_camera != nullptr)
         m_camera->stopCamera();
+    if (m_stereoCamera != nullptr)
+        m_stereoCamera->stopCamera();
     if (m_recorder != nullptr)
         m_recorder->stopRecording();
     if (auto *firmware = findChild<FirmwarePage *>())
