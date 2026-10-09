@@ -185,9 +185,11 @@ SensorPanel::SensorPanel(QWidget *parent) : QWidget(parent)
     auto *dg = new QGridLayout;
     // The operator has confirmed this vehicle's physical probe: there is no model selector.
     auto *model = makeLabel(QStringLiteral("MS5837-02BA（固定）"), QStringLiteral("bodyValue"));
+    model->setObjectName(QStringLiteral("sensor2Param0105Editor"));
     model->setMinimumWidth(110);
-    model->setToolTip(QStringLiteral("本机探头固定为 02BA（型号值 2）。应用只写入这个型号；设备回读仍单独显示。"));
-    addParameter(dg, 0, kDepthSensor, 0x0105, QStringLiteral("探头型号"), model, 11);
+    model->setToolTip(QStringLiteral("MS5837-02BA 固定型号，不提供型号选择、确认或写入。"));
+    dg->addWidget(makeLabel(QStringLiteral("探头型号")), 0, 0);
+    dg->addWidget(model, 0, 1, 1, 4);
     m_depthRate = integerEditor(1, depth02baMaxRateHz(4096), 25);
     addParameter(dg, 1, kDepthSensor, 0x0001, QStringLiteral("输出频率 / Hz"), m_depthRate, 11);
     auto *osr = new AppComboBox; m_depthOsr = osr;
@@ -219,7 +221,7 @@ void SensorPanel::updateDepthRateLimit()
     m_depthRate->setToolTip(limit);
     m_depthSamplingNote->setText(limit
         + (previous > maximum ? QStringLiteral("；待应用频率已自动降到 %1 Hz").arg(maximum) : QString())
-        + QStringLiteral("。OSR/频率为一组，任一“应用组合”均提交两项；自动排序并逐步确认。选择不发命令，反馈列才是设备值。启动无零点时默认当前有效压力为水面；已有零点保留，可手动重新校准。"));
+        + QStringLiteral("。OSR/频率为一组，任一“应用组合”均提交两项；自动排序并逐步确认。选择不发命令，反馈列才是设备值。保留设备已有水面参考；仅在确有需要、探头位于水面时手动采集零点。"));
 }
 
 bool SensorPanel::confirmAction(const QString &message)
@@ -276,7 +278,6 @@ void SensorPanel::addParameter(QGridLayout *grid, int row, quint8 target, quint1
         emit requestIssued(r);
     });
     connect(write, &QPushButton::clicked, this, [this, target, id, editor, name, samplingPair]() {
-        if (id == 0x0105 && !confirmAction(QStringLiteral("将设备型号设为固定的 MS5837-02BA（2）？\n配置仅保存在 RAM；若此前设备配置为其他型号，原水面零点会失效。"))) return;
         if (id == 0x0103 && !confirmAction(QStringLiteral("应用“%1”？\n请核对水面基准；配置仅保存在 RAM。").arg(name))) return;
         SensorRequest r; r.target = target; r.operation = SensorOperation::SetParameter; r.parameterId = id;
         if (samplingPair)
@@ -286,7 +287,6 @@ void SensorPanel::addParameter(QGridLayout *grid, int row, quint8 target, quint1
             r.samplingRateHz = quint16(m_depthRate->value());
             r.value = id == 0x0001 ? r.samplingRateHz : r.samplingOsr;
         }
-        else if (target == kDepthSensor && id == 0x0105) r.value = 2;
         else if (auto *combo = qobject_cast<QComboBox *>(editor)) r.value = combo->currentData();
         else if (auto *spin = qobject_cast<QSpinBox *>(editor)) { spin->interpretText(); r.value = spin->value(); }
         else if (auto *decimal = qobject_cast<QDoubleSpinBox *>(editor)) r.value = decimal->value();
@@ -303,9 +303,7 @@ void SensorPanel::setSnapshot(const SensorSnapshot &s)
                                      : QStringLiteral("网关未连接，请在设置页连接 USB CDC"));
     const auto &i = s.devices[0]; const auto &d = s.devices[1];
     m_imuInfo->setText(deviceInfo(i) + QStringLiteral("   |   型号不可读，不推断六/九轴"));
-    const QString model = d.model == 2 ? QStringLiteral("MS5837-02BA")
-                        : d.model == 30 ? QStringLiteral("MS5837-30BA") : QStringLiteral("未确认");
-    m_depthInfo->setText(deviceInfo(d) + (d.infoKnown ? QStringLiteral("   |   型号：%1").arg(model) : QString()));
+    m_depthInfo->setText(deviceInfo(d) + QStringLiteral("   |   固定型号：MS5837-02BA"));
     m_imuStatus->setText((i.status & SensorStatus::PinBlocked)
         ? QStringLiteral("%1 · PA9 配置发送受保护/占用（PIN_BLOCKED），只读与接收可用 · %2 · 接收 %3 / 错误 %4")
             .arg(i.online ? QStringLiteral("IMU 接收在线") : QStringLiteral("IMU 尚无有效接收"), ageText(s.rawAgeMs))
@@ -324,11 +322,11 @@ void SensorPanel::setSnapshot(const SensorSnapshot &s)
     m_imuCommand->setToolTip(i.lastRequestHex.isEmpty() ? QStringLiteral("尚无命令报文")
         : QStringLiteral("最近请求编码（提交帧，不代表发送成功）：\n%1\n匹配回复 RX：\n%2").arg(i.lastRequestHex,
             i.lastReplyHex.isEmpty() ? QStringLiteral("尚无匹配回复") : i.lastReplyHex));
-    m_depthStatus->setText(QStringLiteral("%1 · PROM %2 · 型号%3 · 零点%4 · %5 · 错误 %6")
+    m_depthStatus->setText(QStringLiteral("%1 · PROM %2 · 固定 02BA · 水面参考 %3 · %4 · 错误 %5")
         .arg(d.online ? QStringLiteral("I2C 设备在线") : QStringLiteral("设备离线 / 尚无数据"),
              (d.status & SensorStatus::PromValid) ? QStringLiteral("已校验") : QStringLiteral("未通过"),
-             (d.status & SensorStatus::ModelConfirmed) ? QStringLiteral("已确认") : QStringLiteral("未确认"),
-             s.zeroValid ? QStringLiteral("已设定") : QStringLiteral("未设定"), ageText(s.depthAgeMs)).arg(d.errors));
+             s.zeroValid ? QStringLiteral("已设定") : QStringLiteral("未设定"),
+             ageText(s.depthAgeMs)).arg(d.errors));
     QString diagnostics;
     if (d.statusKnown)
         diagnostics = QStringLiteral("\n完成采样 %1 / 良好 %2 · 设备%3")
@@ -365,6 +363,10 @@ void SensorPanel::setSnapshot(const SensorSnapshot &s)
     displayValue(m_depthTable, 5, adcValid, s.rawAdcD1, 0); displayValue(m_depthTable, 6, adcValid, s.rawAdcD2, 0);
     for (const auto &c : m_controls)
     {
+        if (c.button->isHidden()) {
+            c.button->setEnabled(false);
+            continue;
+        }
         const auto &device = s.devices.at(c.target - 1);
         bool enabled = s.connected && !device.pending;
         if (c.capability >= 0) enabled = enabled && device.infoKnown && (device.capabilities & (1U << c.capability));

@@ -36,6 +36,7 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QMessageBox>
+#include <QSignalBlocker>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -627,9 +628,9 @@ FirmwarePage::FirmwarePage(QWidget *parent, bool autoConnect) : QWidget(parent)
     m_tcpPort->setRange(1, 65535);
     m_tcpPort->setValue(connectionSettings.value(QStringLiteral("communication/tcpPort"), 9000).toInt());
     tcpRow->addWidget(m_tcpPort);
-    m_tcpAllowWrites = new QCheckBox(QStringLiteral("允许发送"));
+    m_tcpAllowWrites = new QCheckBox(QStringLiteral("上位机控制"));
     m_tcpAllowWrites->setObjectName(QStringLiteral("nanoAllowWrites"));
-    m_tcpAllowWrites->setToolTip(QStringLiteral("默认只读；发送命令还需要 Nano 服务开启 tcp_allow_tx"));
+    m_tcpAllowWrites->setToolTip(QStringLiteral("勾选申请控制权；Nano 正在控制时，请在设置中明确接管"));
     tcpRow->addWidget(m_tcpAllowWrites);
     m_tcpConnect = makeButton(QStringLiteral("连接"), QStringLiteral("primaryButton"));
     m_tcpConnect->setObjectName(QStringLiteral("nanoConnectButton"));
@@ -659,6 +660,7 @@ FirmwarePage::FirmwarePage(QWidget *parent, bool autoConnect) : QWidget(parent)
                 m_tcpPanel->setVisible(mode == 1); m_serialDeviceCombo->setVisible(mode == 0);
                 m_tcpConnect->setText(QStringLiteral("连接"));
                 m_tcpHost->setEnabled(true); m_tcpPort->setEnabled(true); m_tcpAllowWrites->setEnabled(true);
+                { const QSignalBlocker blocker(m_tcpAllowWrites); m_tcpAllowWrites->setChecked(false); }
                 m_serialStatus->setText(connectionStatusText(false, mode == 1 ? QStringLiteral("填写 Nano 地址后连接") : QStringLiteral("USB 设备扫描中")));
                 if (mode == 0 && autoConnect) refreshSerialDevices();
             });
@@ -673,13 +675,16 @@ FirmwarePage::FirmwarePage(QWidget *parent, bool autoConnect) : QWidget(parent)
         }
         const QString host = m_tcpHost->text().trimmed();
         const auto port = static_cast<quint16>(m_tcpPort->value());
-        if (m_communication->openTcp(host, port, m_tcpAllowWrites->isChecked()))
+        if (m_communication->openTcp(host, port, false))
         {
             QSettings settings; settings.setValue(QStringLiteral("communication/tcpHost"), host);
             settings.setValue(QStringLiteral("communication/tcpPort"), port);
             m_tcpConnect->setText(QStringLiteral("断开"));
-            m_tcpHost->setEnabled(false); m_tcpPort->setEnabled(false); m_tcpAllowWrites->setEnabled(false);
+            m_tcpHost->setEnabled(false); m_tcpPort->setEnabled(false); m_tcpAllowWrites->setEnabled(true);
         }
+    });
+    connect(m_tcpAllowWrites, &QCheckBox::clicked, this, [this](const bool enabled) {
+        emit tcpControlRequested(enabled);
     });
 
     auto *multiCard = new CardWidget(QStringLiteral("7+1 多节点并行升级配置"), IconKind::Firmware);
@@ -1962,6 +1967,19 @@ bool FirmwarePage::confirmDangerousOperation(const BootCommand command, const qu
 QWidget *FirmwarePage::connectionBar() const
 {
     return m_connectionBar;
+}
+
+void FirmwarePage::setTcpControlState(const bool connected, const QString &owner, const bool owned)
+{
+    if (m_tcpAllowWrites == nullptr)
+        return;
+    const QSignalBlocker blocker(m_tcpAllowWrites);
+    m_tcpAllowWrites->setChecked(owned);
+    m_tcpAllowWrites->setEnabled(m_connectionMode != nullptr
+        && m_connectionMode->currentIndex() == 1 && m_communication != nullptr
+        && m_communication->isTcpRequested() && (connected || owned));
+    m_tcpAllowWrites->setToolTip(owned ? QStringLiteral("当前上位机独占机器人控制权；取消勾选即可释放")
+        : QStringLiteral("当前控制者：%1。占用时请在设置中明确接管控制权").arg(owner));
 }
 
 BootloaderCommunicationService *FirmwarePage::communicationService() const

@@ -49,6 +49,7 @@ class FirmwarePage final : public QWidget
 
     // 连接栏由主窗口统一放置，避免把“仅连接检查”混在 Bootloader 页面内容中。
     QWidget *connectionBar() const;
+    void setTcpControlState(bool connected, const QString &owner, bool owned);
 
     // 供主窗口的数据服务订阅同一条 USB CDC → AA55 CAN 网关帧流。
     BootloaderCommunicationService *communicationService() const;
@@ -62,6 +63,7 @@ class FirmwarePage final : public QWidget
     void verifyRequested();
     // 高级命令窗口订阅此信号，实时显示与主页面一致的调试日志。
     void debugLogAppended(const QString &message);
+    void tcpControlRequested(bool enabled);
 
   protected:
     void resizeEvent(QResizeEvent *event) override;

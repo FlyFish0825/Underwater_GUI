@@ -64,6 +64,8 @@ class MainWindow final : public QMainWindow
     int m_debugHistoryLimit = 500;
     quint16 m_motorControlSequence = 0;
     bool m_screenSignalConnected = false;
+    QString m_lastTcpControlOwner;
+    bool m_controlBusyPopupShown = false;
 };
 
 } // namespace rov

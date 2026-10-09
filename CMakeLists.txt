@@ -96,6 +96,8 @@ add_library(rov_communication STATIC
     src/communication/transport/ByteTransport.h
     src/communication/transport/TcpTransport.cpp
     src/communication/transport/TcpTransport.h
+    src/communication/transport/TcpControlTransport.cpp
+    src/communication/transport/TcpControlTransport.h
 )
 
 add_library(rov_firmware_history STATIC
@@ -288,6 +290,12 @@ if (BUILD_TESTING)
     add_executable(rov_tcp_transport_test EXCLUDE_FROM_ALL tests/TcpTransportTest.cpp)
     target_link_libraries(rov_tcp_transport_test PRIVATE rov_communication Qt5::Network)
     add_test(NAME rov_tcp_transport_test COMMAND rov_tcp_transport_test)
+    add_executable(rov_tcp_control_transport_test EXCLUDE_FROM_ALL tests/TcpControlTransportTest.cpp)
+    target_link_libraries(rov_tcp_control_transport_test PRIVATE rov_communication Qt5::Network)
+    add_test(NAME rov_tcp_control_transport_test COMMAND rov_tcp_control_transport_test)
+    add_executable(rov_tcp_control_settings_test EXCLUDE_FROM_ALL tests/TcpControlSettingsTest.cpp resources/resources.qrc)
+    target_link_libraries(rov_tcp_control_settings_test PRIVATE rov_page_settings)
+    add_test(NAME rov_tcp_control_settings_test COMMAND rov_tcp_control_settings_test -platform offscreen)
     add_executable(rov_nano_connection_page_test EXCLUDE_FROM_ALL tests/NanoConnectionPageTest.cpp resources/resources.qrc)
     target_link_libraries(rov_nano_connection_page_test PRIVATE rov_page_firmware)
     add_test(NAME rov_nano_connection_page_test COMMAND rov_nano_connection_page_test -platform offscreen)

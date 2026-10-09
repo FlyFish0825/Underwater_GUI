@@ -112,7 +112,7 @@ int main(int argc,char **argv)
     s.depthRawValid=true; page->setSensorSnapshot(s);
     CHECK(!zero->isEnabled()&&depthValue->text()==QStringLiteral("--"));
     CHECK(dep->item(0,1)->text()==QStringLiteral("--")&&dep->item(5,1)->text()==QStringLiteral("12345"));
-    CHECK(sources->text().contains(QStringLiteral("型号未确认")));
+    CHECK(sources->text().contains(QStringLiteral("压力配置未就绪")));
     s.devices[1].status|=SensorStatus::ModelConfirmed; page->setSensorSnapshot(s);
     CHECK(sources->text().contains(QStringLiteral("水面零点")));
     s.pressureValid=s.temperatureValid=s.depthValid=s.zeroValid=s.surfacePressureValid=true;
@@ -175,7 +175,7 @@ int main(int argc,char **argv)
     if(collapse) collapse->click();
     CHECK(panel->isHidden()&&!toggle->isChecked()&&requests==1);
 
-    // Fixed probe model uses the same row and typed request, without an editable selector.
+    // The fixed probe model is read-only; no model confirmation or write control is exposed.
     {
         DashboardPage fixedPage;
         SensorSnapshot live; live.connected = true;
@@ -189,25 +189,17 @@ int main(int argc,char **argv)
         auto *commandLabel = fixedPage.findChild<QLabel *>(QStringLiteral("depthCommandResult"));
         CHECK(fixedModel && fixedModel->text() == QStringLiteral("MS5837-02BA（固定）"));
         CHECK(!fixedPage.findChild<QComboBox *>(QStringLiteral("sensor2Param0105Editor")));
-        CHECK(fixedPage.findChild<QLabel *>(QStringLiteral("depthDeviceInfo"))->text().contains(QStringLiteral("MS5837-30BA")));
+        CHECK(fixedPage.findChild<QLabel *>(QStringLiteral("depthDeviceInfo"))->text().contains(QStringLiteral("MS5837-02BA")));
         CHECK(commandLabel && commandLabel->toolTip().contains(live.devices[1].lastRequestHex));
         CHECK(commandLabel && commandLabel->toolTip().contains(live.devices[1].lastReplyHex));
-        int modelRequests = 0; SensorRequest fixedRequest;
+        int modelRequests = 0;
         QObject::connect(&fixedPage, &DashboardPage::sensorRequestIssued,
-                         [&](const SensorRequest &r) { ++modelRequests; fixedRequest = r; });
-        CHECK(modelRequests == 0 && applyModel && applyModel->isEnabled());
-        if (applyModel) {
-            QTimer::singleShot(0, []() {
-                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
-                    box->done(QMessageBox::Yes);
-            });
-            applyModel->click();
-        }
-        CHECK(modelRequests == 1 && fixedRequest.target == kDepthSensor);
-        CHECK(fixedRequest.operation == SensorOperation::SetParameter && fixedRequest.parameterId == 0x0105);
-        CHECK(fixedRequest.value.toInt() == 2);
+                         [&](const SensorRequest &) { ++modelRequests; });
+        CHECK(modelRequests == 0 && !applyModel);
+        if (applyModel) applyModel->click();
+        CHECK(modelRequests == 0);
         live.devices[1].pending = true; fixedPage.setSensorSnapshot(live);
-        CHECK(!applyModel->isEnabled() && fixedModel->text() == QStringLiteral("MS5837-02BA（固定）"));
+        CHECK(fixedModel->text() == QStringLiteral("MS5837-02BA（固定）"));
     }
 
 

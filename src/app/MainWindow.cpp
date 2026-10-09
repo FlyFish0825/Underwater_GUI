@@ -518,8 +518,63 @@ MainWindow::MainWindow(QWidget *parent, bool autoConnectDevices) : QMainWindow(p
     m_stereoCamera = new StereoCameraService(this);
     m_recorder = new ResearchDataRecorder(this);
     auto *communication = firmware->communicationService();
+    connect(communication, &BootloaderCommunicationService::tcpControlStateChanged, settings,
+            [firmware, settings](const bool connected, const QString &owner, const bool owned,
+                                 const QString &detail) {
+                settings->setTcpControlState(connected, owner, owned, detail);
+                firmware->setTcpControlState(connected, owner, owned);
+            });
+    connect(communication, &BootloaderCommunicationService::tcpControlStateChanged, this,
+            [this](const bool, const QString &owner, const bool, const QString &) {
+                if (m_lastTcpControlOwner != owner) {
+                    m_lastTcpControlOwner = owner;
+                    m_controlBusyPopupShown = false;
+                }
+            });
+    const auto requestTcpControl = [communication, settings](const bool takeover) {
+        if (!communication->isTcpRequested()) {
+            settings->showTcpControlWarning(QStringLiteral("无法申请控制权"),
+                QStringLiteral("请先连接 Nano TCP，再申请或接管机器人控制权。"));
+            return;
+        }
+        if (!communication->requestTcpControl(takeover))
+            settings->showTcpControlWarning(QStringLiteral("控制权服务未连接"),
+                QStringLiteral("请检查 Nano 的 TCP 控制管理端口 9002 是否已启动。"));
+    };
+    connect(firmware, &FirmwarePage::tcpControlRequested, this,
+            [communication, settings, requestTcpControl](const bool enabled) {
+                if (enabled) requestTcpControl(false);
+                else if (!communication->releaseTcpControl() && communication->tcpControlConnected())
+                    settings->setTcpControlState(true, communication->tcpControlOwner(), false,
+                                                 QStringLiteral("本上位机未持有控制权"));
+            });
+    connect(settings, &SettingsPlaceholder::tcpControlClaimRequested, this,
+            [requestTcpControl]() { requestTcpControl(false); });
+    connect(settings, &SettingsPlaceholder::tcpControlTakeoverRequested, this,
+            [requestTcpControl]() { requestTcpControl(true); });
+    connect(settings, &SettingsPlaceholder::tcpControlReleaseRequested, this,
+            [communication, settings]() {
+                if (!communication->releaseTcpControl())
+                    settings->showTcpControlWarning(QStringLiteral("无法释放控制权"),
+                        QStringLiteral("当前上位机没有已确认的控制权。"));
+            });
+    connect(communication, &BootloaderCommunicationService::tcpControlRequestRejected, settings,
+            [this, settings](const QString &owner, const QString &detail) {
+                m_controlBusyPopupShown = true;
+                settings->showTcpControlWarning(QStringLiteral("机器人控制权已被占用"),
+                    QStringLiteral("当前控制者：%1。%2\n如需由上位机发送串口数据或控制电机，请在设置中明确点击“接管控制权”。")
+                        .arg(owner, detail));
+            });
+    connect(communication, &BootloaderCommunicationService::errorOccurred, this,
+            [this, settings](const QString &message) {
+                if (!message.contains(QStringLiteral("控制权"))
+                    || m_controlBusyPopupShown)
+                    return;
+                m_controlBusyPopupShown = true;
+                settings->showTcpControlWarning(QStringLiteral("无法发送串口数据"),
+                    message + QStringLiteral("\n请到设置页申请控制权，或明确接管。"));
+            });
     auto *sensorData = new SensorDataService(this);
-    sensorData->setDepthStartupEnabled(true); // This vehicle boots at the surface by operator policy.
     sensorData->setSender([communication](const SensorFrame &frame) {
         return communication != nullptr && communication->sendSensorFrame(frame);
     });

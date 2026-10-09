@@ -125,7 +125,7 @@ bool makeSensorRequestPayload(const SensorRequest &r, QByteArray &p, QString &er
     case 0x0003: if (!depth) type = 2; break;
     case 0x0101: if (depth) type = 4; break;
     case 0x0102: case 0x0103: case 0x0104: if (depth) type = 7; break;
-    case 0x0105: if (depth) type = 2; break;
+    case 0x0105: if (depth && r.operation == SensorOperation::GetParameter) type = 2; break;
     default: break;
     }
     if (!type) return fail(QStringLiteral("该传感器不支持此参数"));
@@ -144,7 +144,6 @@ bool makeSensorRequestPayload(const SensorRequest &r, QByteArray &p, QString &er
     case 0x0102: valid = v >= 900 && v <= 1300; break;
     case 0x0103: valid = v >= 10000 && v <= 200000; break;
     case 0x0104: valid = v >= 0 && v <= double(0.99f); break;
-    case 0x0105: valid = v == 0 || v == 2 || v == 30; break;
     default: break;
     }
     if (!valid) return fail(QStringLiteral("参数超出允许范围"));

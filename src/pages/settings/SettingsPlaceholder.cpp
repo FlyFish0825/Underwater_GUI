@@ -105,6 +105,36 @@ SettingsPlaceholder::SettingsPlaceholder(QWidget *connectionBar, QWidget *parent
                      &SettingsPlaceholder::requestSelectedCanBitrate);
     root->addWidget(communicationCard);
 
+    auto *controlCard = new CardWidget(QStringLiteral("机器人控制权 · TCP 串口与电机互斥"),
+                                       IconKind::Settings);
+    controlCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    auto *controlRow = new QHBoxLayout;
+    controlRow->setContentsMargins(0, 0, 0, 0);
+    controlRow->setSpacing(10);
+    m_tcpControlStatus = makeLabel(QStringLiteral("控制管理服务未连接"), QStringLiteral("mutedLabel"));
+    m_tcpControlStatus->setObjectName(QStringLiteral("tcpControlStatus"));
+    m_tcpControlStatus->setWordWrap(true);
+    controlRow->addWidget(m_tcpControlStatus, 1);
+    m_tcpClaimButton = makeButton(QStringLiteral("申请控制权"), QStringLiteral("softButton"));
+    m_tcpClaimButton->setObjectName(QStringLiteral("tcpClaimControlButton"));
+    controlRow->addWidget(m_tcpClaimButton);
+    m_tcpTakeoverButton = makeButton(QStringLiteral("接管控制权"), QStringLiteral("primaryButton"));
+    m_tcpTakeoverButton->setObjectName(QStringLiteral("tcpTakeoverControlButton"));
+    controlRow->addWidget(m_tcpTakeoverButton);
+    m_tcpReleaseButton = makeButton(QStringLiteral("释放控制权"), QStringLiteral("dangerButton"));
+    m_tcpReleaseButton->setObjectName(QStringLiteral("tcpReleaseControlButton"));
+    controlRow->addWidget(m_tcpReleaseButton);
+    controlCard->contentLayout()->addLayout(controlRow);
+    connect(m_tcpClaimButton, &QPushButton::clicked, this,
+            &SettingsPlaceholder::tcpControlClaimRequested);
+    connect(m_tcpTakeoverButton, &QPushButton::clicked, this,
+            &SettingsPlaceholder::tcpControlTakeoverRequested);
+    connect(m_tcpReleaseButton, &QPushButton::clicked, this,
+            &SettingsPlaceholder::tcpControlReleaseRequested);
+    setTcpControlState(false, QStringLiteral("UNKNOWN"), false,
+                        QStringLiteral("控制管理服务未连接"));
+    root->addWidget(controlCard);
+
     auto *historyCard = new CardWidget(QStringLiteral("历史记录管理"), IconKind::List);
     historyCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     historyCard->contentLayout()->setContentsMargins(14, 8, 14, 9);
@@ -130,6 +160,36 @@ SettingsPlaceholder::SettingsPlaceholder(QWidget *connectionBar, QWidget *parent
 
     root->addWidget(historyCard);
     root->addStretch();
+}
+
+void SettingsPlaceholder::setTcpControlState(const bool connected, const QString &owner,
+                                             const bool owned, const QString &detail)
+{
+    m_tcpControlConnected = connected;
+    m_tcpControlOwned = owned;
+    const QString text = detail.isEmpty()
+        ? QStringLiteral("%1：%2").arg(connected ? QStringLiteral("控制管理已连接")
+                                                  : QStringLiteral("控制管理未连接"), owner)
+        : detail;
+    m_tcpControlStatus->setText(text);
+    m_tcpControlStatus->setStyleSheet(QStringLiteral("color: %1; font-weight: 600;")
+        .arg(owned ? QStringLiteral("#078d4a")
+                   : connected ? QStringLiteral("#566b86") : QStringLiteral("#8a8f98")));
+    m_tcpClaimButton->setEnabled(connected && !owned);
+    m_tcpTakeoverButton->setEnabled(connected && !owned);
+    m_tcpReleaseButton->setEnabled(connected && owned);
+}
+
+void SettingsPlaceholder::showTcpControlWarning(const QString &title, const QString &message)
+{
+    QMessageBox warning;
+    warning.setWindowTitle(title);
+    warning.setText(message);
+    warning.setIcon(QMessageBox::Warning);
+    warning.setStandardButtons(QMessageBox::Ok);
+    warning.setWindowFlag(Qt::Window, true);
+    warning.setWindowModality(Qt::ApplicationModal);
+    warning.exec();
 }
 
 SettingsPlaceholder::~SettingsPlaceholder()

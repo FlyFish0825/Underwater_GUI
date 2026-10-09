@@ -29,7 +29,8 @@ bool isAllowedFlowFlags(const quint8 flags)
 } // namespace
 
 BootloaderCommunicationService::BootloaderCommunicationService(QObject *parent)
-    : QObject(parent), m_serial(new SerialTransport(this)), m_tcp(new TcpTransport(this)), m_flowTimeout(this),
+    : QObject(parent), m_serial(new SerialTransport(this)), m_tcp(new TcpTransport(this)),
+      m_tcpControl(new TcpControlTransport(this)), m_flowTimeout(this),
       m_canBitrateTimeout(this)
 {
     m_transport = m_serial;
@@ -64,6 +65,21 @@ BootloaderCommunicationService::BootloaderCommunicationService(QObject *parent)
         });
     }
     connect(m_tcp, &TcpTransport::statusChanged, this, &BootloaderCommunicationService::connectionStatusChanged);
+    connect(m_tcpControl, &TcpControlTransport::stateChanged, this,
+            [this](const bool connected, const QString &owner, const bool owned, const QString &message) {
+                Q_UNUSED(connected)
+                const QString token = owned ? m_tcpControl->leaseToken() : QString();
+                m_tcp->setOwnerToken(token);
+                m_writesAllowed = owned;
+                emit tcpControlStateChanged(connected, owner, owned, message);
+            });
+    connect(m_tcpControl, &TcpControlTransport::requestRejected, this,
+            &BootloaderCommunicationService::tcpControlRequestRejected);
+    connect(m_tcpControl, &TcpControlTransport::leaseTokenChanged, this,
+            [this](const QString &token) {
+                m_tcp->setOwnerToken(token);
+                m_writesAllowed = !token.isEmpty();
+            });
 }
 
 QVector<SerialDeviceInfo> BootloaderCommunicationService::enumerateDevices() const
@@ -77,13 +93,31 @@ bool BootloaderCommunicationService::open(const SerialDeviceInfo &device)
     resetSession(); return m_serial->open(device);
 }
 
-bool BootloaderCommunicationService::openTcp(const QString &host, quint16 port, bool allowWrites)
+bool BootloaderCommunicationService::openTcp(const QString &host, const quint16 port,
+                                              const bool allowWrites, const quint16 controlPort)
 {
-    close(); m_transport = m_tcp; m_writesAllowed = allowWrites;
-    resetSession(); return m_tcp->open(host, port, allowWrites);
+    Q_UNUSED(allowWrites)
+    close(); m_transport = m_tcp; m_writesAllowed = false;
+    resetSession();
+    m_tcpControl->open(host, controlPort);
+    return m_tcp->open(host, port, false);
+}
+bool BootloaderCommunicationService::requestTcpControl(const bool takeover)
+{
+    return m_tcpControl->requestControl(takeover);
+}
+bool BootloaderCommunicationService::releaseTcpControl()
+{
+    return m_tcpControl->releaseControl();
 }
 bool BootloaderCommunicationService::isTcpRequested() const { return m_tcp->connectionRequested(); }
-bool BootloaderCommunicationService::writesAllowed() const { return isOpen() && m_writesAllowed; }
+bool BootloaderCommunicationService::writesAllowed() const
+{
+    if (!isOpen()) return false;
+    return m_transport == m_tcp ? m_writesAllowed && m_tcpControl->ownsControl() : m_writesAllowed;
+}
+bool BootloaderCommunicationService::tcpControlConnected() const { return m_tcpControl->isConnected(); }
+QString BootloaderCommunicationService::tcpControlOwner() const { return m_tcpControl->owner(); }
 
 void BootloaderCommunicationService::resetSession()
 {
@@ -109,6 +143,9 @@ void BootloaderCommunicationService::close()
                                QStringLiteral("串口关闭，CAN 速率配置已取消"));
     }
     m_transport->close();
+    if (m_tcpControl->ownsControl())
+        m_tcpControl->releaseControl();
+    m_tcpControl->close();
 }
 
 bool BootloaderCommunicationService::isOpen() const
@@ -119,7 +156,13 @@ bool BootloaderCommunicationService::isOpen() const
 bool BootloaderCommunicationService::sendSensorFrame(const SensorFrame &frame)
 {
     // Sensor configuration never competes with firmware block/control traffic.
-    if (!writesAllowed() || isFlowTransferActive() || m_canBitratePending)
+    if (!writesAllowed())
+    {
+        const QString reason = writeBlockReason();
+        if (!reason.isEmpty()) emit errorOccurred(reason);
+        return false;
+    }
+    if (isFlowTransferActive() || m_canBitratePending)
         return false;
     const QByteArray packet = encodeSensorFrame(frame);
     return !packet.isEmpty() && m_transport->writeBytes(packet);
@@ -127,7 +170,12 @@ bool BootloaderCommunicationService::sendSensorFrame(const SensorFrame &frame)
 
 bool BootloaderCommunicationService::sendCanFrame(const CanGatewayFrame &frame)
 {
-    if (!writesAllowed()) return false;
+    if (!writesAllowed())
+    {
+        const QString reason = writeBlockReason();
+        if (!reason.isEmpty()) emit errorOccurred(reason);
+        return false;
+    }
     if (m_canBitratePending)
     {
         emit errorOccurred(QStringLiteral("CAN 速率配置等待回复期间不能发送普通 CAN 帧"));
@@ -143,6 +191,38 @@ bool BootloaderCommunicationService::sendCanFrame(const CanGatewayFrame &frame)
     if (written)
         emit frameSent(frame);
     return written;
+}
+
+bool BootloaderCommunicationService::sendRawBytes(const QByteArray &bytes)
+{
+    if (bytes.isEmpty() || bytes.size() > 256 * 1024) {
+        emit errorOccurred(QStringLiteral("原始串口数据为空或超过 256 KiB，已拒绝"));
+        return false;
+    }
+    if (!writesAllowed()) {
+        const QString reason = writeBlockReason();
+        if (!reason.isEmpty()) emit errorOccurred(reason);
+        return false;
+    }
+    if (isFlowTransferActive() || m_canBitratePending) {
+        emit errorOccurred(QStringLiteral("网关正在执行其他通信事务，原始串口数据未发送"));
+        return false;
+    }
+    if (!m_transport->writeBytes(bytes)) {
+        emit errorOccurred(QStringLiteral("原始串口数据发送失败；不会在重连后重发"));
+        return false;
+    }
+    return true;
+}
+
+QString BootloaderCommunicationService::writeBlockReason() const
+{
+    if (m_transport != m_tcp || !m_tcpControl->isConnected() || m_tcpControl->ownsControl())
+        return {};
+    const auto owner = m_tcpControl->owner();
+    return owner == QStringLiteral("NONE")
+        ? QStringLiteral("当前没有控制者；请在设置中申请控制权")
+        : QStringLiteral("机器人控制权当前由 %1 持有，请在设置中明确接管控制权").arg(owner);
 }
 
 bool BootloaderCommunicationService::sendObserverMotorControl(

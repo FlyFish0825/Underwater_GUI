@@ -14,17 +14,39 @@ TcpTransport::TcpTransport(QObject *parent) : ByteTransport(parent)
     m_socket.setProxy(QNetworkProxy::NoProxy);
     connect(&m_socket, &QTcpSocket::connected, this, [this]() {
         if (!m_requested) { m_socket.abort(); return; }
-        m_connectTimeout.stop();
         m_socket.setSocketOption(QAbstractSocket::LowDelayOption, 1);
         m_socket.setSocketOption(QAbstractSocket::KeepAliveOption, 1);
-        m_connected = true;
-        m_nextRetryMs = m_retryMs;
-        m_silenceTimeout.start(m_silenceMs);
-        emit opened(portName());
-        emit statusChanged(QStringLiteral("TCP 已连接 · %1").arg(m_allowWrites ? QStringLiteral("允许发送") : QStringLiteral("只读")));
+        if (!m_ownerToken.isEmpty()) {
+            m_handshakePending = true;
+            m_handshakeBuffer.clear();
+            const QByteArray handshake = "OWNER " + m_ownerToken.toLatin1() + "\n";
+            if (m_socket.write(handshake) != handshake.size())
+                failed(QStringLiteral("无法提交 TCP 控制权握手"));
+            return;
+        }
+        completeConnection();
     });
     connect(&m_socket, &QTcpSocket::readyRead, this, [this]() {
-        const QByteArray bytes = m_socket.readAll();
+        QByteArray bytes = m_socket.readAll();
+        if (m_handshakePending) {
+            m_handshakeBuffer.append(bytes);
+            if (m_handshakeBuffer.size() > 64) {
+                failed(QStringLiteral("Nano 控制权握手回复过长"));
+                return;
+            }
+            const int newline = m_handshakeBuffer.indexOf('\n');
+            if (newline < 0)
+                return;
+            const QByteArray response = m_handshakeBuffer.left(newline).trimmed();
+            bytes = m_handshakeBuffer.mid(newline + 1);
+            m_handshakeBuffer.clear();
+            m_handshakePending = false;
+            if (response != QByteArrayLiteral("OK GUI")) {
+                failed(QStringLiteral("Nano 拒绝上位机串口控制权握手；请先接管控制权"));
+                return;
+            }
+            completeConnection();
+        }
         if (!m_requested || !m_connected || bytes.isEmpty()) return;
         m_silenceTimeout.start(m_silenceMs);
         emit bytesReceived(bytes);
@@ -53,8 +75,32 @@ bool TcpTransport::open(const QString &host, quint16 port, bool allowWrites)
         return false;
     }
     m_host = host.trimmed(); m_port = port; m_allowWrites = allowWrites;
+    m_ownerToken.clear();
     m_requested = true; m_nextRetryMs = m_retryMs; attempt();
     return true; // Asynchronous connection requested; opened() confirms completion.
+}
+void TcpTransport::setOwnerToken(const QString &token)
+{
+    if (m_ownerToken == token)
+        return;
+    const bool wasRequested = m_requested;
+    const bool wasConnected = m_connected;
+    m_requested = false;
+    m_retry.stop(); m_connectTimeout.stop(); m_silenceTimeout.stop();
+    m_socket.abort();
+    m_connected = false; m_handshakePending = false; m_handshakeBuffer.clear();
+    m_ownerToken = token;
+    m_allowWrites = !token.isEmpty();
+    if (wasConnected) emit closed();
+    m_requested = wasRequested;
+    if (m_requested) {
+        m_nextRetryMs = m_retryMs;
+        attempt();
+    }
+}
+void TcpTransport::setWritesAllowed(const bool allowed)
+{
+    m_allowWrites = allowed && !m_ownerToken.isEmpty();
 }
 void TcpTransport::attempt()
 {
@@ -63,11 +109,22 @@ void TcpTransport::attempt()
     m_connectTimeout.start(m_connectMs);
     m_socket.connectToHost(m_host, m_port);
 }
+void TcpTransport::completeConnection()
+{
+    if (!m_requested) { m_socket.abort(); return; }
+    m_handshakePending = false;
+    m_connectTimeout.stop();
+    m_connected = true;
+    m_nextRetryMs = m_retryMs;
+    m_silenceTimeout.start(m_silenceMs);
+    emit opened(portName());
+    emit statusChanged(QStringLiteral("TCP 已连接 · %1").arg(m_allowWrites ? QStringLiteral("已接管") : QStringLiteral("只读")));
+}
 void TcpTransport::failed(const QString &reason)
 {
     if (m_failing || !m_requested) return;
     m_failing = true;
-    m_connectTimeout.stop(); m_silenceTimeout.stop();
+    m_connectTimeout.stop(); m_silenceTimeout.stop(); m_handshakePending=false; m_handshakeBuffer.clear();
     const bool wasConnected = m_connected; m_connected = false;
     m_socket.abort(); // Discard pending TX. Never retry commands across sessions.
     if (wasConnected) emit closed();
@@ -92,7 +149,7 @@ bool TcpTransport::isOpen() const { return m_connected && m_socket.state() == QA
 QString TcpTransport::portName() const { return QStringLiteral("tcp://%1:%2").arg(m_host).arg(m_port); }
 bool TcpTransport::writeBytes(const QByteArray &bytes)
 {
-    if (!isOpen() || !m_allowWrites) return false;
+    if (!isOpen() || !m_allowWrites || m_ownerToken.isEmpty()) return false;
     if (bytes.size() > 256 * 1024 || m_socket.bytesToWrite() + bytes.size() > 256 * 1024)
     { failed(QStringLiteral("TCP 发送积压，已断开并丢弃待发数据")); return false; }
     if (m_socket.write(bytes) != bytes.size())

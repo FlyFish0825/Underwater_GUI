@@ -8,6 +8,7 @@
 #include "communication/protocol/SensorProtocol.h"
 #include "communication/transport/SerialTransport.h"
 #include "communication/transport/TcpTransport.h"
+#include "communication/transport/TcpControlTransport.h"
 
 #include <QObject>
 #include <QSet>
@@ -25,12 +26,18 @@ class BootloaderCommunicationService final : public QObject
 
     QVector<SerialDeviceInfo> enumerateDevices() const;
     bool open(const SerialDeviceInfo &device);
-    bool openTcp(const QString &host, quint16 port, bool allowWrites = false);
+    bool openTcp(const QString &host, quint16 port, bool allowWrites = false,
+                 quint16 controlPort = 9002);
+    bool requestTcpControl(bool takeover);
+    bool releaseTcpControl();
     bool isTcpRequested() const;
     bool writesAllowed() const;
+    bool tcpControlConnected() const;
+    QString tcpControlOwner() const;
     void close();
     bool isOpen() const;
     bool sendCanFrame(const CanGatewayFrame &frame);
+    bool sendRawBytes(const QByteArray &bytes);
     bool sendSensorFrame(const SensorFrame &frame);
     bool sendObserverMotorControl(const ObserverMotorProtocol::ControlFrame &control,
                                   QString *error = nullptr);
@@ -58,6 +65,9 @@ class BootloaderCommunicationService final : public QObject
     void closed();
     void errorOccurred(const QString &message);
     void connectionStatusChanged(const QString &message);
+    void tcpControlStateChanged(bool connected, const QString &owner, bool owned,
+                                const QString &message);
+    void tcpControlRequestRejected(const QString &owner, const QString &message);
     void canBitrateConfigured(quint16 sequence, quint8 status, quint32 nominalBps, quint32 dataBps);
     // Validated, matched reply including optional RX timestamp; existing UI signal is unchanged.
     void canBitrateResponseReceived(const rov::CanGatewayConfigResponse &response);
@@ -87,9 +97,11 @@ class BootloaderCommunicationService final : public QObject
     void handleCanBitrateConfigResponse(CanGatewayConfigResponse response);
 
     void resetSession();
+    QString writeBlockReason() const;
     ByteTransport *m_transport = nullptr;
     SerialTransport *m_serial = nullptr;
     TcpTransport *m_tcp = nullptr;
+    TcpControlTransport *m_tcpControl = nullptr;
     bool m_writesAllowed = true;
     CanGatewayTimestampUnwrapper m_gatewayTimestamp;
     bool m_canBitratePending = false;

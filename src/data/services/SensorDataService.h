@@ -16,9 +16,6 @@ class SensorDataService final : public QObject
     explicit SensorDataService(QObject *parent = nullptr);
     void setSender(std::function<bool(const SensorFrame &)> sender);
     void setConnected(bool connected);
-    // Application policy only; off by default so read-only probes remain read-only.
-    // On a new connection, configure the fixed 02BA and capture a missing water zero once.
-    void setDepthStartupEnabled(bool enabled);
     bool request(const SensorRequest &request);
     void handleFrame(const SensorFrame &frame);
     SensorSnapshot snapshot() const;
@@ -52,17 +49,12 @@ class SensorDataService final : public QObject
     void refreshImuRates();
     bool sendRequest(const SensorRequest &request, bool automatic);
     void refresh();
-    void processDepthStartup();
     void applyStatus(quint8 target, quint32 status);
     void clearMeasurements(quint8 target);
     void finish(quint8 target, SensorResult result, const QString &detail = QString());
     bool consumeTelemetry(const SensorFrame &frame, qint64 deliveryAgeMs = 0);
     bool consumeReply(const SensorFrame &frame, SensorResult result);
 
-    enum class DepthStartup { Idle, WaitInfo, WaitPressure };
-    bool m_depthStartupEnabled = false;
-    DepthStartup m_depthStartup = DepthStartup::Idle;
-    qint64 m_depthStartupDeadlineMs = 0;
     SensorSnapshot m_state;
     QVector<SensorRequest> m_imuReads; // One-shot GET_STATUS + two cached parameter reads.
     std::array<QVector<ImuRateSample>, 2> m_imuRates; // Raw / combined attitude, <=512 each.

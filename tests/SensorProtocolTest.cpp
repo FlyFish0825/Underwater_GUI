@@ -37,6 +37,18 @@ static SensorFrame depthFrame(quint32 flags)
     SensorWire::append32(f.payload, 0xF01234); SensorWire::append32(f.payload, 0xABCDEF);
     return f;
 }
+static SensorFrame streamStatusFrame(quint8 target, quint32 sequence, quint32 timestampUs,
+                                     quint32 status, quint32 sampleAgeMs)
+{
+    SensorFrame f; f.command = 0x83; f.target = target; f.flags = 8;
+    f.sequence = sequence; f.timestampUs = timestampUs;
+    SensorWire::append32(f.payload, status);
+    SensorWire::append32(f.payload, sequence);
+    SensorWire::append32(f.payload, sampleAgeMs);
+    SensorWire::append32(f.payload, 10);
+    SensorWire::append32(f.payload, 0);
+    return f;
+}
 static void testWire()
 {
     CHECK(SensorWire::crc16("123456789") == 0x29B1U);
@@ -90,8 +102,9 @@ static void testRequests()
     r.value = std::numeric_limits<double>::quiet_NaN(); CHECK(!makeSensorRequestPayload(r, p, error));
     r.parameterId = 3; r.value = 9; CHECK(makeSensorRequestPayload(r, p, error));
     r.value = 10; CHECK(!makeSensorRequestPayload(r, p, error));
-    r.target = 2; r.parameterId = 0x0105; r.value = 30; CHECK(makeSensorRequestPayload(r, p, error));
-    r.value = 4; CHECK(!makeSensorRequestPayload(r, p, error));
+    r.target = 2; r.parameterId = 0x0105; r.value = 30; CHECK(!makeSensorRequestPayload(r, p, error));
+    r.operation = SensorOperation::GetParameter; CHECK(makeSensorRequestPayload(r, p, error));
+    r.operation = SensorOperation::SetParameter; r.value = 4; CHECK(!makeSensorRequestPayload(r, p, error));
     r.parameterId = 0x0101;
     for (int osr : {256,512,1024,2048,4096,8192}) { r.value = osr; CHECK(makeSensorRequestPayload(r, p, error)); }
     r.value = 4095; CHECK(!makeSensorRequestPayload(r, p, error));
@@ -246,7 +259,7 @@ static void testMeasuredDepthProtocol()
     for (double density : {900.0, 1029.0, 1300.0}) { r.value = density; CHECK(makeSensorRequestPayload(r, payload, error)); }
     r.value = 5000; CHECK(!makeSensorRequestPayload(r, payload, error));
     r.parameterId = 0x0105; r.value = 2;
-    CHECK(makeSensorRequestPayload(r, payload, error) && payload.toHex() == "0501020102");
+    CHECK(!makeSensorRequestPayload(r, payload, error)); // fixed model is read-only on the host.
     r.operation = static_cast<SensorOperation>(0x0D);
     CHECK(!makeSensorRequestPayload(r, payload, error)); // unimplemented proposal stays unavailable
 }
@@ -318,19 +331,12 @@ static void testDepthSnapshotsAndFeedback()
     CHECK(lastResult == SensorResult::BadValue && !feedback.value.isValid());
     CHECK(service.snapshot().pressureValid); // rejected write leaves the old measurement/config intact
 
-    // Successful model change updates the descriptor, invalidates old values, and waits for newer samples.
-    r.parameterId = 0x0105; r.value = 30; CHECK(service.request(r));
-    ack = replyFor(sent.last(), SensorResult::Ok, sent.last().payload); ack.timestampUs = data.timestampUs + 1000;
-    service.handleFrame(ack);
-    CHECK(service.snapshot().devices[1].model == 30 && !service.snapshot().pressureValid);
-    data.sequence = 864; service.handleFrame(data);
-    CHECK(!service.snapshot().pressureValid && service.snapshot().depthAgeMs == -1);
-    data.timestampUs = ack.timestampUs + 1000; data.sequence = 865;
-    data.payload.replace(0, 4, QByteArray::fromHex("f3090000")); // real zero depth may validly be 0.0
-    service.handleFrame(data);
-    CHECK(service.snapshot().depthValid && service.snapshot().depthRawM == 0.0);
-    auto older = data; older.sequence = 864; older.payload.replace(4, 4, QByteArray::fromHex("00000000"));
-    service.handleFrame(older); CHECK(service.snapshot().pressurePa == 101219.0);
+    // The vehicle has one fixed probe. Model confirmation/write is removed and preserves its reference.
+    r.parameterId = 0x0105; r.value = 30;
+    const int beforeModelWrite = sent.size();
+    CHECK(!service.request(r) && sent.size() == beforeModelWrite);
+    CHECK(service.snapshot().devices[1].model == 2 && service.snapshot().pressureValid
+        && !service.snapshot().zeroValid);
     data.sequence = 866; data.payload.replace(0, 4, QByteArray::fromHex("f30d0000")); // contradictory CONFIG_UNKNOWN
     service.handleFrame(data);
     CHECK(!service.snapshot().pressureValid && !service.snapshot().temperatureValid && !service.snapshot().depthValid);
@@ -439,11 +445,11 @@ static void testDepthAutomaticReadback()
     service.setConnected(true);
     SensorRequest r; r.target = kDepthSensor; r.operation = SensorOperation::GetInfo;
     CHECK(service.request(r));
-    awaitCount(8);
-    CHECK(sent.size() == 8 && feedback.size() == 6);
-    if (sent.size() != 8) return;
+    awaitCount(7);
+    CHECK(sent.size() == 7 && feedback.size() == 5);
+    if (sent.size() != 7) return;
     CHECK(sent[0].command == 1 && sent[1].command == 2);
-    const QVector<quint16> ids{0x0001, 0x0101, 0x0102, 0x0103, 0x0104, 0x0105};
+    const QVector<quint16> ids{0x0001, 0x0101, 0x0102, 0x0103, 0x0104};
     for (int i = 0; i < sent.size(); ++i)
     {
         CHECK(sent[i].target == kDepthSensor && sent[i].flags == 1);
@@ -453,20 +459,20 @@ static void testDepthAutomaticReadback()
     }
     CHECK(feedback[0x0001].confirmed && feedback[0x0001].value.toInt() == 25);
     CHECK(feedback[0x0101].confirmed && feedback[0x0101].value.toInt() == 4096);
-    CHECK(feedback[0x0102].value.toDouble() == 1029.0 && feedback[0x0105].value.toInt() == 2);
+    CHECK(feedback[0x0102].value.toDouble() == 1029.0);
     CHECK(feedback[0x0104].confirmed && feedback[0x0104].value.toDouble() == 0.0);
     CHECK(!feedback[0x0103].value.isValid() && feedback[0x0103].message.contains("NOT_READY"));
     CHECK(service.snapshot().devices[1].statusKnown && !service.snapshot().devices[1].pending);
-    waitMs(150); CHECK(sent.size() == 8); // Finished, not a background polling loop.
+    waitMs(150); CHECK(sent.size() == 7); // Finished, not a background polling loop.
 
     r.operation = SensorOperation::ZeroDepth;
-    CHECK(service.request(r)); awaitCount(11);
-    CHECK(sent.size() == 11);
+    CHECK(service.request(r)); awaitCount(10);
+    CHECK(sent.size() == 10);
     CHECK(feedback[0x0103].confirmed && feedback[0x0103].value.toDouble() == 101325.0);
     CHECK(service.snapshot().zeroValid && !service.snapshot().surfacePressureValid);
     CHECK(service.snapshot().depthAgeMs == -1); // Parameter readback is not a measurement.
-    if (sent.size() != 11) return;
-    CHECK(sent[9].command == 2 && sent[10].command == 3 && SensorWire::read16(sent[10].payload, 0) == 0x0103);
+    if (sent.size() != 10) return;
+    CHECK(sent[8].command == 2 && sent[9].command == 3 && SensorWire::read16(sent[9].payload, 0) == 0x0103);
 
     int before = sent.size(); r.operation = SensorOperation::GetInfo;
     CHECK(service.request(r));
@@ -681,6 +687,48 @@ static void testSensorRecoveryAndStreamContract()
     }
 }
 
+static void testPassiveSensorTelemetryWithoutQueries()
+{
+    SensorDataService service;
+    service.setConnected(true);
+
+    // A missing sample age cannot safely establish freshness on its own.
+    service.handleFrame(streamStatusFrame(kImuSensor, 1, 100000U,
+        SensorStatus::Online | SensorStatus::RawValid | SensorStatus::QuaternionValid
+            | SensorStatus::EulerValid, 0xFFFFFFFFU));
+    auto raw = rawFrame(2); raw.timestampUs = 100000U;
+    service.handleFrame(raw);
+    CHECK(!service.snapshot().rawValid);
+
+    // Passive status frames carry enough age information to anchor the MCU clock; no
+    // request/reply handshake or writable transport is needed to receive later samples.
+    service.handleFrame(streamStatusFrame(kImuSensor, 3, 200000U,
+        SensorStatus::Online | SensorStatus::RawValid | SensorStatus::QuaternionValid
+            | SensorStatus::EulerValid, 5));
+    raw = rawFrame(4); raw.timestampUs = 205000U;
+    service.handleFrame(raw);
+    SensorFrame attitude; attitude.command = 0x81; attitude.target = kImuSensor;
+    attitude.flags = 8; attitude.sequence = 5; attitude.timestampUs = 206000U;
+    SensorWire::append32(attitude.payload, SensorStatus::Online | SensorStatus::RawValid
+        | SensorStatus::QuaternionValid | SensorStatus::EulerValid);
+    for (float value : {1.0f, 0.0f, 0.0f, 0.0f, 0.1f, -0.2f, 0.3f})
+        SensorWire::appendFloat(attitude.payload, value);
+    service.handleFrame(attitude);
+    CHECK(service.snapshot().rawValid && service.snapshot().quaternionValid
+        && service.snapshot().eulerValid);
+    CHECK(!service.snapshot().devices[0].pending && service.snapshot().devices[0].sequence == 5);
+
+    constexpr quint32 unconfiguredDepth = SensorStatus::Online | SensorStatus::RawValid
+        | SensorStatus::PromValid | SensorStatus::ConfigUnknown;
+    service.handleFrame(streamStatusFrame(kDepthSensor, 1, 300000U, unconfiguredDepth, 2));
+    auto depth = depthFrame(unconfiguredDepth); depth.sequence = 2; depth.timestampUs = 302000U;
+    service.handleFrame(depth);
+    const auto snapshot = service.snapshot();
+    CHECK(snapshot.devices[1].online && snapshot.depthRawValid);
+    CHECK(!snapshot.pressureValid && !snapshot.depthValid && !snapshot.zeroValid);
+    CHECK(snapshot.rawAdcD1 == 0xF01234U && snapshot.rawAdcD2 == 0xABCDEFU);
+}
+
 static void testDepthRatePacketAndCommandTrace()
 {
     SensorRequest request; request.target = kDepthSensor;
@@ -886,191 +934,38 @@ static void testDepthPairedSampling()
 }
 
 
-// Explicit startup policy fixture; no serial port. ZERO consumes the latest valid pressure,
-// and the view becomes valid only when a subsequent DEPTH_DATA arrives.
-struct DepthStartupFixture
+static void testDepthReferenceIsNeverChangedAutomatically()
 {
     SensorDataService service;
-    QElapsedTimer clock;
+    service.findChild<QTimer *>()->stop();
     QVector<SensorFrame> sent;
-    int model = 0, modelWrites = 0, zeroWrites = 0;
-    bool zero = false, online = true, rejectModel = false, rejectZero = false, dropZero = false;
-    float pressure = 101187.0f, p0 = 0.0f;
-    quint32 streamSequence = 0;
-    DepthStartupFixture(bool enabled = true)
+    service.setSender([&](const SensorFrame &frame) { sent.append(frame); return true; });
+    service.setConnected(true);
+
+    constexpr quint32 configured = SensorStatus::Online | SensorStatus::RawValid
+        | SensorStatus::PromValid | SensorStatus::ModelConfirmed | SensorStatus::PressureValid
+        | SensorStatus::TemperatureValid | SensorStatus::DepthValid | SensorStatus::ZeroValid;
+    for (quint32 session = 0; session < 2; ++session)
     {
-        clock.start();
-        service.findChild<QTimer *>()->stop();
-        service.setDepthStartupEnabled(enabled);
-        service.setSender([this](const SensorFrame &f) {
-            sent.append(f);
-            CHECK(f.target == kDepthSensor);
-            SensorResult result = SensorResult::Ok;
-            QByteArray body;
-            if (f.command == 1)
-            {
-                body.append(char(2)); body.append(char(model)); SensorWire::append32(body,0xC38);
-                body.append(QByteArray("MS5837").leftJustified(16,'\0'));
-                body.append(QByteArray("host-v1").leftJustified(8,'\0'));
-            }
-            else if (f.command == 2)
-            {
-                SensorWire::append32(body,flags()); SensorWire::append32(body,10);
-                SensorWire::append32(body,0); SensorWire::append32(body,10); SensorWire::append32(body,0);
-            }
-            else if (f.command == 3 || f.command == 4)
-            {
-                const quint16 id = SensorWire::read16(f.payload,0);
-                if (f.command == 4)
-                {
-                    if (id == 0x0105)
-                    {
-                        ++modelWrites;
-                        CHECK(f.payload.toHex() == "0501020102");
-                        if (rejectModel) result = SensorResult::BadValue;
-                        else { model=2; zero=false; p0=0; }
-                    }
-                    else if (id == 0x0103) { p0=SensorWire::readFloat(f.payload,4); zero=true; }
-                    else CHECK(false); // Startup may never change OSR/rate/density/filter.
-                }
-                if (result == SensorResult::Ok)
-                {
-                    if (id == 0x0103 && !zero) result=SensorResult::NotReady;
-                    else
-                    {
-                        SensorRequest value; value.target=kDepthSensor; value.operation=SensorOperation::SetParameter;
-                        value.parameterId=id;
-                        value.value=id==0x0001?25.0:id==0x0101?4096.0:id==0x0102?1029.0:
-                                    id==0x0103?p0:id==0x0105?double(model):0.0;
-                        QString error; CHECK(makeSensorRequestPayload(value,body,error));
-                    }
-                }
-            }
-            else if (f.command == 0x0C)
-            {
-                ++zeroWrites; CHECK(f.payload.isEmpty());
-                CHECK(online && model==2 && pressure>=10000 && pressure<=200000);
-                if (dropZero) return true;
-                if (rejectZero) result=SensorResult::Busy;
-                else { zero=true; p0=pressure; }
-            }
-            else CHECK(false);
-            auto ack=replyFor(f,result,body); ack.timestampUs=nowUs(); service.handleFrame(ack);
-            return true;
-        });
-        service.setConnected(true);
-    }
-    quint32 nowUs() const { return 1000000U+quint32(clock.elapsed()*1000); }
-    quint32 flags() const
-    {
-        quint32 status=SensorStatus::PromValid;
-        status|=model==2?SensorStatus::ModelConfirmed:SensorStatus::ConfigUnknown;
-        if (online) { status|=SensorStatus::Online|SensorStatus::RawValid;
-            if(model==2)status|=SensorStatus::PressureValid|SensorStatus::TemperatureValid; }
-        if(zero)status|=SensorStatus::ZeroValid;
-        if(zero && online && model==2)status|=SensorStatus::DepthValid;
-        return status;
-    }
-    void discover()
-    {
-        SensorRequest info; info.target=kDepthSensor; info.operation=SensorOperation::GetInfo;
-        CHECK(service.request(info));
-    }
-    void tick(int n=1)
-    {
-        for(int i=0;i<n;++i)CHECK(QMetaObject::invokeMethod(service.findChild<QTimer *>(),"timeout",Qt::DirectConnection));
-    }
-    void sample(bool stale=false)
-    {
-        auto f=depthFrame(flags()); f.sequence=++streamSequence; f.timestampUs=nowUs()-(stale?3000000U:0U);
-        f.payload.clear(); SensorWire::append32(f.payload,flags());
-        const float depth=zero?(pressure-p0)/(1029.0f*9.80665f):0.0f;
-        for(float value:{model==2?pressure:0.0f,model==2?25.0f:0.0f,depth,depth,p0})
-            SensorWire::appendFloat(f.payload,value);
-        SensorWire::append32(f.payload,6300000); SensorWire::append32(f.payload,7800000);
-        service.handleFrame(f);
-    }
-};
-static void testDepthStartupReference()
-{
-    {
-        DepthStartupFixture f;
-        f.sample(); f.tick(3); CHECK(f.sent.isEmpty()); // no handshake, no configuration
-        f.discover(); f.tick(20);
-        CHECK(f.modelWrites==1 && f.zeroWrites==0 && !f.service.snapshot().depthValid);
-        f.sample(true); f.tick(); CHECK(f.zeroWrites==0); // never calibrate from queued/stale data
-        f.sample(); CHECK(f.service.snapshot().pressureValid && !f.service.snapshot().depthValid);
-        f.tick(); CHECK(f.zeroWrites==1 && f.p0==f.pressure);
-        CHECK(!f.service.snapshot().depthValid); // ACK alone does not manufacture a zero reading
-        f.sample(); f.tick(10);
-        CHECK(f.service.snapshot().depthValid && f.service.snapshot().depthFilteredM==0.0);
-        CHECK(f.service.snapshot().surfacePressureValid && f.service.snapshot().surfacePressurePa==101187.0);
-        f.pressure+=1000; f.sample(); f.tick(10);
-        CHECK(f.zeroWrites==1 && f.service.snapshot().depthFilteredM>0.09);
-        // Reopening the GUI/USB underwater preserves an established reference, not a new water surface.
-        f.service.setConnected(false); f.service.setConnected(true); f.discover(); f.tick(20); f.sample(); f.tick(2);
-        CHECK(f.modelWrites==1 && f.zeroWrites==1 && f.p0==101187.0f);
-        CHECK(f.service.snapshot().depthValid && f.service.snapshot().depthFilteredM>0.09);
-        // A real power cycle loses model/zero, so the next connection gets a new one-shot startup.
-        f.service.setConnected(false); f.model=0; f.zero=false; f.p0=0;
-        f.service.setConnected(true); f.discover(); f.tick(20); f.sample(); f.tick(); f.sample();
-        CHECK(f.modelWrites==2 && f.zeroWrites==2 && f.service.snapshot().depthFilteredM==0.0);
-    }
-    {
-        DepthStartupFixture f(false); f.model=2; f.discover(); f.sample(); f.tick(20);
-        CHECK(f.modelWrites==0 && f.zeroWrites==0 && !f.service.snapshot().depthValid); // probes stay read-only
-    }
-    {
-        DepthStartupFixture f; f.model=2; f.zero=true; f.p0=100187;
-        f.discover(); f.tick(20); f.sample(); f.tick();
-        CHECK(f.zeroWrites==0 && f.modelWrites==0 && f.service.snapshot().depthFilteredM>0.09);
-    }
-    {
-        DepthStartupFixture f; f.model=2; f.online=false; f.discover(); f.tick(20); f.sample(); f.tick(5);
-        CHECK(f.zeroWrites==0 && !f.service.snapshot().depthValid && !f.service.snapshot().devices[1].online);
-        f.online=true; f.sample(); f.tick(); CHECK(f.zeroWrites==1); // genuine sensor recovery
-    }
-    for(float pressure:{9999.0f,200001.0f})
-    {
-        DepthStartupFixture f; f.model=2; f.pressure=pressure; f.discover(); f.tick(20); f.sample(); f.tick(4);
-        CHECK(f.zeroWrites==0 && !f.service.snapshot().depthValid);
-    }
-    {
-        DepthStartupFixture f; f.rejectModel=true; f.discover(); f.tick(25);
-        CHECK(f.modelWrites==1 && f.zeroWrites==0); // rejected initialization is not retried
-    }
-    {
-        DepthStartupFixture f; f.model=2; f.rejectZero=true; f.discover(); f.tick(20); f.sample(); f.tick(20);
-        CHECK(f.zeroWrites==1 && !f.service.snapshot().depthValid);
-        f.sample(); f.tick(5); CHECK(f.zeroWrites==1);
-    }
-    {
-        DepthStartupFixture f; f.model=2; f.dropZero=true; f.discover(); f.tick(20); f.sample(); f.tick();
-        CHECK(f.zeroWrites==1 && f.service.snapshot().devices[1].pending);
-        waitMs(4200); f.tick(5); CHECK(f.zeroWrites==1 && !f.service.snapshot().devices[1].pending);
-    }
-    {
-        DepthStartupFixture f; f.model=2; f.discover(); f.tick(20);
-        SensorRequest manual; manual.target=kDepthSensor; manual.operation=SensorOperation::SetParameter;
-        manual.parameterId=0x0103; manual.value=101000;
-        CHECK(f.service.request(manual)); f.sample(); f.tick(20);
-        CHECK(f.zeroWrites==0 && f.p0==101000 && f.service.snapshot().depthValid);
-        manual.operation=SensorOperation::ZeroDepth;
-        CHECK(f.service.request(manual)); f.sample(); f.tick(10);
-        CHECK(f.zeroWrites==1 && f.service.snapshot().depthFilteredM==0.0); // manual recalibration remains usable
-    }
-    {
-        DepthStartupFixture f; f.model=2; f.discover(); f.tick(20);
-        f.service.setConnected(false); f.sample(); f.tick(20);
-        CHECK(f.zeroWrites==0 && !f.service.snapshot().depthValid);
-    }
-    {
-        DepthStartupFixture f; f.model=2; f.discover(); f.tick(20);
-        waitMs(10100); f.tick(); f.sample(); f.tick(5);
-        CHECK(f.zeroWrites==0 && !f.service.snapshot().depthValid); // no delayed surprise zero much later
+        if (session) service.setConnected(false);
+        if (session) service.setConnected(true); // reconnect must retain, never rewrite, MCU RAM.
+        const quint32 timestamp = 1000000U + session * 2000000U;
+        service.handleFrame(streamStatusFrame(kDepthSensor, 1, timestamp, configured, 0));
+        SensorFrame sample; sample.command = 0x82; sample.target = kDepthSensor;
+        sample.flags = 8; sample.sequence = 2; sample.timestampUs = timestamp + 1000U;
+        SensorWire::append32(sample.payload, configured);
+        for (float value : {100987.25f, 24.0f, 0.12f, 0.12f, 100111.5f})
+            SensorWire::appendFloat(sample.payload, value);
+        SensorWire::append32(sample.payload, 6300000U);
+        SensorWire::append32(sample.payload, 7800000U);
+        service.handleFrame(sample);
+        const auto snapshot = service.snapshot();
+        CHECK(snapshot.depthValid && snapshot.zeroValid && snapshot.surfacePressureValid);
+        CHECK(snapshot.surfacePressurePa == 100111.5 && std::abs(snapshot.depthFilteredM - 0.12) < 1e-6);
+        CHECK(snapshot.devices[1].model == 0); // no model write or guessed replacement.
+        CHECK(sent.isEmpty());
     }
 }
-
 
 // IMU supplement 2026-10-06. All generated frames below are fixtures, not device captures.
 struct ImuHostFixture
@@ -1477,8 +1372,9 @@ int main(int argc,char **argv)
 {
     QCoreApplication app(argc,argv);
     testSensorRecoveryAndStreamContract();
+    testPassiveSensorTelemetryWithoutQueries();
     testImuDiscoveryAndPolicy(); testImuGroupsAndFreshness(); testImuRateObservation();
-    testDepthStartupReference();
+    testDepthReferenceIsNeverChangedAutomatically();
     testImuDocumentCommands(); testImuIndependentFreshness(); testImuRateObservationEdges();
     testDepthRatePacketAndCommandTrace();
     testDepthPairedSampling();

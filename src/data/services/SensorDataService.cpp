@@ -49,8 +49,6 @@ void SensorDataService::setConnected(const bool connected)
     m_depthSampling = DepthSamplingChange{};
     m_state = SensorSnapshot{};
     m_state.connected = connected;
-    m_depthStartup = connected && m_depthStartupEnabled ? DepthStartup::WaitInfo : DepthStartup::Idle;
-    m_depthStartupDeadlineMs = m_clock.elapsed() + 10000;
     m_lastSeen = {{-1, -1}};
     m_statusSeen = {{-1, -1}};
     m_depthDeliveryAgeMs = 0;
@@ -68,14 +66,6 @@ void SensorDataService::setConnected(const bool connected)
         emit commandFinished(it.key(), it.value().sequence, SensorResult::IoError, text);
     }
     emit snapshotChanged(snapshot());
-}
-
-void SensorDataService::setDepthStartupEnabled(const bool enabled)
-{
-    if (m_depthStartupEnabled == enabled) return;
-    m_depthStartupEnabled = enabled;
-    m_depthStartup = enabled && m_state.connected ? DepthStartup::WaitInfo : DepthStartup::Idle;
-    m_depthStartupDeadlineMs = m_clock.elapsed() + 10000;
 }
 
 bool SensorDataService::request(const SensorRequest &r)
@@ -130,6 +120,9 @@ bool SensorDataService::sendRequest(const SensorRequest &r, const bool automatic
         error = QStringLiteral("网关未连接，命令未发送");
     else if (m_pending.contains(r.target))
         error = QStringLiteral("该传感器已有请求待确认，请等待结果");
+    else if (r.target == kDepthSensor && r.operation == SensorOperation::SetParameter
+             && r.parameterId == 0x0105)
+        error = QStringLiteral("本机探头型号固定为 MS5837-02BA；型号只读，保留已有水面参考");
     else if (!makeSensorRequestPayload(r, payload, error)) {}
     else if (r.target == kImuSensor && r.operation == SensorOperation::SetParameter
              && (device.status & SensorStatus::PinBlocked))
@@ -150,14 +143,7 @@ bool SensorDataService::sendRequest(const SensorRequest &r, const bool automatic
     }
     // Explicit requests take priority over remaining discovery reads; never queue a user write.
     if (r.target == kDepthSensor && !automatic)
-    {
         m_depthReads.clear();
-        // An accepted explicit reference/model/stream action cancels startup automation.
-        if (r.operation == SensorOperation::ZeroDepth || r.operation == SensorOperation::StopStream
-            || (r.operation == SensorOperation::SetParameter
-                && (r.parameterId == 0x0103 || r.parameterId == 0x0105)))
-            m_depthStartup = DepthStartup::Idle;
-    }
     SensorFrame frame;
     frame.command = quint8(r.operation); frame.target = r.target;
     frame.flags = 1; frame.sequence = ++m_sequence; frame.payload = payload;
@@ -229,6 +215,19 @@ void SensorDataService::handleFrame(const SensorFrame &frame)
             || (m_streamChangedMs.at(sensorIndex) >= 0
                 && m_clock.elapsed() - m_streamChangedMs.at(sensorIndex) <= staleMs
                 && qint32(frame.timestampUs - m_streamNotBeforeUs.at(sensorIndex)) < 0))) return;
+        // A read-only Nano TCP session cannot issue the GET_STATUS command that normally
+        // anchors the MCU clock. The device's periodic STATUS frame carries the sample age,
+        // so it can establish the same clock reference without enabling any transmit path.
+        if (m_clockAnchorSeen.at(sensorIndex) < 0 && frame.command == 0x83
+            && frame.payload.size() == 20)
+        {
+            const quint32 sampleAgeMs = SensorWire::read32(frame.payload, 8);
+            if (sampleAgeMs != 0xFFFFFFFFU && sampleAgeMs <= quint32(staleMs))
+            {
+                m_clockAnchorSeen.at(sensorIndex) = m_clock.elapsed();
+                m_clockAnchorUs.at(sensorIndex) = frame.timestampUs + sampleAgeMs * 1000U;
+            }
+        }
         if (m_clockAnchorSeen.at(sensorIndex) < 0) return;
         const quint32 expectedNow = m_clockAnchorUs.at(sensorIndex)
             + quint32((m_clock.elapsed() - m_clockAnchorSeen.at(sensorIndex)) * 1000);
@@ -437,11 +436,17 @@ bool SensorDataService::consumeReply(const SensorFrame &f, const SensorResult re
         if (f.target == kImuSensor && result != SensorResult::Unconfirmed) return false;
         quint16 id = 0; QVariant value;
         if (!decodeSensorParameter(p.mid(1), id, value) || id != pending.request.parameterId) return false;
-        SensorRequest validation = pending.request;
-        validation.operation = SensorOperation::SetParameter; validation.value = value;
-        QByteArray expected; QString error;
-        if (!makeSensorRequestPayload(validation, expected, error) || expected != p.mid(1)) return false;
-        if (operation == SensorOperation::SetParameter && pending.payload != p.mid(1)) return false;
+        if (operation == SensorOperation::SetParameter)
+        {
+            SensorRequest validation = pending.request;
+            validation.operation = SensorOperation::SetParameter; validation.value = value;
+            QByteArray expected; QString error;
+            if (!makeSensorRequestPayload(validation, expected, error) || expected != p.mid(1)) return false;
+            if (pending.payload != p.mid(1)) return false;
+        }
+        else if (f.target == kDepthSensor && id == 0x0105
+                 && value.toUInt() != 0U && value.toUInt() != 2U && value.toUInt() != 30U)
+            return false;
         SensorParameterFeedback feedback;
         feedback.target = f.target; feedback.parameterId = id; feedback.value = value;
         feedback.confirmed = f.target == kDepthSensor && result == SensorResult::Ok;
@@ -451,7 +456,8 @@ bool SensorDataService::consumeReply(const SensorFrame &f, const SensorResult re
                 : QStringLiteral("最后下发缓存 / 未确认（UNCONFIRMED；非设备读回）");
         if (feedback.confirmed && f.target == kDepthSensor)
         {
-            if (id == 0x0105) d.model = quint8(value.toUInt());
+            if (id == 0x0105 && operation == SensorOperation::GetParameter)
+                d.model = quint8(value.toUInt());
             if (m_depthSampling.active)
             {
                 if (id == 0x0101) m_depthSampling.currentOsr = quint16(value.toUInt());
@@ -553,11 +559,9 @@ void SensorDataService::finish(const quint8 target, SensorResult result, const Q
         if (p.automatic && result != SensorResult::Ok && result != SensorResult::NotReady)
         {
             m_depthReads.clear(); // Stop on transport/protocol failure; no retry loop.
-            m_depthStartup = DepthStartup::Idle;
         }
         const bool discovery = p.request.operation == SensorOperation::GetInfo;
-        const bool zeroChanged = p.request.operation == SensorOperation::ZeroDepth
-            || (p.request.operation == SensorOperation::SetParameter && p.request.parameterId == 0x0105);
+        const bool zeroChanged = p.request.operation == SensorOperation::ZeroDepth;
         if (result == SensorResult::Ok && (discovery || zeroChanged))
         {
             m_depthReads.clear();
@@ -565,7 +569,7 @@ void SensorDataService::finish(const quint8 target, SensorResult result, const Q
             m_depthReads.append(read);
             read.operation = SensorOperation::GetParameter;
             const QVector<quint16> ids = discovery
-                ? QVector<quint16>{0x0001, 0x0101, 0x0102, 0x0103, 0x0104, 0x0105}
+                ? QVector<quint16>{0x0001, 0x0101, 0x0102, 0x0103, 0x0104}
                 : QVector<quint16>{0x0103};
             for (const quint16 id : ids) { read.parameterId = id; m_depthReads.append(read); }
         }
@@ -663,56 +667,6 @@ SensorSnapshot SensorDataService::snapshot() const
     s.surfacePressureValid = s.surfacePressureValid && s.zeroValid && depthFresh;
     return s;
 }
-void SensorDataService::processDepthStartup()
-{
-    if (m_depthStartup == DepthStartup::Idle) return;
-    if (m_clock.elapsed() >= m_depthStartupDeadlineMs)
-    {
-        m_depthStartup = DepthStartup::Idle;
-        m_state.devices[1].lastCommand = QStringLiteral("启动水面初始化未完成：未取得有效压力；可在详情中手动校准");
-        return;
-    }
-    const SensorSnapshot live = snapshot();
-    const auto &d = live.devices[1];
-    if (!d.infoKnown) return; // No guessed descriptor/model, and no command before the handshake.
-    if (m_depthStartup == DepthStartup::WaitInfo)
-    {
-        m_depthStartup = DepthStartup::WaitPressure; // Set before sender; test senders may reply inline.
-        if (d.model != 2)
-        {
-            if (!(d.capabilities & (1U << 11)))
-            {
-                m_depthStartup = DepthStartup::Idle;
-                m_state.devices[1].lastCommand = QStringLiteral("设备不支持固定 02BA 初始化；未自动写入");
-                return;
-            }
-            SensorRequest model; model.target = kDepthSensor;
-            model.operation = SensorOperation::SetParameter; model.parameterId = 0x0105; model.value = 2;
-            if (!sendRequest(model, true)) m_depthStartup = DepthStartup::Idle;
-            return; // Wait for ACK and a sample under the confirmed model.
-        }
-    }
-    if (d.model != 2) return;
-    if (live.zeroValid)
-    {
-        m_depthStartup = DepthStartup::Idle; // Reconnecting underwater must not erase an existing zero.
-        return;
-    }
-    if (!live.pressureValid) return;
-    if (!(d.capabilities & (1U << 10)) || !std::isfinite(live.pressurePa)
-        || live.pressurePa < 10000.0 || live.pressurePa > 200000.0)
-    {
-        m_depthStartup = DepthStartup::Idle;
-        m_state.devices[1].lastCommand = QStringLiteral("当前压力不满足水面归零条件；未自动写入零点");
-        return;
-    }
-    // ZERO_DEPTH records the latest real pressure on the device, not a PC-side fabricated 0 m.
-    // One attempt per connection. Failure/timeout never triggers repeated calibration.
-    m_depthStartup = DepthStartup::Idle;
-    SensorRequest zero; zero.target = kDepthSensor; zero.operation = SensorOperation::ZeroDepth;
-    sendRequest(zero, true);
-}
-
 double SensorDataService::imuReceivedRateHz(const int group) const
 {
     const auto &samples = m_imuRates.at(group);
@@ -781,8 +735,6 @@ void SensorDataService::refresh()
         const SensorRequest read = m_depthReads.takeFirst();
         if (!sendRequest(read, true)) m_depthReads.clear();
     }
-    else if (m_state.connected && !m_pending.contains(kDepthSensor))
-        processDepthStartup();
     emit snapshotChanged(snapshot());
 }
 } // namespace rov

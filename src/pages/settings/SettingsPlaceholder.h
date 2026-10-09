@@ -24,12 +24,18 @@ class SettingsPlaceholder final : public QWidget
     ~SettingsPlaceholder() override;
 
     void setGatewayConnected(bool connected);
+    void setTcpControlState(bool connected, const QString &owner, bool owned,
+                            const QString &detail = QString());
+    void showTcpControlWarning(const QString &title, const QString &message);
     void onCanBitrateConfigured(quint16 sequence, quint8 status, quint32 nominalBps,
                                 quint32 dataBps);
     void onCanBitrateError(const QString &message);
 
   signals:
     void canBitrateApplyRequested(quint32 nominalBps, quint32 dataBps);
+    void tcpControlClaimRequested();
+    void tcpControlTakeoverRequested();
+    void tcpControlReleaseRequested();
 
   private:
     void clearHistoryWithConfirmation();
@@ -41,9 +47,15 @@ class SettingsPlaceholder final : public QWidget
     QLabel *m_historyStatus = nullptr;
     QLabel *m_historyPreview = nullptr;
     QLabel *m_canBitrateStatus = nullptr;
+    QLabel *m_tcpControlStatus = nullptr;
     QComboBox *m_canBitrateCombo = nullptr;
     QComboBox *m_canDataBitrateCombo = nullptr;
     QPushButton *m_applyCanBitrateButton = nullptr;
+    QPushButton *m_tcpTakeoverButton = nullptr;
+    QPushButton *m_tcpReleaseButton = nullptr;
+    QPushButton *m_tcpClaimButton = nullptr;
+    bool m_tcpControlConnected = false;
+    bool m_tcpControlOwned = false;
     bool m_gatewayConnected = false;
     bool m_canBitrateRequestPending = false;
     QPointer<class FirmwareHistoryDialog> m_historyDialog;
