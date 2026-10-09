@@ -11,6 +11,7 @@
 #include "communication/bootloader/BootloaderBatchCommands.h"
 #include "communication/bootloader/BootloaderProtocol.h"
 #include "ui/common/AppProgressBar.h"
+#include "ui/common/AppLineEdit.h"
 #include "ui/common/UiPrimitives.h"
 
 #include <QDateTime>
@@ -41,6 +42,8 @@
 #include <QScrollBar>
 #include <QSizePolicy>
 #include <QSignalBlocker>
+#include <QSettings>
+#include <QSpinBox>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTextBrowser>
@@ -601,10 +604,39 @@ FirmwarePage::FirmwarePage(QWidget *parent, bool autoConnect) : QWidget(parent)
     auto *connectionRow = new QHBoxLayout(m_connectionBar);
     connectionRow->setContentsMargins(12, 4, 12, 4);
     connectionRow->setSpacing(8);
-    connectionRow->addWidget(makeLabel(QStringLiteral("USB CDC 通信"), QStringLiteral("sectionTitle")));
+    m_connectionMode = new QComboBox;
+    m_connectionMode->setObjectName(QStringLiteral("connectionModeCombo"));
+    m_connectionMode->addItems({QStringLiteral("USB CDC"), QStringLiteral("Nano TCP")});
+    const QSettings connectionSettings;
+    m_connectionMode->setCurrentIndex(connectionSettings.value(QStringLiteral("communication/linkMode"), 0).toInt() == 1 ? 1 : 0);
+    connectionRow->addWidget(m_connectionMode);
     m_serialDeviceCombo = new QComboBox;
     m_serialDeviceCombo->setMinimumWidth(250);
     connectionRow->addWidget(m_serialDeviceCombo, 1);
+    m_tcpPanel = new QWidget;
+    auto *tcpRow = new QHBoxLayout(m_tcpPanel);
+    tcpRow->setContentsMargins(0, 0, 0, 0); tcpRow->setSpacing(6);
+    m_tcpHost = new AppLineEdit;
+    m_tcpHost->setObjectName(QStringLiteral("nanoHostEdit"));
+    m_tcpHost->setPlaceholderText(QStringLiteral("Nano 地址"));
+    m_tcpHost->setText(connectionSettings.value(QStringLiteral("communication/tcpHost")).toString());
+    m_tcpHost->setMinimumWidth(120);
+    tcpRow->addWidget(m_tcpHost, 1);
+    m_tcpPort = new QSpinBox;
+    m_tcpPort->setObjectName(QStringLiteral("nanoPortSpin"));
+    m_tcpPort->setRange(1, 65535);
+    m_tcpPort->setValue(connectionSettings.value(QStringLiteral("communication/tcpPort"), 9000).toInt());
+    tcpRow->addWidget(m_tcpPort);
+    m_tcpAllowWrites = new QCheckBox(QStringLiteral("允许发送"));
+    m_tcpAllowWrites->setObjectName(QStringLiteral("nanoAllowWrites"));
+    m_tcpAllowWrites->setToolTip(QStringLiteral("默认只读；发送命令还需要 Nano 服务开启 tcp_allow_tx"));
+    tcpRow->addWidget(m_tcpAllowWrites);
+    m_tcpConnect = makeButton(QStringLiteral("连接"), QStringLiteral("primaryButton"));
+    m_tcpConnect->setObjectName(QStringLiteral("nanoConnectButton"));
+    tcpRow->addWidget(m_tcpConnect);
+    connectionRow->addWidget(m_tcpPanel, 2);
+    m_tcpPanel->setVisible(m_connectionMode->currentIndex() == 1);
+    m_serialDeviceCombo->setVisible(m_connectionMode->currentIndex() == 0);
     connectionRow->addWidget(makeLabel(QStringLiteral("升级总线"), QStringLiteral("mutedLabel")));
     m_transferModeCombo = new QComboBox;
     m_transferModeCombo->setToolTip(
@@ -618,6 +650,37 @@ FirmwarePage::FirmwarePage(QWidget *parent, bool autoConnect) : QWidget(parent)
                                QStringLiteral("mutedLabel"));
     m_serialStatus->setTextFormat(Qt::RichText);
     connectionRow->addWidget(m_serialStatus, 1);
+    if (m_connectionMode->currentIndex() == 1)
+        m_serialStatus->setText(connectionStatusText(false, QStringLiteral("填写 Nano 地址后连接 · 默认只读")));
+    connect(m_connectionMode, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this, autoConnect](int mode) {
+                m_communication->close();
+                QSettings().setValue(QStringLiteral("communication/linkMode"), mode);
+                m_tcpPanel->setVisible(mode == 1); m_serialDeviceCombo->setVisible(mode == 0);
+                m_tcpConnect->setText(QStringLiteral("连接"));
+                m_tcpHost->setEnabled(true); m_tcpPort->setEnabled(true); m_tcpAllowWrites->setEnabled(true);
+                m_serialStatus->setText(connectionStatusText(false, mode == 1 ? QStringLiteral("填写 Nano 地址后连接") : QStringLiteral("USB 设备扫描中")));
+                if (mode == 0 && autoConnect) refreshSerialDevices();
+            });
+    connect(m_tcpConnect, &QPushButton::clicked, this, [this]() {
+        if (m_communication->isTcpRequested())
+        {
+            m_communication->close();
+            m_tcpConnect->setText(QStringLiteral("连接"));
+            m_tcpHost->setEnabled(true); m_tcpPort->setEnabled(true); m_tcpAllowWrites->setEnabled(true);
+            m_serialStatus->setText(connectionStatusText(false, QStringLiteral("已断开，自动重连已停止")));
+            return;
+        }
+        const QString host = m_tcpHost->text().trimmed();
+        const auto port = static_cast<quint16>(m_tcpPort->value());
+        if (m_communication->openTcp(host, port, m_tcpAllowWrites->isChecked()))
+        {
+            QSettings settings; settings.setValue(QStringLiteral("communication/tcpHost"), host);
+            settings.setValue(QStringLiteral("communication/tcpPort"), port);
+            m_tcpConnect->setText(QStringLiteral("断开"));
+            m_tcpHost->setEnabled(false); m_tcpPort->setEnabled(false); m_tcpAllowWrites->setEnabled(false);
+        }
+    });
 
     auto *multiCard = new CardWidget(QStringLiteral("7+1 多节点并行升级配置"), IconKind::Firmware);
     m_multiModePanel = multiCard;
@@ -1076,6 +1139,11 @@ FirmwarePage::FirmwarePage(QWidget *parent, bool autoConnect) : QWidget(parent)
             });
 
     m_communication = new BootloaderCommunicationService(this);
+    connect(m_communication, &BootloaderCommunicationService::connectionStatusChanged, this,
+            [this](const QString &message) {
+                if (m_connectionMode->currentIndex() == 1)
+                    m_serialStatus->setText(connectionStatusText(m_communication->isOpen(), message.toHtmlEscaped()));
+            });
     m_bootloader = new BootloaderService(m_communication, this);
     m_batchCommands = new BootloaderBatchCommands(
         [this](quint8 target, BootCommand command, quint8 byte2) {
@@ -1281,6 +1349,12 @@ FirmwarePage::FirmwarePage(QWidget *parent, bool autoConnect) : QWidget(parent)
             m_upgradeSequence, &BootloaderUpgradeSequence::cancel);
     connect(m_communication, &BootloaderCommunicationService::closed,
             m_autonomousUpgrade, &BootloaderAutonomousUpgrade::cancel);
+    connect(m_communication, &BootloaderCommunicationService::closed,
+            m_downloadController, &BootloaderDownloadController::cancel);
+    connect(m_communication, &BootloaderCommunicationService::closed,
+            m_firmwareReader, &BootloaderFirmwareReader::cancel);
+    connect(m_communication, &BootloaderCommunicationService::closed,
+            m_bootloader, &BootloaderService::cancelDataWindow);
     connect(m_targetNodeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &FirmwarePage::selectNode);
     connect(m_nodeTable, &QTableWidget::cellClicked, this, &FirmwarePage::selectTableRow);
@@ -1712,10 +1786,11 @@ void FirmwarePage::startBatchCommands(const QVector<BootCommand> &commands, cons
 void FirmwarePage::updateSafetyLock()
 {
     const int index = m_targetNodeCombo == nullptr ? -1 : m_targetNodeCombo->currentIndex();
-    const bool connected = m_communication != nullptr && m_communication->isOpen();
+    const bool linkConnected = m_communication != nullptr && m_communication->isOpen();
+    const bool connected = m_communication != nullptr && m_communication->writesAllowed();
     if (m_demoBanner != nullptr)
     {
-        m_demoBanner->setText(connected ? QStringLiteral("实际模式") : QStringLiteral("离线"));
+        m_demoBanner->setText(linkConnected ? (connected ? QStringLiteral("实际模式") : QStringLiteral("只读监测")) : QStringLiteral("离线"));
         m_demoBanner->setObjectName(connected ? QStringLiteral("statusGood")
                                              : QStringLiteral("statusWarn"));
         m_demoBanner->style()->unpolish(m_demoBanner);
@@ -1732,6 +1807,7 @@ void FirmwarePage::updateSafetyLock()
     const bool readerRunning = m_firmwareReader != nullptr && m_firmwareReader->isRunning();
     const bool batchRunning = m_batchCommands != nullptr && m_batchCommands->isRunning();
     const bool idle = !downloadRunning && !sequenceRunning && !readerRunning && !batchRunning;
+    if (m_connectionMode != nullptr) m_connectionMode->setEnabled(idle);
     if (m_readFirmwareButton != nullptr)
     {
         m_readFirmwareButton->setText(readerRunning ? QStringLiteral("取消读取")
@@ -2891,6 +2967,8 @@ void FirmwarePage::exportRecordedLogs()
 
 void FirmwarePage::refreshSerialDevices()
 {
+    if (m_connectionMode != nullptr && m_connectionMode->currentIndex() == 1)
+        return;
     if (m_serialDeviceCombo == nullptr)
         return;
     if (m_communication != nullptr && m_communication->isOpen())
