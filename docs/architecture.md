@@ -3,6 +3,10 @@
 这份文档按三层阅读：先看系统总览，再看局部职责，最后看关键数据流细节。
 每张图只回答一个问题，不用一张图塞下整个工程。
 
+新增 Nano 网络入口：`TcpTransport` 与 `SerialTransport` 共用 `ByteTransport`，
+由原 `BootloaderCommunicationService` 选择通道并处理相同原始协议。
+页面只提供地址/端口/只读选择，未增加另一套协议或数据服务；见 [TCP 接入](nano-tcp.md)。
+
 ## 第一层：系统总览
 
 问题：数据从哪里来，经过哪些边界，最后到达哪个页面？
