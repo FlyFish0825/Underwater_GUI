@@ -1151,7 +1151,7 @@ void DashboardPage::refreshSensorValues()
     else if (sensorDepth) depthSource = QStringLiteral("深度计测量 / 滤波值");
     else if (!m_sensorSnapshot.connected) depthSource = QStringLiteral("网关未连接");
     else if (!m_sensorSnapshot.devices[1].online) depthSource = QStringLiteral("深度计离线 / 待数据");
-    else if (!(m_sensorSnapshot.devices[1].status & SensorStatus::ModelConfirmed)) depthSource = QStringLiteral("深度计压力配置未就绪");
+    else if (!m_sensorSnapshot.pressureValid) depthSource = QStringLiteral("深度计压力数据无效 / 待新样本");
     else if (!m_sensorSnapshot.zeroValid) depthSource = QStringLiteral("深度计未设置水面零点");
     else depthSource = QStringLiteral("深度计数据无效 / 已过期");
     const QString attitudeSource = systemAttitude ? QStringLiteral("整机状态")

@@ -88,16 +88,17 @@ int main(int argc,char **argv)
     f.confirmed=true; page->setSensorParameterFeedback(f); CHECK(!feedback->text().contains(QStringLiteral("设备确认"))); // IMU cache stays unconfirmed
     s.devices[0].pending=true; page->setSensorSnapshot(s); CHECK(!write->isEnabled()&&!editor->isEnabled());
     s.devices[1].infoKnown=true; s.devices[1].name=QStringLiteral("MS5837 (test fixture)");
-    s.devices[1].capabilities=(1U<<10)|(1U<<11)|(1U<<5); s.devices[1].online=true;
+    s.devices[1].capabilities=(1U<<10)|(1U<<5); s.devices[1].online=true;
     s.devices[1].status=SensorStatus::Online|SensorStatus::PromValid|SensorStatus::RawValid;
     s.depthRawValid=true;
     s.depthAgeMs=10; s.rawAdcD1=12345; s.rawAdcD2=56789;
     s.devices[1].statusKnown=true; s.devices[1].sampleSequence=45475; s.devices[1].goodFrames=45475;
     s.devices[1].sampleAgeMs=30; s.devices[1].sequence=861; s.depthTimestampUs=1818405000U;
-    s.devices[1].model=2; page->setSensorSnapshot(s);
+    page->setSensorSnapshot(s);
     auto *depthRate=panel->findChild<QSpinBox *>(QStringLiteral("sensor2Param0001Editor"));
     auto *density=panel->findChild<QDoubleSpinBox *>(QStringLiteral("sensor2Param0102Editor"));
     auto *filter=panel->findChild<QDoubleSpinBox *>(QStringLiteral("sensor2Param0104Editor"));
+    CHECK(!panel->findChild<QDoubleSpinBox *>(QStringLiteral("sensor2Param0103Editor")));
     CHECK(depthRate && depthRate->minimum()==1 && depthRate->maximum()==45);
     CHECK(density && density->value()==1029 && filter && filter->value()==0);
     CHECK(panel->findChild<QLabel *>(QStringLiteral("depthDeviceInfo"))->text().contains(QStringLiteral("MS5837-02BA")));
@@ -112,8 +113,8 @@ int main(int argc,char **argv)
     s.depthRawValid=true; page->setSensorSnapshot(s);
     CHECK(!zero->isEnabled()&&depthValue->text()==QStringLiteral("--"));
     CHECK(dep->item(0,1)->text()==QStringLiteral("--")&&dep->item(5,1)->text()==QStringLiteral("12345"));
-    CHECK(sources->text().contains(QStringLiteral("压力配置未就绪")));
-    s.devices[1].status|=SensorStatus::ModelConfirmed; page->setSensorSnapshot(s);
+    CHECK(sources->text().contains(QStringLiteral("压力数据无效")));
+    s.pressureValid=true; page->setSensorSnapshot(s);
     CHECK(sources->text().contains(QStringLiteral("水面零点")));
     s.pressureValid=s.temperatureValid=s.depthValid=s.zeroValid=s.surfacePressureValid=true;
     s.devices[1].status|=SensorStatus::PressureValid|SensorStatus::TemperatureValid|SensorStatus::DepthValid|SensorStatus::ZeroValid;
@@ -137,19 +138,10 @@ int main(int argc,char **argv)
     s.depthAgeMs=10; s.pressureValid=s.temperatureValid=s.depthValid=true;
     s.depthFilteredM=0; page->setSensorSnapshot(s); CHECK(depthValue->text()==QStringLiteral("0.00 m"));
     s.depthFilteredM=2.0312; page->setSensorSnapshot(s);
-    SensorParameterFeedback notReady; notReady.target=kDepthSensor; notReady.parameterId=0x0103;
-    notReady.message=QStringLiteral("未采集水面零点（NOT_READY，通信正常）");
-    page->setSensorParameterFeedback(notReady);
-    const auto *zeroFeedback=panel->findChild<QLabel *>(QStringLiteral("sensor2Param0103Feedback"));
-    CHECK(zeroFeedback && zeroFeedback->text().contains(QStringLiteral("NOT_READY")));
-    CHECK(zeroFeedback && !zeroFeedback->text().contains(QStringLiteral("设备确认")));
     s.devices[1].sampleAgeMs=-1; page->setSensorSnapshot(s);
     CHECK(panel->findChild<QLabel *>(QStringLiteral("depthDeviceStatus"))->text().contains(QStringLiteral("设备尚无样本")));
     s.devices[1].sampleAgeMs=30; page->setSensorSnapshot(s);
     // Restore a coherent fixture for screenshots after checking the NOT_READY presentation.
-    notReady.value=101325.0; notReady.confirmed=true; notReady.message.clear();
-    page->setSensorParameterFeedback(notReady);
-    CHECK(zeroFeedback->text().contains(QStringLiteral("设备确认")));
     auto *depthInfoRead=panel->findChild<QPushButton *>(QStringLiteral("sensor2Command01"));
     CHECK(depthInfoRead && depthInfoRead->toolTip().contains(QStringLiteral("只读")));
     // Hiding or switching a tab must not send STOP_STREAM or destroy edited values.
@@ -175,31 +167,20 @@ int main(int argc,char **argv)
     if(collapse) collapse->click();
     CHECK(panel->isHidden()&&!toggle->isChecked()&&requests==1);
 
-    // The fixed probe model is read-only; no model confirmation or write control is exposed.
+    // The fixed probe has no model query, confirmation, or write control.
     {
         DashboardPage fixedPage;
         SensorSnapshot live; live.connected = true;
-        live.devices[1].infoKnown = true; live.devices[1].capabilities = 1U << 11;
-        live.devices[1].model = 30; // A real mismatch must not be disguised as confirmed 02BA.
-        live.devices[1].lastRequestHex = QStringLiteral("AA 5B 01 04 01 02");
-        live.devices[1].lastReplyHex = QStringLiteral("AA 5B 01 44 06 02");
+        live.devices[1].infoKnown = true; live.devices[1].capabilities = 0;
         fixedPage.setSensorSnapshot(live);
-        auto *fixedModel = fixedPage.findChild<QLabel *>(QStringLiteral("sensor2Param0105Editor"));
-        auto *applyModel = fixedPage.findChild<QPushButton *>(QStringLiteral("sensor2Param0105Write"));
-        auto *commandLabel = fixedPage.findChild<QLabel *>(QStringLiteral("depthCommandResult"));
-        CHECK(fixedModel && fixedModel->text() == QStringLiteral("MS5837-02BA（固定）"));
-        CHECK(!fixedPage.findChild<QComboBox *>(QStringLiteral("sensor2Param0105Editor")));
+        CHECK(fixedPage.findChild<QComboBox *>(QStringLiteral("sensor2Param0105Editor")) == nullptr);
         CHECK(fixedPage.findChild<QLabel *>(QStringLiteral("depthDeviceInfo"))->text().contains(QStringLiteral("MS5837-02BA")));
-        CHECK(commandLabel && commandLabel->toolTip().contains(live.devices[1].lastRequestHex));
-        CHECK(commandLabel && commandLabel->toolTip().contains(live.devices[1].lastReplyHex));
         int modelRequests = 0;
         QObject::connect(&fixedPage, &DashboardPage::sensorRequestIssued,
                          [&](const SensorRequest &) { ++modelRequests; });
-        CHECK(modelRequests == 0 && !applyModel);
-        if (applyModel) applyModel->click();
         CHECK(modelRequests == 0);
         live.devices[1].pending = true; fixedPage.setSensorSnapshot(live);
-        CHECK(fixedModel->text() == QStringLiteral("MS5837-02BA（固定）"));
+        CHECK(modelRequests == 0);
     }
 
 
@@ -207,7 +188,7 @@ int main(int argc,char **argv)
     {
         DashboardPage linkedPage;
         SensorSnapshot live; live.connected = true;
-        live.devices[1].infoKnown = true; live.devices[1].model = 2; live.devices[1].capabilities = 1U << 11;
+        live.devices[1].infoKnown = true; live.devices[1].capabilities = 1U << 11;
         linkedPage.setSensorSnapshot(live);
         auto *rate = linkedPage.findChild<QSpinBox *>(QStringLiteral("sensor2Param0001Editor"));
         auto *osr = linkedPage.findChild<QComboBox *>(QStringLiteral("sensor2Param0101Editor"));

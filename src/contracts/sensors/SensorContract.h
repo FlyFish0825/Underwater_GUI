@@ -37,7 +37,6 @@ constexpr quint32 ZeroValid = 1U << 7;
 constexpr quint32 PromValid = 1U << 8;
 constexpr quint32 PinBlocked = 1U << 9;
 constexpr quint32 ConfigUnknown = 1U << 10;
-constexpr quint32 ModelConfirmed = 1U << 11;
 }
 
 // Fixed 02BA business constraint shared by the view and service. See host protocol section 5.1.
@@ -79,7 +78,7 @@ struct SensorDeviceState
     bool online = false;
     bool pending = false;
     SensorStreamState streamState = SensorStreamState::Unknown;
-    quint8 model = 0;
+    quint8 model = 0; // IMU descriptor only; the fixed depth probe has no model workflow.
     quint32 capabilities = 0;
     quint32 status = 0;
     quint32 goodFrames = 0;

@@ -166,7 +166,7 @@ SensorPanel::SensorPanel(QWidget *parent) : QWidget(parent)
     m_depthCommand->setObjectName(QStringLiteral("depthCommandResult"));
     auto *da = new QHBoxLayout;
     auto *depthInfoRead = actionButton(QStringLiteral("读取信息"), kDepthSensor, SensorOperation::GetInfo);
-    depthInfoRead->setToolTip(QStringLiteral("读取描述后自动逐项读取状态与六个参数；只读，不写入编辑框默认值。"));
+    depthInfoRead->setToolTip(QStringLiteral("读取描述后自动逐项读取状态与五个参数；只读，不写入编辑框默认值。"));
     da->addWidget(depthInfoRead);
     da->addWidget(actionButton(QStringLiteral("查询状态"), kDepthSensor, SensorOperation::GetStatus));
     da->addWidget(actionButton(QStringLiteral("开始上传"), kDepthSensor, SensorOperation::StartStream));
@@ -183,23 +183,15 @@ SensorPanel::SensorPanel(QWidget *parent) : QWidget(parent)
     depthData->contentLayout()->addWidget(m_depthTable); dl->addWidget(depthData);
     auto *dc = new CardWidget(QStringLiteral("深度计参数 · 当前仅保存在 H750 RAM"), IconKind::Settings);
     auto *dg = new QGridLayout;
-    // The operator has confirmed this vehicle's physical probe: there is no model selector.
-    auto *model = makeLabel(QStringLiteral("MS5837-02BA（固定）"), QStringLiteral("bodyValue"));
-    model->setObjectName(QStringLiteral("sensor2Param0105Editor"));
-    model->setMinimumWidth(110);
-    model->setToolTip(QStringLiteral("MS5837-02BA 固定型号，不提供型号选择、确认或写入。"));
-    dg->addWidget(makeLabel(QStringLiteral("探头型号")), 0, 0);
-    dg->addWidget(model, 0, 1, 1, 4);
     m_depthRate = integerEditor(1, depth02baMaxRateHz(4096), 25);
-    addParameter(dg, 1, kDepthSensor, 0x0001, QStringLiteral("输出频率 / Hz"), m_depthRate, 11);
+    addParameter(dg, 0, kDepthSensor, 0x0001, QStringLiteral("输出频率 / Hz"), m_depthRate, 11);
     auto *osr = new AppComboBox; m_depthOsr = osr;
     for (int n : {256, 512, 1024, 2048, 4096, 8192})
         osr->addItem(QStringLiteral("%1（1–%2 Hz）").arg(n).arg(depth02baMaxRateHz(n)), n);
     osr->setCurrentIndex(osr->findData(4096));
-    addParameter(dg, 2, kDepthSensor, 0x0101, QStringLiteral("过采样 OSR"), osr, 11);
-    addParameter(dg, 3, kDepthSensor, 0x0102, QStringLiteral("水密度 / kg/m³"), decimalEditor(900, 1300, 1029, 2), 11);
-    addParameter(dg, 4, kDepthSensor, 0x0103, QStringLiteral("水面压力 P0 / Pa"), decimalEditor(10000, 200000, 101325, 1), 11);
-    addParameter(dg, 5, kDepthSensor, 0x0104, QStringLiteral("滤波 K（越大越平滑）"), decimalEditor(0, 0.99, 0, 2), 11);
+    addParameter(dg, 1, kDepthSensor, 0x0101, QStringLiteral("过采样 OSR"), osr, 11);
+    addParameter(dg, 2, kDepthSensor, 0x0102, QStringLiteral("水密度 / kg/m³"), decimalEditor(900, 1300, 1029, 2), 11);
+    addParameter(dg, 3, kDepthSensor, 0x0104, QStringLiteral("滤波 K（越大越平滑）"), decimalEditor(0, 0.99, 0, 2), 11);
     dc->contentLayout()->addLayout(dg);
     m_depthSamplingNote = makeLabel(QString(), QStringLiteral("mutedLabel"));
     m_depthSamplingNote->setObjectName(QStringLiteral("depthSamplingConstraint"));
@@ -322,7 +314,7 @@ void SensorPanel::setSnapshot(const SensorSnapshot &s)
     m_imuCommand->setToolTip(i.lastRequestHex.isEmpty() ? QStringLiteral("尚无命令报文")
         : QStringLiteral("最近请求编码（提交帧，不代表发送成功）：\n%1\n匹配回复 RX：\n%2").arg(i.lastRequestHex,
             i.lastReplyHex.isEmpty() ? QStringLiteral("尚无匹配回复") : i.lastReplyHex));
-    m_depthStatus->setText(QStringLiteral("%1 · PROM %2 · 固定 02BA · 水面参考 %3 · %4 · 错误 %5")
+    m_depthStatus->setText(QStringLiteral("%1 · PROM %2 · MS5837-02BA · 水面参考 %3 · %4 · 错误 %5")
         .arg(d.online ? QStringLiteral("I2C 设备在线") : QStringLiteral("设备离线 / 尚无数据"),
              (d.status & SensorStatus::PromValid) ? QStringLiteral("已校验") : QStringLiteral("未通过"),
              s.zeroValid ? QStringLiteral("已设定") : QStringLiteral("未设定"),

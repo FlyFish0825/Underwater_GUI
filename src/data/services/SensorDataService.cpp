@@ -97,13 +97,13 @@ bool SensorDataService::request(const SensorRequest &r)
         m_depthSampling.active = true;
         m_depthSampling.osr = r.samplingOsr;
         m_depthSampling.rateHz = r.samplingRateHz;
-        for (quint16 id : {quint16(0x0105), quint16(0x0101), quint16(0x0001)})
+        for (quint16 id : {quint16(0x0101), quint16(0x0001)})
         {
             SensorRequest read; read.target = kDepthSensor;
             read.operation = SensorOperation::GetParameter; read.parameterId = id;
             m_depthSampling.steps.append(read);
         }
-        m_state.devices[1].lastCommand = QStringLiteral("正在核对设备当前型号、OSR 和频率，尚未写入");
+        m_state.devices[1].lastCommand = QStringLiteral("正在读取当前 OSR 和频率，尚未写入");
         emit snapshotChanged(snapshot());
         return true;
     }
@@ -120,9 +120,6 @@ bool SensorDataService::sendRequest(const SensorRequest &r, const bool automatic
         error = QStringLiteral("网关未连接，命令未发送");
     else if (m_pending.contains(r.target))
         error = QStringLiteral("该传感器已有请求待确认，请等待结果");
-    else if (r.target == kDepthSensor && r.operation == SensorOperation::SetParameter
-             && r.parameterId == 0x0105)
-        error = QStringLiteral("本机探头型号固定为 MS5837-02BA；型号只读，保留已有水面参考");
     else if (!makeSensorRequestPayload(r, payload, error)) {}
     else if (r.target == kImuSensor && r.operation == SensorOperation::SetParameter
              && (device.status & SensorStatus::PinBlocked))
@@ -183,19 +180,16 @@ void SensorDataService::applyStatus(const quint8 target, const quint32 status)
     }
     else
     {
-        const bool ready = d.online && (status & SensorStatus::PromValid)
-                           && (status & SensorStatus::ModelConfirmed)
-                           && !(status & SensorStatus::ConfigUnknown);
-        if (!ready) m_state.pressureValid = m_state.temperatureValid = m_state.depthValid = false;
+        const bool compensationReady = d.online && (status & SensorStatus::PromValid);
         if (!d.online || !(status & SensorStatus::RawValid) || !(status & SensorStatus::PromValid))
             m_state.depthRawValid = false;
-        if (!(status & SensorStatus::PressureValid)) m_state.pressureValid = false;
-        if (!(status & SensorStatus::TemperatureValid)) m_state.temperatureValid = false;
-        if (!(status & SensorStatus::PressureValid) || !(status & SensorStatus::DepthValid)
+        if (!compensationReady || !(status & SensorStatus::PressureValid)) m_state.pressureValid = false;
+        if (!compensationReady || !(status & SensorStatus::TemperatureValid)) m_state.temperatureValid = false;
+        if (!compensationReady || !(status & SensorStatus::PressureValid) || !(status & SensorStatus::DepthValid)
             || !(status & SensorStatus::ZeroValid))
             m_state.depthValid = false;
         m_state.zeroValid = (status & SensorStatus::ZeroValid) != 0;
-        if (!ready || !m_state.zeroValid) m_state.surfacePressureValid = false;
+        if (!compensationReady || !m_state.zeroValid) m_state.surfacePressureValid = false;
         // A status-only frame may invalidate P0, but cannot supply a new numeric P0.
     }
 }
@@ -300,7 +294,7 @@ void SensorDataService::handleFrame(const SensorFrame &frame)
         m_depthSeen = -1;
         m_depthNotBeforeUs = frame.timestampUs;
         m_depthAwaitingSample = true;
-        if (completedRequest.operation == SensorOperation::ZeroDepth || completedRequest.parameterId == 0x0105)
+        if (completedRequest.operation == SensorOperation::ZeroDepth)
             m_state.zeroValid = false;
     }
     m_clockAnchorSeen.at(frame.target - 1) = m_clock.elapsed();
@@ -375,12 +369,12 @@ bool SensorDataService::consumeTelemetry(const SensorFrame &f, const qint64 deli
         m_state.rawAdcD1 = SensorWire::read32(p, 24); m_state.rawAdcD2 = SensorWire::read32(p, 28);
         m_state.depthRawValid = (flags & SensorStatus::Online) && (flags & SensorStatus::PromValid)
                                 && (flags & SensorStatus::RawValid);
-        const bool ready = (flags & SensorStatus::Online) && (flags & SensorStatus::PromValid)
-                           && (flags & SensorStatus::ModelConfirmed)
-                           && !(flags & SensorStatus::ConfigUnknown);
-        m_state.surfacePressureValid = ready && m_state.zeroValid;
-        m_state.pressureValid = ready && (flags & SensorStatus::PressureValid);
-        m_state.temperatureValid = ready && (flags & SensorStatus::TemperatureValid);
+        const bool compensationReady = (flags & SensorStatus::Online) && (flags & SensorStatus::PromValid);
+        m_state.surfacePressureValid = compensationReady && m_state.zeroValid && std::isfinite(m_state.surfacePressurePa);
+        m_state.pressureValid = compensationReady && (flags & SensorStatus::PressureValid)
+            && std::isfinite(m_state.pressurePa);
+        m_state.temperatureValid = compensationReady && (flags & SensorStatus::TemperatureValid)
+            && std::isfinite(m_state.temperatureC);
         m_state.depthValid = m_state.pressureValid && m_state.zeroValid && (flags & SensorStatus::DepthValid);
         m_depthSeen = now; m_state.depthTimestampUs = f.timestampUs;
         m_depthDeliveryAgeMs = deliveryAgeMs;
@@ -418,10 +412,12 @@ bool SensorDataService::consumeReply(const SensorFrame &f, const SensorResult re
     if (operation == SensorOperation::GetInfo)
     {
         if (p.size() != 31 || quint8(p.at(1)) != f.target || result != SensorResult::Ok) return false;
-        if (f.target == kImuSensor && quint8(p.at(2)) != 0) return false; // Not a 6/9-axis selector.
-        if (f.target == kDepthSensor && quint8(p.at(2)) != 0
-            && quint8(p.at(2)) != 2 && quint8(p.at(2)) != 30) return false;
-        d.model = quint8(p.at(2)); d.capabilities = SensorWire::read32(p, 3);
+        if (f.target == kImuSensor)
+        {
+            if (quint8(p.at(2)) != 0) return false; // Not a 6/9-axis selector.
+            d.model = quint8(p.at(2));
+        }
+        d.capabilities = SensorWire::read32(p, 3);
         d.name = fixedText(p.mid(7, 16)); d.firmware = fixedText(p.mid(23, 8)); d.infoKnown = true;
         return true;
     }
@@ -444,9 +440,6 @@ bool SensorDataService::consumeReply(const SensorFrame &f, const SensorResult re
             if (!makeSensorRequestPayload(validation, expected, error) || expected != p.mid(1)) return false;
             if (pending.payload != p.mid(1)) return false;
         }
-        else if (f.target == kDepthSensor && id == 0x0105
-                 && value.toUInt() != 0U && value.toUInt() != 2U && value.toUInt() != 30U)
-            return false;
         SensorParameterFeedback feedback;
         feedback.target = f.target; feedback.parameterId = id; feedback.value = value;
         feedback.confirmed = f.target == kDepthSensor && result == SensorResult::Ok;
@@ -456,8 +449,6 @@ bool SensorDataService::consumeReply(const SensorFrame &f, const SensorResult re
                 : QStringLiteral("最后下发缓存 / 未确认（UNCONFIRMED；非设备读回）");
         if (feedback.confirmed && f.target == kDepthSensor)
         {
-            if (id == 0x0105 && operation == SensorOperation::GetParameter)
-                d.model = quint8(value.toUInt());
             if (m_depthSampling.active)
             {
                 if (id == 0x0101) m_depthSampling.currentOsr = quint16(value.toUInt());
@@ -505,11 +496,11 @@ void SensorDataService::finish(const quint8 target, SensorResult result, const Q
             if (!change.applying)
             {
                 const int currentMaximum = depth02baMaxRateHz(change.currentOsr);
-                if (d.model != 2 || !currentMaximum || change.currentRateHz < 1
+                if (!currentMaximum || change.currentRateHz < 1
                     || change.currentRateHz > currentMaximum)
                 {
                     result = SensorResult::BadValue;
-                    completionDetail = QStringLiteral("设备型号须为 02BA，且当前 OSR/频率须已有效读回；未写入组合");
+                    completionDetail = QStringLiteral("当前 OSR/频率须已有效读回；未写入组合");
                 }
                 else
                 {

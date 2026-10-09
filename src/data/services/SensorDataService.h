@@ -39,7 +39,7 @@ class SensorDataService final : public QObject
     struct DepthSamplingChange
     {
         bool active = false;
-        bool applying = false; // false: read current model/OSR/rate; true: apply and verify.
+        bool applying = false; // false: read current OSR/rate; true: apply and verify.
         quint16 osr = 0, rateHz = 0;
         quint16 currentOsr = 0, currentRateHz = 0;
         QVector<SensorRequest> steps; // At most 4; no retries or rollback writes.

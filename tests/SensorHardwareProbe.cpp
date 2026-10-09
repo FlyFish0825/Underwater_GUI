@@ -109,7 +109,7 @@ struct Probe {
         check(query(SensorOperation::GetInfo)==SensorResult::Ok,"depth GET_INFO through production SensorDataService");
         check(service.snapshot().devices[1].infoKnown,"depth descriptor accepted");
         check(query(SensorOperation::GetStatus)==SensorResult::Ok,"depth GET_STATUS through production service");
-        for(quint16 id:{quint16(0x0001),quint16(0x0101),quint16(0x0102),quint16(0x0103),quint16(0x0104),quint16(0x0105)}) {
+        for(quint16 id:{quint16(0x0001),quint16(0x0101),quint16(0x0102),quint16(0x0103),quint16(0x0104)}) {
             const auto result=query(SensorOperation::GetParameter,id);
             check(result==SensorResult::Ok||(id==0x0103&&result==SensorResult::NotReady),
                   QString("depth GET_PARAMETER %1 (unset zero may be NOT_READY)").arg(id,4,16,QChar('0')));
@@ -121,12 +121,9 @@ struct Probe {
         check(s.depthRawValid&&s.rawAdcD1>0&&s.rawAdcD1<0xFFFFFF&&s.rawAdcD2>0&&s.rawAdcD2<0xFFFFFF,
               "fresh, valid depth D1/D2 ADC measurements");
         check(heartbeats>0,"AA58 heartbeat and depth AA5B coexist");
-        const bool confirmed=(d.status&SensorStatus::ModelConfirmed)&&!(d.status&SensorStatus::ConfigUnknown);
-        if(confirmed)check(s.pressureValid&&s.temperatureValid,"confirmed model produces valid pressure and temperature");
-        else check(!s.pressureValid&&!s.temperatureValid&&!s.depthValid,"unknown model is never shown as physical zero");
         if(!(d.status&SensorStatus::ZeroValid))check(!s.depthValid,"unset water zero remains unavailable, not 0 m");
         check(s.depthAgeMs>=0&&s.depthAgeMs<=2500,"sample freshness uses its device production timestamp");
-        depthReadOnly=QJsonObject{{"mode","depth-read-only"},{"model",int(d.model)},
+        depthReadOnly=QJsonObject{{"mode","depth-read-only"},{"probe","MS5837-02BA"},
             {"status",double(d.status)},{"sample_sequence",double(d.sampleSequence)},
             {"stream_sequence",double(d.sequence)},{"device_sample_age_ms",double(d.sampleAgeMs)},
             {"good_frames",double(d.goodFrames)},{"errors",double(d.errors)},
@@ -144,14 +141,12 @@ struct Probe {
     void runDepthSampling() {
         depthReadOnly = QJsonObject{{"mode","depth-sampling-test"},
             {"limitations","Explicit OSR/rate RAM changes only, originals restored and checked. No model/zero/IMU/CAN/flash changes. Not an accuracy calibration."}};
-        const auto modelFrame = parameter(2,0x0105);
         const auto osrFrame = parameter(2,0x0101), rateFrame = parameter(2,0x0001), zeroBefore = parameter(2,0x0103);
-        quint16 id=0; QVariant model, originalOsr, originalRate;
-        const bool saved = result(modelFrame)==0 && decodeSensorParameter(modelFrame.payload.mid(1),id,model) && id==0x0105
-            && result(osrFrame)==0 && decodeSensorParameter(osrFrame.payload.mid(1),id,originalOsr) && id==0x0101
+        quint16 id=0; QVariant originalOsr, originalRate;
+        const bool saved = result(osrFrame)==0 && decodeSensorParameter(osrFrame.payload.mid(1),id,originalOsr) && id==0x0101
             && result(rateFrame)==0 && decodeSensorParameter(rateFrame.payload.mid(1),id,originalRate) && id==0x0001;
-        check(saved && model.toUInt()==2, "save original 02BA OSR/rate before any writes");
-        if(!saved || model.toUInt()!=2)return;
+        check(saved, "save original OSR/rate before any writes");
+        if(!saved)return;
         depthReadOnly.insert("original_osr",originalOsr.toInt());
         depthReadOnly.insert("original_rate_hz",originalRate.toInt());
         SensorDataService service;
@@ -218,7 +213,6 @@ struct Probe {
         auto snapshot=service.snapshot();
         check(submitted && snapshot.devices[0].infoKnown,"IMU GET_INFO accepted by production service");
         if(!snapshot.devices[0].infoKnown)return;
-        check(snapshot.devices[0].model==0,"IMU identity remains unknown, never inferred from axes");
         check(snapshot.devices[0].statusKnown,"IMU automatic GET_STATUS decoded");
         check(parameters.size()==2,"IMU two cached parameters automatically queried");
         for(quint16 id:{quint16(1),quint16(3)}) {
@@ -237,7 +231,7 @@ struct Probe {
         check(heartbeats>0,"AA58 heartbeat coexists with IMU AA5B");
         const auto numbers=[](const auto &values){QJsonArray a;for(double v:values)a.append(v);return a;};
         imuReport=QJsonObject{{"mode",exercise?"imu-rate-test":"imu-read-only"},
-            {"firmware",snapshot.devices[0].firmware},{"model",int(snapshot.devices[0].model)},
+            {"firmware",snapshot.devices[0].firmware},
             {"status",double(snapshot.devices[0].status)},{"raw_valid",snapshot.rawValid},
             {"quaternion_valid",snapshot.quaternionValid},{"euler_valid",snapshot.eulerValid},
             {"raw_rate_hz",snapshot.imuRawRateHz},{"combined_attitude_rate_hz",snapshot.imuAttitudeRateHz},
@@ -296,10 +290,6 @@ struct Probe {
                 check(result(request(1,4,p))==9,"blocked IMU SET_PARAMETER rejected without UART TX");
             }
         }
-        const auto model=parameter(2,0x0105);
-        check(result(model)==0 && model.payload.size()==6,"model parameter readable");
-        const bool unknown=model.payload.size()==6 && quint8(model.payload[5])==0;
-        check(unknown,"unconfirmed physical model stays UNKNOWN");
         check(result(request(2,5))==1,"SAVE_CONFIG explicitly unsupported");
         if(ram) {
             roundTrip(0x0001,10); roundTrip(0x0101,1024);
@@ -314,7 +304,6 @@ struct Probe {
             const quint32 d1=SensorWire::read32(lastDepth.payload,24),d2=SensorWire::read32(lastDepth.payload,28);
             check((flags&(1U<<8))!=0,"physical PROM CRC valid");
             check(d1>0 && d1<0xFFFFFF && d2>0 && d2<0xFFFFFF,"physical D1/D2 plausible 24-bit values");
-            if(unknown)check((flags&((1U<<4)|(1U<<5)|(1U<<6)))==0,"unknown model never advertises pressure/temperature/depth valid");
         }
         check(result(request(2,8))==0,"STOP_STREAM reply");
         waitMs(100); const int paused=depthFrames;

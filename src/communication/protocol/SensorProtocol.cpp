@@ -116,6 +116,9 @@ bool makeSensorRequestPayload(const SensorRequest &r, QByteArray &p, QString &er
         return fail(QStringLiteral("当前传感器协议不开放保存、恢复、自检或复位，命令未发送"));
     if (r.operation != SensorOperation::GetParameter && r.operation != SensorOperation::SetParameter)
         return true;
+    if (r.target == kDepthSensor && r.operation == SensorOperation::SetParameter
+        && r.parameterId == 0x0103)
+        return fail(QStringLiteral("保留设备已有水面基准；需要时只通过显式水面归零重新采集"));
 
     quint8 type = 0;
     const bool depth = r.target == kDepthSensor;
@@ -125,7 +128,6 @@ bool makeSensorRequestPayload(const SensorRequest &r, QByteArray &p, QString &er
     case 0x0003: if (!depth) type = 2; break;
     case 0x0101: if (depth) type = 4; break;
     case 0x0102: case 0x0103: case 0x0104: if (depth) type = 7; break;
-    case 0x0105: if (depth && r.operation == SensorOperation::GetParameter) type = 2; break;
     default: break;
     }
     if (!type) return fail(QStringLiteral("该传感器不支持此参数"));
