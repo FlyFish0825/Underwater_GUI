@@ -153,9 +153,12 @@ Bootloader 命令的唯一枚举来源是 `src/communication/bootloader/Bootload
 . 'toolchain/env/activate.ps1'
 ```
 
-构建目录固定为 `build/gui`。VSCode 使用 `.vscode/settings.json`、
+`build/gui` 只保留可直接运行和打包的主程序、必要 DLL 和插件，禁止存放编译缓存、
+静态库、autogen、测试程序、日志、截图或临时脚本。它同级的 `build/test/` 存放全部
+编译缓存、测试输出和证据；主构建缓存为 `build/test/gui`。此约定以用户 2026-10-09
+明确要求为准，覆盖历史的 `build-test/` 约定。VSCode 使用 `.vscode/settings.json`、
 `.vscode/tasks.json`、`.vscode/launch.json` 和根目录 `.clangd`；clangd 必须读取
-`build/gui/compile_commands.json`，并使用项目 MinGW 查询驱动，不能误用 MSVC STL。
+`build/test/gui/compile_commands.json`，并使用项目 MinGW 查询驱动，不能误用 MSVC STL。
 
 ## 8. 验证和交付
 
@@ -163,8 +166,7 @@ Bootloader 命令的唯一枚举来源是 `src/communication/bootloader/Bootload
 
 ```powershell
 . 'toolchain/env/activate.ps1'
-& 'toolchain/cmake/3.28.6/cmake-3.28.6-windows-x86_64/bin/cmake.exe' --build build/gui --parallel 4
-& 'toolchain/cmake/3.28.6/cmake-3.28.6-windows-x86_64/bin/cmake.exe' -E chdir build/gui ctest --output-on-failure
+& 'tools/build-gui.ps1' -BuildType Debug -RunTests
 git diff --check
 ```
 
@@ -172,7 +174,7 @@ git diff --check
 
 ```powershell
 & 'toolchain/llvm/14.0.6/bin/clangd.exe' --check=src/app/MainWindow.cpp `
-  --compile-commands-dir=build/gui `
+  --compile-commands-dir=build/test/gui `
   --query-driver='toolchain/mingw/8.1.0/Tools/mingw810_64/bin/*' --log=error
 ```
 

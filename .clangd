@@ -1,5 +1,5 @@
 CompileFlags:
-  CompilationDatabase: build/gui
+  CompilationDatabase: build/test/gui
 
   Add:
     - -target

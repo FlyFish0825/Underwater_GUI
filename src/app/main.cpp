@@ -3,11 +3,17 @@
 #include <FluentQt/FluentQt.h>
 
 #include <QApplication>
+#include <QBuffer>
 #include <QCoreApplication>
 #include <QFile>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QDir>
+#include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QStringList>
+#include <QTimer>
 
 #ifdef Q_OS_WIN
 #include <QWinEventNotifier>
@@ -110,7 +116,16 @@ int main(int argc, char *argv[])
         application.setStyleSheet(QString::fromUtf8(theme.readAll()));
     }
 
-    rov::MainWindow window;
+    const QStringList arguments = application.arguments();
+    const int smokeIndex = arguments.indexOf(QStringLiteral("--smoke-test"));
+    const bool smokeTest = smokeIndex >= 0;
+    if (smokeTest && smokeIndex + 1 >= arguments.size()) return 2;
+    rov::MainWindow window(nullptr, !smokeTest);
+    if (smokeTest)
+    {
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.setPageIndex(4);
+    }
     for (int i = 1; i < argc - 1; ++i)
     {
         if (QString::fromLocal8Bit(argv[i]) == QStringLiteral("--window-size"))
@@ -124,6 +139,45 @@ int main(int argc, char *argv[])
         }
     }
     window.show();
+    if (smokeTest)
+    {
+        // Opt-in package check: no automatic MCU connection and no fake camera preview.
+        const QString outputDirectory = arguments.at(smokeIndex + 1);
+        const int jpegIndex = arguments.indexOf(QStringLiteral("--smoke-jpeg"));
+        const QString jpegPath = jpegIndex >= 0 && jpegIndex + 1 < arguments.size()
+                                     ? arguments.at(jpegIndex + 1) : QString();
+        QTimer::singleShot(1000, &window, [&, outputDirectory, jpegPath] {
+            QImage jpeg;
+            if (jpegPath.isEmpty())
+            {
+                QImage probe(2, 1, QImage::Format_RGB32);
+                probe.fill(Qt::black);
+                QByteArray encoded;
+                QBuffer buffer(&encoded);
+                buffer.open(QIODevice::WriteOnly);
+                if (probe.save(&buffer, "JPEG")) jpeg = QImage::fromData(encoded, "JPEG");
+            }
+            else jpeg.load(jpegPath);
+            const bool directoryOk = QDir().mkpath(outputDirectory);
+            const bool screenshotOk = directoryOk && window.grab().save(
+                QDir(outputDirectory).filePath(QStringLiteral("startup.png")));
+            const bool ok = screenshotOk && !jpeg.isNull();
+            const QJsonObject report{{QStringLiteral("started"), true},
+                                     {QStringLiteral("platform"), QGuiApplication::platformName()},
+                                     {QStringLiteral("jpegDecoded"), !jpeg.isNull()},
+                                     {QStringLiteral("jpegWidth"), jpeg.width()},
+                                     {QStringLiteral("jpegHeight"), jpeg.height()},
+                                     {QStringLiteral("screenshotSaved"), screenshotOk},
+                                     {QStringLiteral("automaticDeviceConnection"), false},
+                                     {QStringLiteral("passed"), ok}};
+            QFile output(QDir(outputDirectory).filePath(QStringLiteral("startup-result.json")));
+            const QByteArray json = QJsonDocument(report).toJson();
+            const bool reportOk = output.open(QIODevice::WriteOnly) && output.write(json) == json.size();
+            output.close();
+            window.close();
+            application.exit(ok && reportOk ? 0 : 2);
+        });
+    }
 
 #ifdef Q_OS_WIN
     const HWND mainHandle = reinterpret_cast<HWND>(window.winId());

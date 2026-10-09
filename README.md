@@ -140,145 +140,84 @@ AA5B 传感器已接入总览显示，但本记录器尚未记录逐帧 AA5B 数
 
 ## 编译与运行
 
-本工程使用 Windows、Qt Widgets、C++17 和仓库内固定的工具链。请从仓库根目录打开 PowerShell，所有下面的相对路径都以该目录为起点。
-
-| 工具 | 锁定版本 | 仓库内位置 |
-| --- | --- | --- |
-| Qt | 5.15.19 | `toolchain/qt/5.15.19` |
-| MinGW GCC/G++ | 8.1.0 | `toolchain/mingw/8.1.0/Tools/mingw810_64` |
-| CMake | 3.28.6 | `toolchain/cmake/3.28.6/cmake-3.28.6-windows-x86_64` |
-| Ninja | 1.11.1 | `toolchain/ninja/1.11.1` |
-| clangd / clang-format | 14.0.6 | `toolchain/llvm/14.0.6` |
-
-### 编译过程
-
-1. `activate.ps1` 设置仓库和工具链目录变量，并把 Qt、MinGW、CMake、Ninja 加入当前 PowerShell 的 `PATH`。
-2. CMake 读取根目录 `CMakeLists.txt`，使用 Ninja 生成器，将 Debug 构建配置写入 `build/gui`。配置中指定项目内 Qt、`gcc.exe` 和 `g++.exe`。VSCode/clangd 所需的 `compile_commands.json` 由 VSCode 配置生成；手工配置时可添加 `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`。
-3. Ninja 编译 C++ 源码、Qt MOC/UIC/RCC 生成步骤和静态库，最后链接 `rov_ui.exe`。并行度为 2；标记为 `EXCLUDE_FROM_ALL` 的测试程序不会随主程序一起编译。
-4. `deploy-qt.ps1` 将运行时依赖复制到程序目录：Qt 与 MinGW DLL 放在 `build/gui`，Qt 平台插件放在 `build/gui/platforms`。
-5. 从 `build/gui/rov_ui.exe` 启动程序。
-
-### 编译目录和主要产物
-
-主程序构建统一使用 `build/gui`，不要删除它来做普通增量编译。测试使用与 `build/` 同级的独立目录 `build-test/`，不得将测试产物写入 `build/`。这两个目录均已由 `.gitignore` 忽略，只保存在本机。
-
-| 路径 | 用途 |
-| --- | --- |
-| `build/gui/CMakeCache.txt` | 当前 Debug 配置、Qt 与编译器路径等 CMake 缓存 |
-| `build/gui/build.ninja` | CMake 生成的 Ninja 构建规则 |
-| `build/gui/CMakeFiles/` | C++ 对象文件、AUTOMOC/AUTOUIC/AUTORCC 生成文件及中间产物 |
-| `build/gui/compile_commands.json` | 每个 C/C++ 文件的编译命令，供 clangd/VSCode 跳转与诊断使用 |
-| `build/gui/rov_ui.exe` | GUI 主程序 |
-| `build/gui/Qt5Core.dll`、`Qt5Gui.dll`、`Qt5Widgets.dll`，以及 `libgcc_s_seh-1.dll`、`libstdc++-6.dll`、`libwinpthread-1.dll` | Qt 与 MinGW 运行库 |
-| `build/gui/platforms/` | `qwindows.dll`、`qoffscreen.dll`、`qminimal.dll` 平台插件 |
-
-### 一键构建
-
-首次配置、完整构建或重新部署运行库时，在仓库根目录运行：
+使用仓库锁定的 Windows Qt 5.15.19、MinGW 8.1.0、CMake 3.28.6 和 Ninja 1.11.1。
+从仓库根目录运行：
 
 ```powershell
-& '.\toolchain\env\build-gui.ps1'
+# 发布构建，默认也是 Release：
+& .\tools\build-gui.ps1 -BuildType Release
+# 构建并显式编译、运行全部离线测试：
+& .\tools\build-gui.ps1 -BuildType Release -RunTests
+# 开发调试：
+& .\tools\build-gui.ps1 -BuildType Debug
 ```
 
-脚本依次执行工具链激活、CMake 配置、`ninja -C build/gui -j2` 和 Qt 运行库部署。再次运行会复用 `build/gui` 缓存，只重编发生变化的文件，然后重新部署运行库。
+脚本激活锁定工具链，在 `build/test/gui` 配置 CMake/Ninja，将主程序和必要运行库输出
+到 `build/gui`。再次运行复用测试目录内的构建缓存，不往运行目录写入生成文件。
+原本机 `toolchain/env/build-gui.ps1` 入口已转为调用新脚本；可复现入口以 `tools/` 为准。
 
-### 分步执行命令
+### 运行目录必须保持干净
 
-需要检查或单独重做某一步时，可按以下顺序执行。配置命令适用于首次构建或需要重新生成 CMake 配置时：
+用户于 2026-10-09 明确要求：截图中的 `build/gui` 只保留重要运行文件，测试文件放到
+它同级的 `build/test`。**本规则覆盖历史 `build-test/` 规则。**
+
+| 路径 | 内容 |
+| --- | --- |
+| `build/gui/rov_ui.exe` | 正式主程序 |
+| `build/gui/*.dll` | Qt、MinGW、Network/Concurrent 运行库 |
+| `build/gui/platforms/qwindows.dll` | Windows 平台插件 |
+| `build/gui/imageformats/qjpeg.dll` | JPEG 图像插件 |
+| `build/gui/qt.conf` | 将插件路径固定到包内 |
+| `build/test/gui/` | CMake/Ninja 缓存、对象文件、静态库、autogen、测试程序和运行库 |
+| `build/test/gui/compile_commands.json` | VSCode/clangd 编译数据库 |
+| `build/test/` 其他子目录 | 日志、截图、临时脚本、录制、备份、验证报告、解压测试 |
+| `build/gui.zip` | 经哈希与解压启动验证的纯运行包 |
+
+禁止把 `CMakeFiles`、`CMakeCache.txt`、`build.ninja`、静态库、autogen、测试程序或
+证据写入 `build/gui`。CMake 会拒绝在这个目录或其子目录中配置构建。
+
+VSCode 的 CMake 构建目录和 clangd 已统一改为 `build/test/gui`；运行和调试目标仍为
+`build/gui/rov_ui.exe`。不要把工具链、第三方依赖和需要版本管理的测试源码当作临时文件删除。
+
+### 打包、清理与验证
 
 ```powershell
-. '.\toolchain\env\activate.ps1'
-$root = $env:ROV_UI_ROOT
-$build = Join-Path $root 'build\gui'
-$cmake = Join-Path $env:ROV_UI_CMAKE_DIR 'bin\cmake.exe'
+& .\tools\package-gui.ps1
+```
+
+脚本先进行 Release 构建与离线测试，将旧运行目录中的多余内容安全归档到
+`build/test/package-时间/old-runtime-extras`，保留并核对 12 个运行文件，然后生成
+`build/gui.zip`。ZIP 每个条目以及解压后的文件均核对 SHA-256；在不使用工具链 PATH、
+不自动连接设备的环境下启动解压程序，验证主窗口与 JPEG 插件。
+全部启动日志、截图和校验结果留在 `build/test`，不会混入包内。
+具体清单与本轮结果见 [干净运行包说明](docs/runtime-package.md)。
+
+### 单独配置或测试
+
+```powershell
+. .\toolchain\env\activate.ps1
 $qt = $env:ROV_UI_QT_DIR.Replace('\', '/')
 $gcc = (Join-Path $env:ROV_UI_MINGW_DIR 'bin\gcc.exe').Replace('\', '/')
 $gxx = (Join-Path $env:ROV_UI_MINGW_DIR 'bin\g++.exe').Replace('\', '/')
-
-& $cmake -S $root -B $build -G Ninja `
-    '-DCMAKE_BUILD_TYPE=Debug' `
-    "-DCMAKE_PREFIX_PATH=$qt" `
-    "-DCMAKE_C_COMPILER=$gcc" `
-    "-DCMAKE_CXX_COMPILER=$gxx" `
-    '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON'
+cmake -S . -B build/test/checks -G Ninja `
+    '-DCMAKE_BUILD_TYPE=Debug' '-DBUILD_TESTING=ON' `
+    "-DCMAKE_PREFIX_PATH=$qt" "-DCMAKE_C_COMPILER=$gcc" "-DCMAKE_CXX_COMPILER=$gxx"
+cmake --build build/test/checks --target rov_observer_motor_protocol_test --parallel 4
+ctest --test-dir build/test/checks -R '^rov_observer_motor_protocol_test$' --output-on-failure
 ```
 
-配置成功后，编译全部默认目标：
+独立测试配置不设置 `ROV_UI_RUNTIME_DIR`，其程序全部留在自己的测试构建目录；
+正式脚本通过该参数仅将 `rov_ui.exe` 输出到运行目录。页面与硬件测试继续分开报告。
 
 ```powershell
-$ninja = Join-Path $env:ROV_UI_NINJA_DIR 'ninja.exe'
-& $ninja -C $build -j2
-```
-
-或者只编译 GUI 主程序及其依赖：
-
-```powershell
-cmake --build $build --target rov_ui --parallel 2
-```
-
-CMake/Ninja 编译完成后，单独部署运行库：
-
-```powershell
-& '.\toolchain\env\deploy-qt.ps1' -Executable (Join-Path $build 'rov_ui.exe')
-```
-
-启动程序：
-
-```powershell
-& '.\build\gui\rov_ui.exe'
-```
-
-若 PowerShell 因执行策略阻止脚本，可在仓库根目录运行以下命令，在该子进程中临时绕过执行策略：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File '.\toolchain\env\build-gui.ps1'
-```
-
-若链接时报 `rov_ui.exe: Permission denied`，或部署 Qt DLL 时出现 `Copy-Item` 文件占用错误，通常是程序仍在运行并加载了这些文件。先关闭 `rov_ui.exe`，再重新运行一键构建脚本；确认输出没有 `Copy-Item` 错误，且显示 `Qt runtime deployed beside` 后，运行库部署才完成。构建脚本和 VSCode 配置都会使用 `build/gui`，共享同一份 Ninja/CMake 缓存。
-
-测试目标默认不参与主程序构建，需要验证时按下方“测试目录隔离”说明，在独立目录中显式构建对应测试目标。
-
-VSCode/clangd 使用 `build/gui/compile_commands.json`。需要手工确认跳转时，可执行：
-
-```powershell
-& 'toolchain/llvm/14.0.6/bin/clangd.exe' `
-  --check=src/pages/motor_debug/MotorDebugPage.cpp `
-  --compile-commands-dir=build/gui `
+& .\toolchain\llvm\14.0.6\bin\clangd.exe `
+  --check=src/app/MainWindow.cpp --compile-commands-dir=build/test/gui `
   --query-driver='toolchain/mingw/8.1.0/Tools/mingw810_64/bin/*' --log=error
 ```
 
-### 测试目录隔离
-
-执行测试时，必须在项目根目录创建与 `build/` 同级的 `build-test/`，不能使用 `build/test/`、`build/gui/` 或 `build/test-evidence/` 存放测试文件。
-
-- `build/`：仅用于主程序构建和运行所需产物。
-- `build-test/`：统一存放测试构建缓存、中间文件、测试程序、测试运行库、临时脚本、日志、截图、录制数据、测试报告及证据归档；可按任务建立子目录。
-- `tests/`：继续存放需要纳入版本管理的测试源码，不存放生成物。
-
-测试必须单独配置 CMake，构建目录、测试工作目录和输出路径均指向 `build-test/` 内部，不得复用或修改 `build/gui` 的缓存，也不得把测试文件复制回 `build/`。例如，在仓库根目录执行以下命令，仅构建并运行电机协议测试：
-
-```powershell
-. '.\toolchain\env\activate.ps1'
-$root = $env:ROV_UI_ROOT
-$testBuild = Join-Path $root 'build-test\gui'
-$qt = $env:ROV_UI_QT_DIR.Replace('\', '/')
-$gxx = (Join-Path $env:ROV_UI_MINGW_DIR 'bin\g++.exe').Replace('\', '/')
-
-cmake -S $root -B $testBuild -G Ninja `
-    '-DCMAKE_BUILD_TYPE=Debug' '-DBUILD_TESTING=ON' `
-    "-DCMAKE_PREFIX_PATH=$qt" "-DCMAKE_CXX_COMPILER=$gxx"
-if ($LASTEXITCODE -ne 0) { throw 'Test configuration failed.' }
-cmake --build $testBuild --target rov_observer_motor_protocol_test --parallel 2
-if ($LASTEXITCODE -ne 0) { throw 'Test build failed.' }
-ctest --test-dir $testBuild -R '^rov_observer_motor_protocol_test$' --output-on-failure
-if ($LASTEXITCODE -ne 0) { throw 'Test failed.' }
-```
-
-其他测试按需替换目标名；如需部署测试运行库，应将 `deploy-qt.ps1` 的 `-Executable` 指向 `build-test/` 中的程序。不要使用 `build-gui.ps1 -BuildName test` 代替上述独立配置，该参数仍会把产物写入 `build/test/`。测试结束后的清理仅针对对应的 `build-test/` 子目录，不影响主程序目录。
-
 ## Git 约定
 
-`build/`、`build-test/`、`toolchain/`、日志、缓存和编译产物只保留在本机，不提交到 Git。源码、文档、协议规范、资源和参考图可以提交。完整规则见根目录 `.gitignore`。
+`build/`（含 `gui` 与 `test`）、`toolchain/`、日志、缓存和编译产物只保留在本机，不提交到 Git。源码、文档、协议规范、资源和参考图可以提交。完整规则见根目录 `.gitignore`。
 
 ## USB CDC 通信
 

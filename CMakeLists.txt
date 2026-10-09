@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
 
+# build/gui is a deployable runtime directory, never a CMake binary directory.
+get_filename_component(ROV_PACKAGE_DIR "${CMAKE_SOURCE_DIR}/build/gui" ABSOLUTE)
+get_filename_component(ROV_BINARY_DIR "${CMAKE_BINARY_DIR}" ABSOLUTE)
+string(TOLOWER "${ROV_PACKAGE_DIR}/" ROV_PACKAGE_COMPARE)
+string(TOLOWER "${ROV_BINARY_DIR}/" ROV_BINARY_COMPARE)
+string(FIND "${ROV_BINARY_COMPARE}" "${ROV_PACKAGE_COMPARE}" ROV_BINARY_IN_PACKAGE)
+if(ROV_BINARY_IN_PACKAGE EQUAL 0)
+    message(FATAL_ERROR "build/gui is runtime-only. Configure under build/test/gui instead.")
+endif()
 project(rov_ui VERSION 0.1.0 LANGUAGES CXX)
+set(ROV_UI_RUNTIME_DIR "${CMAKE_BINARY_DIR}" CACHE PATH "Directory for the main application only")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -179,6 +189,7 @@ add_executable(rov_ui
     src/contracts/vision/VisionContract.h
 
 )
+set_target_properties(rov_ui PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${ROV_UI_RUNTIME_DIR}")
 
 set(ROV_UI_TARGETS
     rov_ui_common

@@ -83,10 +83,10 @@ TCP/JPEG 没有本项目额外的校验和；无法保证发现仍能正常解�
 ```powershell
 & .\tools\deploy-camera-runtime.ps1
 # 对隔离测试目录部署：
-& .\tools\deploy-camera-runtime.ps1 -AppDirectory .\build-test\nano-tcp
+& .\tools\deploy-camera-runtime.ps1 -AppDirectory .\build\test\gui
 ```
 
-测试只使用 `build-test/`，不将证据或测试程序写到 `build/gui`。
+编译缓存、测试和证据只使用 `build/test/`，`build/gui` 始终只保留主程序及必要运行库。
 
 ## 验证与实机边界
 
@@ -108,20 +108,20 @@ TCP/JPEG 没有本项目额外的校验和；无法保证发现仍能正常解�
 三项相机运行库与锁定 SDK 的 SHA-256 均一致。
 
 ```powershell
-cmake --build .\build-test\nano-tcp --target rov_stereo_camera_service_test rov_stereo_camera_page_test --parallel 4
-ctest --test-dir .\build-test\nano-tcp -R 'rov_stereo_camera' --output-on-failure
+cmake --build .\build\test\gui --target rov_stereo_camera_service_test rov_stereo_camera_page_test --parallel 4
+ctest --test-dir .\build\test\gui -R 'rov_stereo_camera' --output-on-failure
 ```
 
 Nano 回来后，可直接在正式程序点击“启动预览”。也提供显式、只接收的实机探针，
 使用同一个主窗口和页面，保存实际窗口截图与拼接 JPEG；不会作为 CTest 自动运行：
 
 ```powershell
-cmake --build .\build-test\nano-tcp --target rov_stereo_camera_probe --parallel 4
-& .\tools\deploy-camera-runtime.ps1 -AppDirectory .\build-test\nano-tcp
-.\build-test\nano-tcp\rov_stereo_camera_probe.exe --host 192.168.20.70 --frames 300
+cmake --build .\build\test\gui --target rov_stereo_camera_probe --parallel 4
+& .\tools\deploy-camera-runtime.ps1 -AppDirectory .\build\test\gui
+.\build\test\gui\rov_stereo_camera_probe.exe --host 192.168.20.70 --frames 300
 # 需要同时验证原 MCU TCP 时，显式追加 --with-gateway（9000，只读）。
 # Nano 不在现场时，只连接本机模拟服务：
-.\build-test\nano-tcp\rov_stereo_camera_probe.exe --mock --frames 300
+.\build\test\gui\rov_stereo_camera_probe.exe --mock --frames 300
 ```
 
 实机待验证：当前 Qt 的实际画面/吞吐、相机拔插、Nano 整机重启、真实节点重启恢复、

@@ -1,12 +1,13 @@
 {
     "cmake.generator": "Ninja",
     "cmake.sourceDirectory": "${workspaceFolder}",
-    "cmake.buildDirectory": "${workspaceFolder}/build/gui",
+    "cmake.buildDirectory": "${workspaceFolder}/build/test/gui",
     "cmake.configureOnOpen": true,
     "cmake.configureSettings": {
         "BUILD_TESTING": "ON",
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "ROV_UI_RUNTIME_DIR": "${workspaceFolder}/build/gui",
         "CMAKE_PREFIX_PATH": "${workspaceFolder}/toolchain/qt/5.15.19",
         "CMAKE_C_COMPILER": "${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/gcc.exe",
         "CMAKE_CXX_COMPILER": "${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/g++.exe"
@@ -16,7 +17,7 @@
     },
     "clangd.path": "${workspaceFolder}/toolchain/llvm/14.0.6/bin/clangd.exe",
     "clangd.arguments": [
-        "--compile-commands-dir=${workspaceFolder}/build/gui",
+        "--compile-commands-dir=${workspaceFolder}/build/test/gui",
         "--query-driver=${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/*",
         "--background-index",
         "--header-insertion=iwyu",
@@ -25,8 +26,8 @@
     ],
     "C_Cpp.intelliSenseEngine": "disabled",
     "C_Cpp.default.compilerPath": "${workspaceFolder}/toolchain/mingw/8.1.0/Tools/mingw810_64/bin/g++.exe",
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/gui/compile_commands.json",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/test/gui/compile_commands.json",
     "files.encoding": "utf8",
     "files.autoGuessEncoding": false,
-    "cmake.copyCompileCommands": "${workspaceFolder}/build/gui/compile_commands.json"
+    "cmake.copyCompileCommands": "${workspaceFolder}/build/test/gui/compile_commands.json"
 }

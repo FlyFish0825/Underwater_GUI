@@ -93,6 +93,10 @@ UI → Service/Data → Protocol → Transport
 
 ## 构建目录和本地文件
 
+`build/gui` 是纯运行目录，只保留主程序、必要运行库、插件和配置。编译缓存、
+测试程序、日志、截图、临时脚本和备份统一在它同级的 `build/test`。
+使用 `tools/build-gui.ps1` 和 `tools/package-gui.ps1`；此约定覆盖旧 `build-test` 规则。
+
 以下目录和文件只保留在本机，禁止提交：
 
 - `build/`；

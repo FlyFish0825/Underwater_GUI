@@ -43,7 +43,7 @@ Nano 端由 UnderWater-Robot-ROS2 的现有网关独占串口，新增 TCP 模�
 此脚本只把锁定 SDK 中的 `Qt5Network.dll` 复制到程序目录。测试目录可显式指定：
 
 ```powershell
-& .\tools\deploy-tcp-runtime.ps1 -AppDirectory .\build-test\nano-tcp
+& .\tools\deploy-tcp-runtime.ps1 -AppDirectory .\build\test\gui
 ```
 
 ## 通信与重连
@@ -75,11 +75,11 @@ TCP 不添加额外帧头，半帧和粘包由原增量协议解析器处理。C
 该提交保留原有传感器、协议、记录器和固件页工作，可用于对比 TCP 接入前后的差异。
 不要对仍有其他工作的目录直接执行破坏性回退。
 
-按 README 的隔离配置，在 `build-test/` 构建并运行：
+按 README 的隔离配置，在 `build/test/` 构建并运行：
 
 ```powershell
-cmake --build .\build-test\nano-tcp --target rov_tcp_transport_test rov_nano_connection_page_test --parallel 2
-ctest --test-dir .\build-test\nano-tcp -R 'rov_(tcp_transport|nano_connection_page)_test' --output-on-failure
+cmake --build .\build\test\gui --target rov_tcp_transport_test rov_nano_connection_page_test --parallel 2
+ctest --test-dir .\build\test\gui -R 'rov_(tcp_transport|nano_connection_page)_test' --output-on-failure
 ```
 
 `rov_tcp_transport_test` 使用本机临时 TCP 服务器验证原始字节、双向写入、只读拒绝、自动重连、静默超时和半帧清理。
@@ -88,8 +88,8 @@ ctest --test-dir .\build-test\nano-tcp -R 'rov_(tcp_transport|nano_connection_pa
 
 ```powershell
 . .\toolchain\env\activate.ps1
-.\build-test\nano-tcp\rov_nano_tcp_probe.exe 192.168.20.70 9000
+.\build\test\gui\rov_nano_tcp_probe.exe 192.168.20.70 9000
 ```
 
 `--echo-fixture` 只用于伪串口测试端：会发送测试 CAN 封装，不能用于真实设备的只读验证。
-构建、日志和截图都在 `build-test/nano-tcp/`；真实 CAN 网关测试不发送电机运行命令。
+构建、日志和截图都在 `build/test/gui/`；真实 CAN 网关测试不发送电机运行命令。
