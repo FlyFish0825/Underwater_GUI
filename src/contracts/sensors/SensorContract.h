@@ -37,6 +37,9 @@ constexpr quint32 ZeroValid = 1U << 7;
 constexpr quint32 PromValid = 1U << 8;
 constexpr quint32 PinBlocked = 1U << 9;
 constexpr quint32 ConfigUnknown = 1U << 10;
+// MS5837 STATUS keeps its 20-byte wire layout: command/error diagnostics occupy reserved high bytes.
+constexpr quint32 LastI2cCommandShift = 16;
+constexpr quint32 LastErrorShift = 24;
 }
 
 // Fixed 02BA business constraint shared by the view and service. See host protocol section 5.1.

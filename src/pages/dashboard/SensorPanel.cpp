@@ -67,6 +67,30 @@ QString ageText(qint64 age)
 {
     return age < 0 ? QStringLiteral("尚无样本") : QStringLiteral("样本龄 %1 ms").arg(age);
 }
+QString depthLastErrorText(const quint32 status)
+{
+    const quint32 code = (status >> SensorStatus::LastErrorShift) & 0xFFU;
+    if (code == 0) return {};
+    const quint32 command = (status >> SensorStatus::LastI2cCommandShift) & 0xFFU;
+    QString description;
+    switch (code)
+    {
+    case 1: description = QStringLiteral("参数错误"); break;
+    case 2: description = QStringLiteral("设备未就绪 / 初始化失败"); break;
+    case 3: description = QStringLiteral("I²C 总线忙"); break;
+    case 4: description = QStringLiteral("I²C 超时"); break;
+    case 5: description = QStringLiteral("I²C 错误或设备未应答"); break;
+    case 6: description = QStringLiteral("PROM CRC 校验失败"); break;
+    case 7: description = QStringLiteral("尚无有效水面基准"); break;
+    case 8: description = QStringLiteral("尚无完成的采样"); break;
+    case 9: description = QStringLiteral("操作不支持"); break;
+    default: description = QStringLiteral("未知驱动错误"); break;
+    }
+    const QString errorText = QStringLiteral("最近错误 %1：%2").arg(code).arg(description);
+    if (code < 3 || code > 6) return errorText;
+    const QString commandText = QString::number(command, 16).rightJustified(2, QLatin1Char('0')).toUpper();
+    return errorText + QStringLiteral(" · 关联 I²C 命令 0x") + commandText;
+}
 QString streamText(const SensorStreamState state)
 {
     switch (state)
@@ -323,13 +347,15 @@ void SensorPanel::setSnapshot(const SensorSnapshot &s)
     if (d.statusKnown)
         diagnostics = QStringLiteral("\n完成采样 %1 / 良好 %2 · 设备%3")
                           .arg(d.sampleSequence).arg(d.goodFrames).arg(ageText(d.sampleAgeMs));
+    const QString depthError = depthLastErrorText(d.status);
+    if (!depthError.isEmpty()) diagnostics += QStringLiteral("\n") + depthError;
     if (s.depthAgeMs >= 0)
         diagnostics += QStringLiteral(" · 数据产生时刻 %1 µs · 流序号 %2")
                            .arg(s.depthTimestampUs).arg(d.sequence);
     m_depthStatus->setText(m_depthStatus->text() + diagnostics);
     m_imuStatus->setText(m_imuStatus->text() + QStringLiteral("\n") + streamText(i.streamState));
     m_depthStatus->setText(m_depthStatus->text() + QStringLiteral("\n") + streamText(d.streamState));
-    m_depthStatus->setToolTip(QStringLiteral("状态字 0x%1\n数据时刻是设备 D2 读完时刻，不是 USB 接收时间；32 位微秒时钟约 71.6 分钟回绕。\n完成采样数与流序号不同；0x82/0x83 共用本 TARGET 的流序号，背压下允许跳号。")
+    m_depthStatus->setToolTip(QStringLiteral("状态字 0x%1\n高位诊断格式：status[23:16] 是总线相关错误的 I²C 命令上下文，status[31:24] 是 MS5837 驱动错误码。\n数据时刻是设备 D2 读完时刻，不是 USB 接收时间；32 位微秒时钟约 71.6 分钟回绕。\n完成采样数与流序号不同；0x82/0x83 共用本 TARGET 的流序号，背压下允许跳号。")
         .arg(d.status, 8, 16, QLatin1Char('0')));
     m_imuCommand->setText(i.lastCommand); m_depthCommand->setText(d.lastCommand);
     // Protocol bytes are prepared by the service; the page only presents the snapshot strings.
