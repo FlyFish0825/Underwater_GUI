@@ -2,6 +2,8 @@
 
 [返回 README](../README.md)
 
+当前配套 Nano 的转发随 ROS 后台运行，开机不自动启动。完整 `robot.launch.xml` 启动相机 9001；传感器测试后台若使用 `camera_enabled:=false` 则没有 9001，应按实际后台配置检查。2026-10-09 后续现场链路测得 Nano 输出约 30 FPS、Windows 实收约 5.7–5.8 FPS，尚未证明当前上位机实收 30 FPS。下文“本次修改”及模拟帧率为初次 GUI 接入的历史验证，不能替代真实链路性能。日常 Nano 启停和诊断见 README 的配套转发手册。
+
 ## 索引
 
 - [使用原视觉页面](#使用原视觉页面)
@@ -49,7 +51,7 @@ Nano 已先旋转完整画面 180° 并安排好输出左右目，上位机不�
 
 ## 接收与解码边界
 
-依据配套 ROS 2 工程 `docs/deployment/stereo-camera-host-report.md`（2026-10-09）的 UWSC v1 契约：
+依据配套 ROS 2 工程 `docs/architecture/deployment/stereo-camera-host-report.md`（2026-10-09）的 UWSC v1 契约：
 
 ```text
 Nano :9001 → 独立 QTcpSocket → StereoCameraParser
