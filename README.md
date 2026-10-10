@@ -10,7 +10,7 @@
 |---|---|
 | 串口转发：9000 原始数据、9002 控制权，申请/接管/释放 | [串口 TCP 转发使用教程](docs/nano-tcp.md) |
 | 相机转发：9001 双目预览、保存、帧率与重连 | [相机 TCP 转发使用教程](docs/stereo-camera.md) |
-| Nano 开机、后台启停、两路连接与故障速查 | [完整转发操作手册（ROS 2 配套仓库）](https://github.com/FlyFish0825/UnderWater-Robot-ROS2/blob/codex/nano-tcp-stream/docs/usage/09-forwarding-handbook.md) |
+| Nano 开机、后台启停、两路连接与故障速查 | [完整转发操作手册（ROS 2 配套仓库）](https://github.com/FlyFish0825/UnderWater-Robot-ROS2/blob/main/docs/usage/09-forwarding-handbook.md) |
 
 **Nano 局域网连接已接入：** 在“设置”页选择 `Nano TCP`，填写服务器地址和端口后连接。
 Nano 默认持有串口控制权；上位机可申请、接管或释放，所有串口写入由 Nano 网关统一仲裁。
