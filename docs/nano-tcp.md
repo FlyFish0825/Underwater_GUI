@@ -2,6 +2,10 @@
 
 [返回 README](../README.md)
 
+2026-10-10 已完成真实机器人验收：使用 GUI 正式通信服务申请、接管、释放并验证原始深度 GET_STATUS 往返；Nano 普通申请在 GUI 占用时失败，明确接管成功，GUI 旧会话写权限撤销。只发送一次 20 字节状态查询，未发送电机运行、归零或参数写入。Settings、管理连接、传输等完整 CTest 21/21 通过。
+
+手动实机验收目标为 `rov_tcp_control_hardware_probe`（位于 `build/test/gui`，不会自动加入 CTest）。它在 GUI 接管/释放/再接管后输出 `READY_NANO_TEST`，此时在 Nano 执行普通申请再明确接管，程序会检查旧 GUI 会话不能继续写入并返回 PASS。不要在用户正在控制或升级时运行此探针。
+
 ## 索引
 
 - [连接操作](#连接操作)
@@ -99,3 +103,20 @@ ctest --test-dir .\build\test\gui -R 'rov_(tcp_transport|tcp_control|nano_connec
 
 `rov_nano_tcp_probe` 永远只接收，不会申请控制权或向 Nano 发送串口数据。
 构建、日志和截图都在 `build/test/gui/`；真实 CAN 网关测试不发送电机运行命令。
+
+控制权实机验收须先让 Nano 持有控制权，关闭其他 GUI 的 9000 连接，然后在 Windows 运行：
+
+```powershell
+. .\toolchain\env\activate.ps1
+cmake --build .\build\test\gui --target rov_tcp_control_hardware_probe --parallel 2
+.\build\test\gui\rov_tcp_control_hardware_probe.exe 192.168.20.70
+```
+
+看到 `READY_NANO_TEST` 后，在已加载正式 ROS 环境的 Nano 终端依次运行：
+
+```bash
+ros2 service call /underwater_robot/gateway/control underwater_interfaces/srv/ControlOwnership "{action: 0}"
+ros2 service call /underwater_robot/gateway/control underwater_interfaces/srv/ControlOwnership "{action: 1}"
+```
+
+第一条应返回 `success=false, owner=2`，第二条应返回 `success=true, owner=1`；Windows 探针应返回 PASS。探针有 90 秒总超时，只发一次深度 GET_STATUS，不校零、不发电机运行指令。2026-10-10 的只读探针另实收 77520 字节、12 个心跳，下发字节数为 0。

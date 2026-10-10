@@ -305,6 +305,9 @@ if (BUILD_TESTING)
     # Explicit invocation only: may connect to a real LAN endpoint in receive-only mode.
     add_executable(rov_nano_tcp_probe EXCLUDE_FROM_ALL tests/NanoTcpProbe.cpp)
     target_link_libraries(rov_nano_tcp_probe PRIVATE rov_communication)
+    # 实机手动验收：唯一串口查询为深度 GET_STATUS，不发送电机/校零命令。
+    add_executable(rov_tcp_control_hardware_probe EXCLUDE_FROM_ALL tests/TcpControlHardwareProbe.cpp)
+    target_link_libraries(rov_tcp_control_hardware_probe PRIVATE rov_communication)
     add_executable(rov_bootloader_batch_commands_test EXCLUDE_FROM_ALL tests/BootloaderBatchCommandsTest.cpp)
     target_include_directories(rov_bootloader_batch_commands_test PRIVATE src)
     target_link_libraries(rov_bootloader_batch_commands_test PRIVATE Qt5::Core rov_communication)

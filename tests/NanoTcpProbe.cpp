@@ -13,12 +13,12 @@ int main(int argc,char **argv)
     quint64 bytes=0;int frames=0,heartbeats=0,opens=0;
     QObject::connect(&service,&rov::BootloaderCommunicationService::rawBytesReceived,[&](const QByteArray &b){bytes+=b.size();});
     QObject::connect(&service,&rov::BootloaderCommunicationService::heartbeatReceived,[&](const rov::SystemHeartbeat &){++heartbeats;});
-    QObject::connect(&service,&rov::BootloaderCommunicationService::frameReceived,[&](const rov::CanGatewayFrame &f){++frames;if(f.canId==0x123 && f.data==QByteArray("LINKTEST"))echo=true;});
+    QObject::connect(&service,&rov::BootloaderCommunicationService::frameReceived,[&](const rov::CanGatewayFrame &){++frames;});
     QObject::connect(&service,&rov::BootloaderCommunicationService::opened,[&](const QString &endpoint){
         ++opens;QTextStream(stdout)<<"CONNECTED READ-ONLY "<<endpoint<<Qt::endl;
     });
     QObject::connect(&service,&rov::BootloaderCommunicationService::errorOccurred,[&](const QString &e){QTextStream(stdout)<<"LINK "<<e<<Qt::endl;});
-    service.openTcp(args[1],port,fixture);
+    service.openTcp(args[1],port,false);
     QTimer::singleShot(12000,&app,[&]{
         service.close();const bool passed=bytes>0&&opens>0&&(heartbeats>0||frames>0);
         QTextStream(stdout)<<"bytes="<<bytes<<" frames="<<frames<<" heartbeats="<<heartbeats<<" opens="<<opens<<" transmitted=0 result="<<(passed?"PASS":"FAIL")<<Qt::endl;
