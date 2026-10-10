@@ -15,10 +15,62 @@ static bool until(const std::function<bool()> &condition,int ms=3000)
     QElapsedTimer time;time.start();
     while(time.elapsed()<ms){QCoreApplication::processEvents();if(condition())return true;QThread::msleep(2);}return false;
 }
+static void checkHandshake(const QByteArray &reply, const QByteArray &expectedData,
+                           const QString &expectedError = {}, bool fragmented = false)
+{
+    QTcpServer server;
+    check(server.listen(QHostAddress::LocalHost, 0), "handshake fixture listen");
+    TcpTransport transport;
+    transport.setTimeouts(2000, 2000, 1000);
+    QByteArray received;
+    QString error;
+    QObject::connect(&transport, &ByteTransport::bytesReceived,
+                     [&](const QByteArray &bytes) { received += bytes; });
+    QObject::connect(&transport, &ByteTransport::errorOccurred,
+                     [&](const QString &message) { error = message; });
+    check(transport.open(QStringLiteral("127.0.0.1"), server.serverPort()), "handshake fixture open");
+    check(until([&] { return server.hasPendingConnections() && transport.isOpen(); }),
+          "handshake fixture read-only connection");
+    server.nextPendingConnection()->deleteLater();
+    transport.setOwnerToken(QStringLiteral("fixture-session-token"));
+    check(until([&] { return server.hasPendingConnections(); }), "handshake fixture owned connection");
+    auto *peer = server.nextPendingConnection();
+    check(until([&] { return peer->bytesAvailable() > 0; }), "handshake fixture token arrived");
+    check(peer->readAll() == QByteArrayLiteral("OWNER fixture-session-token\n"),
+          "handshake fixture token matches");
+    if (fragmented) {
+        peer->write(reply.left(3));
+        peer->flush();
+        until([] { return false; }, 40);
+        check(!transport.isOpen() && received.isEmpty() && error.isEmpty(),
+              "partial handshake waits without exposing reply bytes");
+    }
+    peer->write(fragmented ? reply.mid(3) : reply);
+    peer->flush();
+    if (expectedError.isEmpty()) {
+        check(until([&] { return transport.isOpen() && received == expectedData; }, 1000),
+              "handshake plus coalesced telemetry opens and preserves exact binary data");
+        check(error.isEmpty(), "valid handshake with telemetry must not report an error");
+    } else {
+        check(until([&] { return !error.isEmpty(); }, 1000), "invalid handshake reports an error");
+        check(error == expectedError && !transport.isOpen() && received.isEmpty(),
+              "invalid handshake stays closed and exposes no telemetry");
+    }
+    transport.close();
+}
 int main(int argc,char **argv)
 {
     QCoreApplication app(argc,argv);
     try {
+        // 合法握手后可立即跟随大量二进制遥测，包括 NUL 和换行符。
+        const QByteArray telemetry = QByteArray::fromHex("00aa55ff00580d0aaa5b").repeated(128);
+        checkHandshake(QByteArrayLiteral("OK GUI\n") + telemetry, telemetry);
+        checkHandshake(QByteArrayLiteral("OK GUI\n") + telemetry, telemetry, {}, true);
+        const QString tooLong = QStringLiteral("Nano 控制权握手回复过长");
+        checkHandshake(QByteArray(65, 'X'), {}, tooLong);
+        checkHandshake(QByteArray(64, 'X') + '\n' + telemetry, {}, tooLong);
+        checkHandshake(QByteArrayLiteral("DENIED\n") + telemetry, {},
+                       QStringLiteral("Nano 拒绝上位机串口控制权握手；请先接管控制权"));
         QTcpServer server;check(server.listen(QHostAddress::LocalHost,0),"listen");
         TcpTransport transport;transport.setTimeouts(300,600,50);
         int opened=0,closed=0;QByteArray received;

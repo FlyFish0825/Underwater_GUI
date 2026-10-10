@@ -30,11 +30,13 @@ TcpTransport::TcpTransport(QObject *parent) : ByteTransport(parent)
         QByteArray bytes = m_socket.readAll();
         if (m_handshakePending) {
             m_handshakeBuffer.append(bytes);
-            if (m_handshakeBuffer.size() > 64) {
+            const int newline = m_handshakeBuffer.indexOf('\n');
+            // 只限制握手行长度，不把紧随其后的二进制遥测计入。
+            const int handshakeLength = newline >= 0 ? newline + 1 : m_handshakeBuffer.size();
+            if (handshakeLength > 64) {
                 failed(QStringLiteral("Nano 控制权握手回复过长"));
                 return;
             }
-            const int newline = m_handshakeBuffer.indexOf('\n');
             if (newline < 0)
                 return;
             const QByteArray response = m_handshakeBuffer.left(newline).trimmed();
