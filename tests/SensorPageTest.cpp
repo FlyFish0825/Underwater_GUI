@@ -90,6 +90,8 @@ int main(int argc,char **argv)
     s.devices[1].infoKnown=true; s.devices[1].name=QStringLiteral("MS5837 (test fixture)");
     s.devices[1].capabilities=(1U<<10)|(1U<<5); s.devices[1].online=true;
     s.devices[1].status=SensorStatus::Online|SensorStatus::PromValid|SensorStatus::RawValid
+        | SensorStatus::DepthDiagnosticsValid | (7U << SensorStatus::DepthDriverStateShift)
+        | (1U << SensorStatus::DepthI2cPhaseShift)
         | (0x1EU << SensorStatus::LastI2cCommandShift) | (5U << SensorStatus::LastErrorShift);
     s.depthRawValid=true;
     s.depthAgeMs=10; s.rawAdcD1=12345; s.rawAdcD2=56789;
@@ -107,6 +109,7 @@ int main(int argc,char **argv)
     CHECK(statusText.contains(QStringLiteral("45475")) && statusText.contains(QStringLiteral("1818405000")));
     CHECK(statusText.contains(QStringLiteral("861")) && statusText.contains(QStringLiteral("30 ms")));
     CHECK(statusText.contains(QStringLiteral("最近错误 5")) && statusText.contains(QStringLiteral("关联 I²C 命令 0x1E")));
+    CHECK(statusText.contains(QStringLiteral("等待 I²C 回调")) && statusText.contains(QStringLiteral("I²C 事务进行中")));
     for(const QString &command : {QStringLiteral("05"),QStringLiteral("06"),QStringLiteral("09"),QStringLiteral("0a"),QStringLiteral("0b")})
         CHECK(!panel->findChild<QPushButton *>(QStringLiteral("sensor2Command")+command));
     CHECK(dep->rowCount()==7 && tabs->count()==2); // keep the existing table and tabs

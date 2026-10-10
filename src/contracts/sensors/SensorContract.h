@@ -40,6 +40,11 @@ constexpr quint32 ConfigUnknown = 1U << 10;
 // MS5837 STATUS keeps its 20-byte wire layout: command/error diagnostics occupy reserved high bytes.
 constexpr quint32 LastI2cCommandShift = 16;
 constexpr quint32 LastErrorShift = 24;
+constexpr quint32 DepthDriverStateShift = 10;
+constexpr quint32 DepthDriverStateMask = 0x7U << DepthDriverStateShift;
+constexpr quint32 DepthDiagnosticsValid = 1U << 13;
+constexpr quint32 DepthI2cPhaseShift = 14;
+constexpr quint32 DepthI2cPhaseMask = 0x3U << DepthI2cPhaseShift;
 }
 
 // Fixed 02BA business constraint shared by the view and service. See host protocol section 5.1.
